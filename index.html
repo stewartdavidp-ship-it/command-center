@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Game Shelf Command Center</title>
-    <meta name="version" content="6.1.5">
+    <meta name="version" content="6.7.2">
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -25,7 +25,7 @@
     <div id="root"><div style="display:flex;align-items:center;justify-content:center;min-height:100vh;"><div style="text-align:center;"><div style="font-size:48px;margin-bottom:20px;">ð®</div>Loading...</div></div></div>
 
     <script type="text/babel">
-    console.log('Command Center v6.1.5 starting...');
+    console.log('Command Center v6.7.2 starting...');
     
     // =========================================================================
     // FIREBASE CONFIG
@@ -94,6 +94,141 @@
         if (titleMatch) return titleMatch[1];
         
         return null;
+    }
+    
+    // Find ALL version-like strings in HTML for debugging
+    function findAllVersionStrings(content) {
+        const versions = [];
+        
+        // Meta tag versions
+        const metaMatches = content.matchAll(/<meta\s+[^>]*name=["']version["'][^>]*content=["']([^"']+)["'][^>]*>/gi);
+        for (const m of metaMatches) {
+            // Skip if the content contains template literal syntax
+            if (m[1].includes('${') || m[1].includes('targetVersion')) continue;
+            versions.push({ source: 'meta tag', value: m[1], line: content.substring(0, m.index).split('\n').length });
+        }
+        // Also check reverse order: content before name
+        const metaMatches2 = content.matchAll(/<meta\s+[^>]*content=["']([^"']+)["'][^>]*name=["']version["'][^>]*>/gi);
+        for (const m of metaMatches2) {
+            if (m[1].includes('${') || m[1].includes('targetVersion')) continue;
+            versions.push({ source: 'meta tag', value: m[1], line: content.substring(0, m.index).split('\n').length });
+        }
+        
+        // JS variable versions - but NOT inside comments, template literals, or the integration module definition
+        const jsMatches = content.matchAll(/^\s*const\s+(VERSION|APP_VERSION|GAME_VERSION)\s*=\s*['"]([^'"]+)['"]/gm);
+        for (const m of jsMatches) {
+            // Skip if it's inside the GameShelf integration module (those are module versions, not app versions)
+            const before = content.substring(Math.max(0, m.index - 200), m.index);
+            if (!before.includes('GAMESHELF_VERSION') && !before.includes('Integration Module')) {
+                // Skip template literals and code examples
+                if (m[2].includes('${') || m[2].includes('targetVersion')) continue;
+                versions.push({ source: `JS: ${m[1]}`, value: m[2], line: content.substring(0, m.index).split('\n').length });
+            }
+        }
+        
+        // Footer versions - look for patterns like "v1.0.0 â¢" or ">v1.0.0<"
+        // But skip anything in code comments or template literals
+        const footerMatches = content.matchAll(/[>\s]v(\d+\.\d+\.\d+)\s*[â¢<Â·]/g);
+        for (const m of footerMatches) {
+            // Check if this is inside a comment or code example
+            const lineStart = content.lastIndexOf('\n', m.index) + 1;
+            const lineContent = content.substring(lineStart, m.index);
+            // Skip if line starts with // or * (comment) or contains Pattern or Example
+            if (/^\s*(\/\/|\*|#)/.test(lineContent) || /Pattern|Example|e\.g\.|like/i.test(lineContent)) continue;
+            versions.push({ source: 'footer/visible', value: m[1], line: content.substring(0, m.index).split('\n').length });
+        }
+        
+        // Version in about/info sections
+        const aboutMatches = content.matchAll(/Version:?\s*<\/?\w*>?\s*v?(\d+\.\d+\.\d+)/gi);
+        for (const m of aboutMatches) {
+            // Skip code comments
+            const lineStart = content.lastIndexOf('\n', m.index) + 1;
+            const lineContent = content.substring(lineStart, m.index);
+            if (/^\s*(\/\/|\*|#)/.test(lineContent) || /Pattern|Example/i.test(lineContent)) continue;
+            versions.push({ source: 'about/info text', value: m[1], line: content.substring(0, m.index).split('\n').length });
+        }
+        
+        return versions;
+    }
+    
+    // Validate version consistency in HTML content
+    function validateVersions(content, filename) {
+        const versions = findAllVersionStrings(content);
+        const primary = extractVersionFromHTML(content);
+        
+        // Get unique version values
+        const uniqueVersions = [...new Set(versions.map(v => v.value))];
+        
+        const result = {
+            isValid: true,
+            primary: primary,
+            allVersions: versions,
+            uniqueVersions: uniqueVersions,
+            mismatches: [],
+            missing: []
+        };
+        
+        // Check for mismatches
+        if (uniqueVersions.length > 1) {
+            result.isValid = false;
+            result.mismatches = versions.filter(v => v.value !== primary);
+        }
+        
+        // Check for missing meta tag
+        const hasMeta = versions.some(v => v.source === 'meta tag');
+        if (!hasMeta) {
+            result.isValid = false;
+            result.missing.push('meta tag');
+        }
+        
+        // Check for missing JS VERSION constant (for apps that should have one)
+        const hasJsVersion = versions.some(v => v.source.startsWith('JS:'));
+        if (!hasJsVersion && content.includes('const VERSION')) {
+            // There's a VERSION constant but we didn't capture it - might be okay
+        }
+        
+        return result;
+    }
+    
+    // Auto-fix version strings in HTML content
+    function fixVersionsInContent(content, targetVersion) {
+        let fixed = content;
+        
+        // Fix or add meta tag
+        const metaRegex = /<meta\s+name=["']version["']\s+content=["'][^"']*["']\s*\/?>/i;
+        const metaRegex2 = /<meta\s+content=["'][^"']*["']\s+name=["']version["']\s*\/?>/i;
+        
+        if (metaRegex.test(fixed)) {
+            fixed = fixed.replace(metaRegex, `<meta name="version" content="${targetVersion}">`);
+        } else if (metaRegex2.test(fixed)) {
+            fixed = fixed.replace(metaRegex2, `<meta name="version" content="${targetVersion}">`);
+        } else {
+            // Add meta tag after charset or viewport
+            fixed = fixed.replace(
+                /(<meta\s+[^>]*viewport[^>]*>)/i,
+                `$1\n    <meta name="version" content="${targetVersion}">`
+            );
+        }
+        
+        // Fix const VERSION = 'x.x.x' (but not GAMESHELF_VERSION)
+        fixed = fixed.replace(
+            /(const\s+VERSION\s*=\s*['"])[^'"]*(['"])/g,
+            `$1${targetVersion}$2`
+        );
+        
+        // Fix footer versions like "v1.0.0 â¢" or "v1.0.0 Â·"
+        fixed = fixed.replace(
+            /(>\s*)v\d+\.\d+\.\d+(\s*[â¢Â·])/g,
+            `$1v${targetVersion}$2`
+        );
+        
+        // Fix about/version display
+        fixed = fixed.replace(
+            /(Version:?\s*<\/?\w*>?\s*)v?\d+\.\d+\.\d+/gi,
+            `$1v${targetVersion}`
+        );
+        
+        return fixed;
     }
     
     function parseVersion(version) {
@@ -208,6 +343,7 @@
         Plus: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>,
         Database: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" /></svg>,
         User: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>,
+        AlertCircle: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
         Edit: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>,
         Copy: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>,
     };
@@ -562,12 +698,106 @@
         const [activeDeployment, setActiveDeployment] = React.useState(null);
         const [availableRepos, setAvailableRepos] = React.useState([]);
         const [modal, setModal] = React.useState(null);
+        const [dialog, setDialog] = React.useState(null); // { type: 'alert'|'confirm'|'prompt', title, message, defaultValue, onConfirm, onCancel }
         const [settings, setSettings] = React.useState({ createTag: true, updateServiceWorker: true });
+        
+        // Dialog helper functions (Promise-based for async usage)
+        const showAlert = (message, title) => {
+            return new Promise((resolve) => {
+                setDialog({ type: 'alert', title, message, onConfirm: resolve });
+            });
+        };
+        
+        const showConfirm = (message, title) => {
+            return new Promise((resolve) => {
+                setDialog({ 
+                    type: 'confirm', 
+                    title, 
+                    message, 
+                    onConfirm: () => resolve(true),
+                    onCancel: () => resolve(false)
+                });
+            });
+        };
+        
+        const showPrompt = (message, defaultValue, title) => {
+            return new Promise((resolve) => {
+                setDialog({ 
+                    type: 'prompt', 
+                    title, 
+                    message, 
+                    defaultValue,
+                    onConfirm: (value) => resolve(value),
+                    onCancel: () => resolve(null)
+                });
+            });
+        };
         const [refreshing, setRefreshing] = React.useState(false);
         const [repoFiles, setRepoFiles] = React.useState({}); // { repoFullName: { files: [], loading: bool } }
         const [selectedRepoForBrowse, setSelectedRepoForBrowse] = React.useState(null);
         const [markedForDeletion, setMarkedForDeletion] = React.useState([]); // [{ repo, path, sha }]
         const [deployingRepos, setDeployingRepos] = React.useState({}); // { repoFullName: { version, startTime } }
+        
+        // Session log state (persisted to localStorage)
+        const [sessionLog, setSessionLog] = React.useState(() => {
+            try { 
+                const s = localStorage.getItem('cc_session_log'); 
+                return s ? JSON.parse(s) : {
+                    currentSession: null,
+                    sessions: [],
+                    issues: [],
+                    notes: ''
+                }; 
+            } catch { 
+                return { currentSession: null, sessions: [], issues: [], notes: '' }; 
+            }
+        });
+        
+        // Global issues state (synced with Firebase)
+        const [globalIssues, setGlobalIssues] = React.useState([]);
+        const [firebaseUid, setFirebaseUid] = React.useState(null);
+        
+        // Listen for Firebase auth and load issues
+        React.useEffect(() => {
+            if (!firebaseAuth) return;
+            
+            const unsubscribe = firebaseAuth.onAuthStateChanged((u) => {
+                if (u) {
+                    setFirebaseUid(u.uid);
+                    // Listen for issues changes
+                    const issuesRef = firebaseDb.ref(`command-center/${u.uid}/issues`);
+                    issuesRef.on('value', (snapshot) => {
+                        const data = snapshot.val();
+                        if (data) {
+                            const list = Object.entries(data).map(([id, issue]) => ({ id, ...issue }));
+                            setGlobalIssues(list);
+                        } else {
+                            setGlobalIssues([]);
+                        }
+                    });
+                    return () => issuesRef.off();
+                } else {
+                    setFirebaseUid(null);
+                    setGlobalIssues([]);
+                }
+            });
+            
+            return () => unsubscribe();
+        }, []);
+        
+        // Link issues to a deployed version
+        const linkIssuesToVersion = async (issueIds, version, appId) => {
+            if (!firebaseDb || !firebaseUid || !issueIds.length) return;
+            
+            for (const issueId of issueIds) {
+                await firebaseDb.ref(`command-center/${firebaseUid}/issues/${issueId}`).update({
+                    status: 'fixed',
+                    fixedAt: new Date().toISOString(),
+                    fixedInVersion: version,
+                    fixedInApp: appId
+                });
+            }
+        };
         
         // Use ref to always have latest apps state for async operations
         const appsRef = React.useRef(apps);
@@ -579,6 +809,7 @@
         React.useEffect(() => { try { if (githubToken) localStorage.setItem('cc_token', githubToken); } catch {} }, [githubToken]);
         React.useEffect(() => { try { localStorage.setItem('cc_apps_v6', JSON.stringify(apps)); } catch {} }, [apps]);
         React.useEffect(() => { try { localStorage.setItem('cc_history_v2', JSON.stringify(deployments.slice(0, 100))); } catch {} }, [deployments]);
+        React.useEffect(() => { try { localStorage.setItem('cc_session_log', JSON.stringify(sessionLog)); } catch {} }, [sessionLog]);
         
         // Monitor live site until new version appears
         const monitorLiveDeployment = async (url, expectedVersion, repo, onUpdate) => {
@@ -752,19 +983,34 @@
                     const parsed = parseFilename(file.name);
                     let version = null;
                     let versionSource = 'none';
+                    let versionValidation = null;
                     
                     if (file.name.endsWith('.html') && isText) {
                         const htmlVersion = extractVersionFromHTML(content);
                         version = htmlVersion || parsed.version;
                         versionSource = htmlVersion ? 'html' : (parsed.version ? 'filename' : 'none');
+                        
+                        // Full version validation
+                        versionValidation = validateVersions(content, file.name);
+                        
+                        console.log('=== VERSION VALIDATION ===');
+                        console.log('File:', file.name);
+                        console.log('Primary version:', versionValidation.primary);
+                        console.log('All versions found:', versionValidation.allVersions);
+                        console.log('Unique versions:', versionValidation.uniqueVersions);
+                        console.log('Is valid:', versionValidation.isValid);
+                        if (!versionValidation.isValid) {
+                            console.warn('â ï¸ VERSION ISSUES:', {
+                                mismatches: versionValidation.mismatches,
+                                missing: versionValidation.missing
+                            });
+                        }
                     }
                     
                     console.log('=== FILE UPLOADED ===');
                     console.log('Name:', file.name);
                     console.log('Size:', file.size);
-                    console.log('Version extracted:', version);
-                    console.log('Content length:', content.length);
-                    console.log('Content preview (first 200 chars):', content.substring(0, 200));
+                    console.log('Version:', version);
                     
                     setStagedFiles(prev => [...prev, {
                         id: Date.now() + Math.random(),
@@ -776,6 +1022,7 @@
                         suggestedApp: parsed.app,
                         version,
                         versionSource,
+                        versionValidation,
                         // Default HTML files to index.html, others keep original name
                         targetPath: file.name.endsWith('.html') ? 'index.html' : file.name
                     }]);
@@ -890,6 +1137,32 @@
                 updateApp(appId, { [target === 'prod' ? 'currentProdVersion' : 'currentTestVersion']: newVersion });
                 removeStaged(file.id);
                 
+                // Check for open issues that can be linked to this deploy
+                const openIssues = globalIssues.filter(i => 
+                    i.app === appId && 
+                    (i.status === 'open' || i.status === 'in-progress')
+                );
+                
+                if (openIssues.length > 0 && target === 'test') {
+                    // Show issue linking modal after a short delay
+                    setTimeout(async () => {
+                        const issueList = openIssues.map(i => `${i.id}: ${i.title}`).join('\n');
+                        const result = await showPrompt(
+                            `This deploy may fix these issues:\n\n${issueList}\n\nEnter issue IDs to link (comma-separated), or leave blank:`,
+                            '',
+                            'ð Link Issues to v' + newVersion
+                        );
+                        
+                        if (result && result.trim()) {
+                            const issueIds = result.split(',').map(s => s.trim().toUpperCase());
+                            const validIds = issueIds.filter(id => openIssues.some(i => i.id === id));
+                            if (validIds.length > 0) {
+                                await linkIssuesToVersion(validIds, newVersion, appId);
+                            }
+                        }
+                    }, 500);
+                }
+                
                 // Start monitoring live site for deployment completion
                 if (deployment.url && newVersion) {
                     addStep('GitHub Pages', 'running', 'Waiting for deploy...');
@@ -913,25 +1186,65 @@
         
         // Multi-file batch deploy
         const handleBatchDeploy = async (files, appId, target) => {
-            if (!github) return alert('Configure GitHub token');
+            if (!github) {
+                await showAlert('Configure GitHub token first', 'Configuration Required');
+                return;
+            }
             if (files.length === 0) return;
+            
+            const app = apps[appId];
+            const repo = target === 'prod' ? app.prodRepo : app.testRepo;
+            if (!repo) {
+                await showAlert(`Configure ${target} repo first`, 'Configuration Required');
+                return;
+            }
+            
+            // Find version from index.html if present
+            const indexFile = files.find(f => f.targetPath === 'index.html' || f.name === 'index.html');
+            const newVersion = indexFile?.version || 'batch';
+            
+            // Check for version validation issues in any file
+            const filesWithIssues = files.filter(f => f.versionValidation && !f.versionValidation.isValid);
+            if (filesWithIssues.length > 0) {
+                const proceed = await showConfirm(
+                    filesWithIssues.map(f => {
+                        const v = f.versionValidation;
+                        let msg = `${f.name}:\n`;
+                        if (v.missing.length > 0) msg += `  â¢ Missing: ${v.missing.join(', ')}\n`;
+                        if (v.uniqueVersions.length > 1) msg += `  â¢ Mismatched versions: ${v.uniqueVersions.join(', ')}\n`;
+                        return msg;
+                    }).join('\n') +
+                    `\nYou can click "Fix to v${newVersion}" on each file to auto-correct.\n\n` +
+                    `Deploy anyway with inconsistent versions?`,
+                    'â ï¸ Version Issues Detected'
+                );
+                if (!proceed) return;
+            }
+            
+            // Check version increment against current repo version
+            if (newVersion !== 'batch') {
+                const currentVersion = target === 'prod' ? app.currentProdVersion : app.currentTestVersion;
+                if (currentVersion && !isNewerVersion(newVersion, currentVersion)) {
+                    const proceed = await showConfirm(
+                        `Current in ${target.toUpperCase()}: v${currentVersion}\n` +
+                        `New version: v${newVersion}\n\n` +
+                        `This may be a downgrade or same version.\n` +
+                        `Deploy anyway?`,
+                        'â ï¸ Version Not Incrementing'
+                    );
+                    if (!proceed) return;
+                }
+            }
             
             // Log file details for debugging
             console.log('handleBatchDeploy received:', files.map(f => ({
                 name: f.name,
                 id: f.id,
                 targetPath: f.targetPath,
-                contentLength: f.content?.length,
-                contentPreview: f.content?.substring(0, 100)
+                version: f.version,
+                validationOk: f.versionValidation?.isValid,
+                contentLength: f.content?.length
             })));
-            
-            const app = apps[appId];
-            const repo = target === 'prod' ? app.prodRepo : app.testRepo;
-            if (!repo) return alert(`Configure ${target} repo`);
-            
-            // Find version from index.html if present
-            const indexFile = files.find(f => f.targetPath === 'index.html' || f.name === 'index.html');
-            const newVersion = indexFile?.version || 'batch';
             
             const deployment = {
                 id: Date.now(), status: 'running', steps: [],
@@ -1272,7 +1585,7 @@
                             <span className="text-2xl">ð®</span>
                             <div>
                                 <h1 className="text-lg font-bold">Command Center</h1>
-                                <div className="text-xs text-slate-400">v6.1.5 â¢ Firebase + Multi-File</div>
+                                <div className="text-xs text-slate-400">v6.7.2 â¢ Version Detection Fix</div>
                             </div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -1281,12 +1594,14 @@
                                 title="Refresh versions">
                                 <Icons.Refresh />
                             </button>
-                            {['dashboard', 'files', 'firebase', 'apps', 'history', 'settings'].map(v => (
+                            {['dashboard', 'files', 'firebase', 'session', 'issues', 'apps', 'history', 'settings'].map(v => (
                                 <button key={v} onClick={() => setView(v)}
                                     className={`px-3 py-1.5 rounded text-sm capitalize flex items-center gap-1 ${view === v ? 'bg-indigo-600' : 'text-slate-400 hover:text-white'}`}>
                                     {v === 'settings' && <Icons.Settings />}
                                     {v === 'files' && <><Icons.Folder /> Files</>}
                                     {v === 'firebase' && <><Icons.Database /> Firebase</>}
+                                    {v === 'session' && <><Icons.File /> Session</>}
+                                    {v === 'issues' && <><Icons.AlertCircle /> Issues</>}
                                     {v === 'dashboard' && 'Dashboard'}
                                     {v === 'apps' && 'Apps'}
                                     {v === 'history' && 'History'}
@@ -1314,6 +1629,12 @@
                             refreshing={refreshing}
                             onUpdateStagedFile={updateStagedFile}
                             deployingRepos={deployingRepos}
+                            showConfirm={showConfirm}
+                            showAlert={showAlert}
+                            showPrompt={showPrompt}
+                            globalIssues={globalIssues}
+                            linkIssuesToVersion={linkIssuesToVersion}
+                            setView={setView}
                         />
                     )}
                     
@@ -1338,6 +1659,21 @@
                             deployments={deployments} apps={apps}
                             onRollback={(d) => setModal({ type: 'rollback', data: d })}
                         />
+                    )}
+                    
+                    {view === 'session' && (
+                        <SessionLogView 
+                            apps={apps}
+                            sessionLog={sessionLog}
+                            setSessionLog={setSessionLog}
+                            deployments={deployments}
+                            github={github}
+                            onFileDrop={handleFileDrop}
+                        />
+                    )}
+                    
+                    {view === 'issues' && (
+                        <IssuesView apps={apps} deployments={deployments} />
                     )}
                     
                     {view === 'settings' && (
@@ -1366,6 +1702,26 @@
                             files={markedForDeletion}
                             onConfirm={handleDeleteMarkedFiles}
                             onCancel={() => setModal(null)}
+                        />
+                    )}
+                    
+                    {/* Custom Dialog Modal (replaces native alert/confirm/prompt) */}
+                    {dialog && (
+                        <DialogModal
+                            type={dialog.type}
+                            title={dialog.title}
+                            message={dialog.message}
+                            defaultValue={dialog.defaultValue}
+                            confirmText={dialog.confirmText}
+                            cancelText={dialog.cancelText}
+                            onConfirm={(value) => {
+                                if (dialog.onConfirm) dialog.onConfirm(value);
+                                setDialog(null);
+                            }}
+                            onCancel={() => {
+                                if (dialog.onCancel) dialog.onCancel();
+                                setDialog(null);
+                            }}
                         />
                     )}
                 </main>
@@ -1544,13 +1900,229 @@
     }
 
     // =========================================================================
+    // DIALOG MODAL (replaces native alert/confirm/prompt)
+    // =========================================================================
+    
+    function DialogModal({ type, title, message, defaultValue, confirmText, cancelText, onConfirm, onCancel }) {
+        const [inputValue, setInputValue] = React.useState(defaultValue || '');
+        const inputRef = React.useRef(null);
+        
+        React.useEffect(() => {
+            if (type === 'prompt' && inputRef.current) {
+                inputRef.current.focus();
+                inputRef.current.select();
+            }
+        }, [type]);
+        
+        const handleKeyDown = (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                onConfirm(type === 'prompt' ? inputValue : true);
+            } else if (e.key === 'Escape') {
+                onCancel();
+            }
+        };
+        
+        // Determine icon and colors based on message content
+        const isError = message?.toLowerCase().includes('error') || message?.toLowerCase().includes('failed');
+        const isWarning = message?.toLowerCase().includes('warning') || message?.toLowerCase().includes('â ');
+        const isSuccess = message?.toLowerCase().includes('â') || message?.toLowerCase().includes('success');
+        
+        const borderColor = isError ? 'border-red-700' : isWarning ? 'border-amber-700' : isSuccess ? 'border-green-700' : 'border-slate-600';
+        const iconColor = isError ? 'text-red-400' : isWarning ? 'text-amber-400' : isSuccess ? 'text-green-400' : 'text-indigo-400';
+        
+        return (
+            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[100] p-4" onKeyDown={handleKeyDown}>
+                <div className={`bg-slate-800 rounded-xl border ${borderColor} p-6 max-w-md w-full fade-in shadow-2xl`}>
+                    {title && (
+                        <h2 className={`text-lg font-bold mb-3 flex items-center gap-2 ${iconColor}`}>
+                            {isError ? <Icons.AlertTriangle /> : isWarning ? 'â ï¸' : isSuccess ? 'â' : 'â¹ï¸'}
+                            {title}
+                        </h2>
+                    )}
+                    
+                    <div className="text-slate-300 mb-4 whitespace-pre-wrap">{message}</div>
+                    
+                    {type === 'prompt' && (
+                        <input
+                            ref={inputRef}
+                            type="text"
+                            value={inputValue}
+                            onChange={(e) => setInputValue(e.target.value)}
+                            className="w-full p-3 bg-slate-900 border border-slate-600 rounded-lg mb-4 text-white focus:border-indigo-500 focus:outline-none"
+                            placeholder="Enter value..."
+                        />
+                    )}
+                    
+                    <div className="flex gap-3">
+                        {type !== 'alert' && (
+                            <button 
+                                onClick={onCancel} 
+                                className="flex-1 p-2.5 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors">
+                                {cancelText || 'Cancel'}
+                            </button>
+                        )}
+                        <button 
+                            onClick={() => onConfirm(type === 'prompt' ? inputValue : true)} 
+                            className={`flex-1 p-2.5 rounded-lg transition-colors ${
+                                isError ? 'bg-red-600 hover:bg-red-500' :
+                                isWarning ? 'bg-amber-600 hover:bg-amber-500' :
+                                'bg-indigo-600 hover:bg-indigo-500'
+                            }`}>
+                            {confirmText || 'OK'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // =========================================================================
     // DASHBOARD VIEW
     // =========================================================================
     
-    function DashboardView({ apps, stagedFiles, github, onFileDrop, onRemove, onDeploy, onBatchDeploy, onPromote, activeDeployment, setActiveDeployment, refreshing, onUpdateStagedFile, deployingRepos }) {
+    function DashboardView({ apps, stagedFiles, github, onFileDrop, onRemove, onDeploy, onBatchDeploy, onPromote, activeDeployment, setActiveDeployment, refreshing, onUpdateStagedFile, deployingRepos, showConfirm, showAlert, showPrompt, globalIssues, linkIssuesToVersion, setView }) {
         const [selectedFileIds, setSelectedFileIds] = React.useState(new Set());
         const [deployTarget, setDeployTarget] = React.useState({ appId: 'management', target: 'test' });
         const configuredApps = Object.values(apps).filter(a => a.testRepo || a.prodRepo);
+        
+        // Expanded app menus state
+        const [expandedApps, setExpandedApps] = React.useState({});
+        const [appInfo, setAppInfo] = React.useState({}); // { appId: { test: {...}, prod: {...} } }
+        const [loadingAppInfo, setLoadingAppInfo] = React.useState({});
+        
+        // Toggle app menu expansion
+        const toggleAppExpanded = async (appId) => {
+            const newExpanded = !expandedApps[appId];
+            setExpandedApps(prev => ({ ...prev, [appId]: newExpanded }));
+            
+            // Fetch app info if expanding and not already loaded
+            if (newExpanded && !appInfo[appId] && github) {
+                await fetchAppInfo(appId);
+            }
+        };
+        
+        // Fetch commit history and info for an app
+        const fetchAppInfo = async (appId) => {
+            const app = apps[appId];
+            if (!app || !github) return;
+            
+            setLoadingAppInfo(prev => ({ ...prev, [appId]: true }));
+            
+            const info = { test: null, prod: null };
+            
+            try {
+                if (app.testRepo) {
+                    const [owner, repo] = app.testRepo.split('/');
+                    const commits = await github.request(`/repos/${owner}/${repo}/commits?per_page=5`);
+                    const repoData = await github.request(`/repos/${owner}/${repo}`);
+                    info.test = {
+                        lastCommit: commits[0],
+                        recentCommits: commits,
+                        pushedAt: repoData.pushed_at
+                    };
+                }
+            } catch (e) {
+                console.error('Error fetching test repo info:', e);
+            }
+            
+            try {
+                if (app.prodRepo) {
+                    const [owner, repo] = app.prodRepo.split('/');
+                    const commits = await github.request(`/repos/${owner}/${repo}/commits?per_page=5`);
+                    const repoData = await github.request(`/repos/${owner}/${repo}`);
+                    info.prod = {
+                        lastCommit: commits[0],
+                        recentCommits: commits,
+                        pushedAt: repoData.pushed_at
+                    };
+                }
+            } catch (e) {
+                console.error('Error fetching prod repo info:', e);
+            }
+            
+            setAppInfo(prev => ({ ...prev, [appId]: info }));
+            setLoadingAppInfo(prev => ({ ...prev, [appId]: false }));
+        };
+        
+        // Force GitHub Pages rebuild by creating an empty commit
+        const forceRebuild = async (repo, target, silent = false) => {
+            if (!github || !repo) return;
+            
+            if (!silent) {
+                const confirmed = await showConfirm(
+                    `This creates an empty commit to trigger GitHub Pages deployment.\n\nThe site should update in 30-90 seconds.`,
+                    `Force Rebuild ${target.toUpperCase()}?`
+                );
+                if (!confirmed) return;
+            }
+            
+            try {
+                const [owner, repoName] = repo.split('/');
+                
+                // Get current commit
+                const ref = await github.request(`/repos/${owner}/${repoName}/git/ref/heads/main`);
+                const currentSha = ref.object.sha;
+                
+                // Get current commit details
+                const commit = await github.request(`/repos/${owner}/${repoName}/git/commits/${currentSha}`);
+                
+                // Create new commit with same tree (empty commit)
+                const newCommit = await github.request(`/repos/${owner}/${repoName}/git/commits`, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        message: `Force rebuild - ${new Date().toISOString()}`,
+                        tree: commit.tree.sha,
+                        parents: [currentSha]
+                    })
+                });
+                
+                // Update ref
+                await github.request(`/repos/${owner}/${repoName}/git/refs/heads/main`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ sha: newCommit.sha })
+                });
+                
+                if (!silent) {
+                    await showAlert(
+                        `GitHub Pages should update in 30-90 seconds.`,
+                        `â Rebuild Triggered for ${target.toUpperCase()}`
+                    );
+                }
+                
+                // Refresh app info
+                const appId = Object.entries(apps).find(([id, a]) => a.testRepo === repo || a.prodRepo === repo)?.[0];
+                if (appId) {
+                    setAppInfo(prev => ({ ...prev, [appId]: null }));
+                    fetchAppInfo(appId);
+                }
+                
+                return true;
+                
+            } catch (e) {
+                if (!silent) {
+                    await showAlert(`Error: ${e.message}`, 'Rebuild Failed');
+                }
+                return false;
+            }
+        };
+        
+        // Format relative time
+        const formatRelativeTime = (dateStr) => {
+            if (!dateStr) return 'â';
+            const date = new Date(dateStr);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMins = Math.floor(diffMs / 60000);
+            const diffHours = Math.floor(diffMs / 3600000);
+            const diffDays = Math.floor(diffMs / 86400000);
+            
+            if (diffMins < 1) return 'just now';
+            if (diffMins < 60) return `${diffMins}m ago`;
+            if (diffHours < 24) return `${diffHours}h ago`;
+            if (diffDays < 7) return `${diffDays}d ago`;
+            return date.toLocaleDateString();
+        };
         
         // Get actual selected files from staged (ensures fresh content)
         const selectedFiles = stagedFiles.filter(f => selectedFileIds.has(f.id));
@@ -1675,6 +2247,67 @@
                                                             <span>â ï¸</span> Will create new file (won't replace index.html)
                                                         </div>
                                                     )}
+                                                    
+                                                    {/* Version warnings */}
+                                                    {f.versionValidation && !f.versionValidation.isValid && (
+                                                        <div className="mt-2 p-2 bg-red-900/30 border border-red-700 rounded">
+                                                            <div className="flex items-center justify-between mb-2">
+                                                                <div className="text-xs font-medium text-red-300 flex items-center gap-1">
+                                                                    ð´ Version Issues Detected
+                                                                </div>
+                                                                <button 
+                                                                    onClick={async (e) => {
+                                                                        e.stopPropagation();
+                                                                        let targetVersion = f.version;
+                                                                        if (!targetVersion) {
+                                                                            targetVersion = await showPrompt(
+                                                                                'What version should all version strings be set to?',
+                                                                                '1.0.0',
+                                                                                'Enter Target Version'
+                                                                            );
+                                                                        }
+                                                                        if (targetVersion) {
+                                                                            const fixedContent = fixVersionsInContent(f.content, targetVersion);
+                                                                            const newValidation = validateVersions(fixedContent, f.name);
+                                                                            onUpdateStagedFile(f.id, { 
+                                                                                content: fixedContent,
+                                                                                version: targetVersion,
+                                                                                versionValidation: newValidation
+                                                                            });
+                                                                        }
+                                                                    }}
+                                                                    className="px-2 py-1 bg-green-700 hover:bg-green-600 text-xs rounded flex items-center gap-1">
+                                                                    ð§ Fix to v{f.version || '?'}
+                                                                </button>
+                                                            </div>
+                                                            
+                                                            {f.versionValidation.missing.length > 0 && (
+                                                                <div className="text-xs text-amber-300 mb-1">
+                                                                    Missing: {f.versionValidation.missing.join(', ')}
+                                                                </div>
+                                                            )}
+                                                            
+                                                            {f.versionValidation.uniqueVersions.length > 1 && (
+                                                                <div className="text-xs text-red-300 mb-1">
+                                                                    Found {f.versionValidation.uniqueVersions.length} different versions: {f.versionValidation.uniqueVersions.join(', ')}
+                                                                </div>
+                                                            )}
+                                                            
+                                                            <div className="text-xs text-slate-400 space-y-0.5 max-h-24 overflow-auto">
+                                                                {f.versionValidation.allVersions.map((v, i) => (
+                                                                    <div key={i} className={v.value === f.versionValidation.primary ? 'text-green-400' : 'text-red-300'}>
+                                                                        {v.value} â {v.source} (line {v.line})
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    
+                                                    {f.versionValidation && f.versionValidation.isValid && (
+                                                        <div className="mt-2 text-xs text-green-400 flex items-center gap-1">
+                                                            â All {f.versionValidation.allVersions.length} version strings match (v{f.versionValidation.primary})
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </div>
                                             <button onClick={e => { 
@@ -1786,56 +2419,283 @@
                                 const prodUrl = getGitHubPagesUrl(app.prodRepo);
                                 const testDeploying = deployingRepos && deployingRepos[app.testRepo];
                                 const prodDeploying = deployingRepos && deployingRepos[app.prodRepo];
+                                const isExpanded = expandedApps[app.id];
+                                const info = appInfo[app.id];
+                                const isLoadingInfo = loadingAppInfo[app.id];
                                 
                                 return (
-                                    <div key={app.id} className="p-3 bg-slate-700/50 rounded-lg">
-                                        <div className="flex items-center gap-2 mb-2">
-                                            <span>{app.icon}</span>
-                                            <span className="font-medium flex-1">{app.name}</span>
-                                            {canPromote && (
-                                                <button onClick={() => onPromote(app.id)}
-                                                    className="px-2 py-1 bg-amber-600 text-xs rounded flex items-center gap-1">
-                                                    <Icons.Zap className="w-3 h-3" /> Promote
-                                                </button>
-                                            )}
-                                        </div>
-                                        {/* Show mapped repos */}
-                                        <div className="text-xs text-slate-500 mb-2 font-mono">
-                                            {app.testRepo ? app.testRepo.split('/')[1] : '(no test repo)'} â {app.prodRepo ? app.prodRepo.split('/')[1] : '(no prod repo)'}
-                                        </div>
-                                        <div className="flex items-center gap-2 text-xs">
-                                            <div className="flex items-center gap-1">
-                                                <span className={`px-2 py-0.5 rounded ${app.currentTestVersion ? 'bg-blue-900/50 text-blue-300' : 'bg-slate-600 text-slate-400'}`}>
-                                                    TEST: {formatVersion(app.currentTestVersion)}
-                                                </span>
-                                                {testUrl && (
-                                                    <a href={testUrl} target="_blank" 
-                                                        className={`p-1 rounded flex items-center ${testDeploying ? 'bg-red-900/50 text-red-400 animate-pulse' : 'hover:bg-slate-600 text-slate-400'}`} 
-                                                        title={testDeploying ? `Deploying v${testDeploying.version}...` : 'Open TEST'}>
-                                                        <Icons.Play />
-                                                    </a>
+                                    <div key={app.id} className="bg-slate-700/50 rounded-lg overflow-hidden">
+                                        {/* Header - clickable to expand */}
+                                        <div 
+                                            className="p-3 cursor-pointer hover:bg-slate-700/70"
+                                            onClick={() => toggleAppExpanded(app.id)}
+                                        >
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <span className={`transform transition-transform ${isExpanded ? 'rotate-90' : ''}`}>â¶</span>
+                                                <span>{app.icon}</span>
+                                                <span className="font-medium flex-1">{app.name}</span>
+                                                {canPromote && (
+                                                    <button onClick={(e) => { e.stopPropagation(); onPromote(app.id); }}
+                                                        className="px-2 py-1 bg-amber-600 text-xs rounded flex items-center gap-1">
+                                                        <Icons.Zap className="w-3 h-3" /> Promote
+                                                    </button>
                                                 )}
                                             </div>
-                                            <Icons.ArrowRight className="w-4 h-4 text-slate-500" />
-                                            <div className="flex items-center gap-1">
-                                                <span className={`px-2 py-0.5 rounded ${app.currentProdVersion ? 'bg-green-900/50 text-green-300' : 'bg-slate-600 text-slate-400'}`}>
-                                                    PROD: {formatVersion(app.currentProdVersion)}
-                                                </span>
-                                                {prodUrl && (
-                                                    <a href={prodUrl} target="_blank" 
-                                                        className={`p-1 rounded flex items-center ${prodDeploying ? 'bg-red-900/50 text-red-400 animate-pulse' : 'hover:bg-slate-600 text-slate-400'}`} 
-                                                        title={prodDeploying ? `Deploying v${prodDeploying.version}...` : 'Open PROD'}>
-                                                        <Icons.Play />
-                                                    </a>
-                                                )}
+                                            {/* Show mapped repos */}
+                                            <div className="text-xs text-slate-500 mb-2 font-mono ml-6">
+                                                {app.testRepo ? app.testRepo.split('/')[1] : '(no test repo)'} â {app.prodRepo ? app.prodRepo.split('/')[1] : '(no prod repo)'}
+                                            </div>
+                                            <div className="flex items-center gap-2 text-xs ml-6">
+                                                <div className="flex items-center gap-1">
+                                                    <span className={`px-2 py-0.5 rounded ${app.currentTestVersion ? 'bg-blue-900/50 text-blue-300' : 'bg-slate-600 text-slate-400'}`}>
+                                                        TEST: {formatVersion(app.currentTestVersion)}
+                                                    </span>
+                                                    {testUrl && (
+                                                        <a href={testUrl} target="_blank" 
+                                                            onClick={e => e.stopPropagation()}
+                                                            className={`p-1 rounded flex items-center ${testDeploying ? 'bg-red-900/50 text-red-400 animate-pulse' : 'hover:bg-slate-600 text-slate-400'}`} 
+                                                            title={testDeploying ? `Deploying v${testDeploying.version}...` : 'Open TEST'}>
+                                                            <Icons.Play />
+                                                        </a>
+                                                    )}
+                                                </div>
+                                                <Icons.ArrowRight className="w-4 h-4 text-slate-500" />
+                                                <div className="flex items-center gap-1">
+                                                    <span className={`px-2 py-0.5 rounded ${app.currentProdVersion ? 'bg-green-900/50 text-green-300' : 'bg-slate-600 text-slate-400'}`}>
+                                                        PROD: {formatVersion(app.currentProdVersion)}
+                                                    </span>
+                                                    {prodUrl && (
+                                                        <a href={prodUrl} target="_blank" 
+                                                            onClick={e => e.stopPropagation()}
+                                                            className={`p-1 rounded flex items-center ${prodDeploying ? 'bg-red-900/50 text-red-400 animate-pulse' : 'hover:bg-slate-600 text-slate-400'}`} 
+                                                            title={prodDeploying ? `Deploying v${prodDeploying.version}...` : 'Open PROD'}>
+                                                            <Icons.Play />
+                                                        </a>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
+                                        
+                                        {/* Expanded Menu */}
+                                        {isExpanded && (
+                                            <div className="border-t border-slate-600 bg-slate-800/50 p-3 space-y-3">
+                                                {isLoadingInfo ? (
+                                                    <div className="flex items-center gap-2 text-slate-400 text-sm">
+                                                        <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                                                        Loading...
+                                                    </div>
+                                                ) : (
+                                                    <>
+                                                        {/* TEST Environment */}
+                                                        {app.testRepo && (
+                                                            <div className="p-2 bg-blue-900/20 rounded border border-blue-800/50">
+                                                                <div className="flex items-center justify-between mb-2">
+                                                                    <span className="text-sm font-medium text-blue-300">ð§ª TEST Environment</span>
+                                                                    <button 
+                                                                        onClick={() => forceRebuild(app.testRepo, 'test')}
+                                                                        className="px-2 py-1 bg-blue-700 hover:bg-blue-600 text-xs rounded">
+                                                                        ð Force Rebuild
+                                                                    </button>
+                                                                </div>
+                                                                {info?.test ? (
+                                                                    <div className="text-xs space-y-1">
+                                                                        <div className="flex justify-between">
+                                                                            <span className="text-slate-400">Last push:</span>
+                                                                            <span>{formatRelativeTime(info.test.pushedAt)}</span>
+                                                                        </div>
+                                                                        <div className="flex justify-between">
+                                                                            <span className="text-slate-400">Last commit:</span>
+                                                                            <span className="font-mono">{info.test.lastCommit?.sha?.substring(0, 7) || 'â'}</span>
+                                                                        </div>
+                                                                        <div className="text-slate-500 truncate" title={info.test.lastCommit?.commit?.message}>
+                                                                            "{info.test.lastCommit?.commit?.message?.substring(0, 40) || 'â'}"
+                                                                        </div>
+                                                                        {info.test.recentCommits?.length > 1 && (
+                                                                            <details className="mt-2">
+                                                                                <summary className="cursor-pointer text-slate-400 hover:text-white">
+                                                                                    Recent commits ({info.test.recentCommits.length})
+                                                                                </summary>
+                                                                                <div className="mt-1 space-y-1 pl-2 border-l border-slate-600">
+                                                                                    {info.test.recentCommits.slice(0, 5).map((c, i) => (
+                                                                                        <div key={i} className="text-slate-400">
+                                                                                            <span className="font-mono text-slate-500">{c.sha.substring(0, 7)}</span>
+                                                                                            {' '}{c.commit.message.substring(0, 30)}
+                                                                                        </div>
+                                                                                    ))}
+                                                                                </div>
+                                                                            </details>
+                                                                        )}
+                                                                    </div>
+                                                                ) : (
+                                                                    <div className="text-xs text-slate-500">No data loaded</div>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                        
+                                                        {/* PROD Environment */}
+                                                        {app.prodRepo && (
+                                                            <div className="p-2 bg-green-900/20 rounded border border-green-800/50">
+                                                                <div className="flex items-center justify-between mb-2">
+                                                                    <span className="text-sm font-medium text-green-300">ð PROD Environment</span>
+                                                                    <button 
+                                                                        onClick={() => forceRebuild(app.prodRepo, 'prod')}
+                                                                        className="px-2 py-1 bg-green-700 hover:bg-green-600 text-xs rounded">
+                                                                        ð Force Rebuild
+                                                                    </button>
+                                                                </div>
+                                                                {info?.prod ? (
+                                                                    <div className="text-xs space-y-1">
+                                                                        <div className="flex justify-between">
+                                                                            <span className="text-slate-400">Last push:</span>
+                                                                            <span>{formatRelativeTime(info.prod.pushedAt)}</span>
+                                                                        </div>
+                                                                        <div className="flex justify-between">
+                                                                            <span className="text-slate-400">Last commit:</span>
+                                                                            <span className="font-mono">{info.prod.lastCommit?.sha?.substring(0, 7) || 'â'}</span>
+                                                                        </div>
+                                                                        <div className="text-slate-500 truncate" title={info.prod.lastCommit?.commit?.message}>
+                                                                            "{info.prod.lastCommit?.commit?.message?.substring(0, 40) || 'â'}"
+                                                                        </div>
+                                                                        {info.prod.recentCommits?.length > 1 && (
+                                                                            <details className="mt-2">
+                                                                                <summary className="cursor-pointer text-slate-400 hover:text-white">
+                                                                                    Recent commits ({info.prod.recentCommits.length})
+                                                                                </summary>
+                                                                                <div className="mt-1 space-y-1 pl-2 border-l border-slate-600">
+                                                                                    {info.prod.recentCommits.slice(0, 5).map((c, i) => (
+                                                                                        <div key={i} className="text-slate-400">
+                                                                                            <span className="font-mono text-slate-500">{c.sha.substring(0, 7)}</span>
+                                                                                            {' '}{c.commit.message.substring(0, 30)}
+                                                                                        </div>
+                                                                                    ))}
+                                                                                </div>
+                                                                            </details>
+                                                                        )}
+                                                                    </div>
+                                                                ) : (
+                                                                    <div className="text-xs text-slate-500">No data loaded</div>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                        
+                                                        {/* Quick Actions */}
+                                                        <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-600">
+                                                            {/* Force Propagate TEST â PROD */}
+                                                            {app.testRepo && app.prodRepo && (
+                                                                <button 
+                                                                    onClick={() => onPromote(app.id)}
+                                                                    className="px-2 py-1 bg-amber-600 hover:bg-amber-500 text-xs rounded flex items-center gap-1">
+                                                                    <Icons.Zap className="w-3 h-3" /> Force Propagate TEST â PROD
+                                                                </button>
+                                                            )}
+                                                            
+                                                            {/* Force Rebuild All */}
+                                                            {(app.testRepo || app.prodRepo) && (
+                                                                <button 
+                                                                    onClick={async () => {
+                                                                        const confirmed = await showConfirm(
+                                                                            `This will trigger GitHub Pages rebuild for both TEST and PROD environments.`,
+                                                                            `Rebuild All for ${app.name}?`
+                                                                        );
+                                                                        if (!confirmed) return;
+                                                                        
+                                                                        if (app.testRepo) await forceRebuild(app.testRepo, 'test', true);
+                                                                        if (app.prodRepo) await forceRebuild(app.prodRepo, 'prod', true);
+                                                                        
+                                                                        await showAlert(
+                                                                            `GitHub Pages should update in 30-90 seconds.`,
+                                                                            `â Rebuild Triggered for ${app.name}`
+                                                                        );
+                                                                    }}
+                                                                    className="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-xs rounded flex items-center gap-1">
+                                                                    ð Rebuild All
+                                                                </button>
+                                                            )}
+                                                            
+                                                            {app.testRepo && (
+                                                                <a href={`https://github.com/${app.testRepo}`} target="_blank"
+                                                                    className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-xs rounded flex items-center gap-1">
+                                                                    <Icons.ExternalLink className="w-3 h-3" /> TEST Repo
+                                                                </a>
+                                                            )}
+                                                            {app.prodRepo && (
+                                                                <a href={`https://github.com/${app.prodRepo}`} target="_blank"
+                                                                    className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-xs rounded flex items-center gap-1">
+                                                                    <Icons.ExternalLink className="w-3 h-3" /> PROD Repo
+                                                                </a>
+                                                            )}
+                                                            <button 
+                                                                onClick={() => fetchAppInfo(app.id)}
+                                                                className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-xs rounded flex items-center gap-1">
+                                                                <Icons.Refresh className="w-3 h-3" /> Refresh Info
+                                                            </button>
+                                                        </div>
+                                                    </>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
                                 );
                             })}
                             {configuredApps.length === 0 && <div className="text-slate-400 text-sm">Add token in Settings</div>}
                         </div>
                     </div>
+                    
+                    {/* Issues Summary Widget */}
+                    {globalIssues.length > 0 && (
+                        <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
+                            <h3 className="font-semibold mb-3 flex items-center gap-2">
+                                <Icons.AlertCircle className="text-red-400" /> Issues
+                                <button 
+                                    onClick={() => setView('issues')}
+                                    className="ml-auto text-xs text-indigo-400 hover:text-indigo-300">
+                                    View All â
+                                </button>
+                            </h3>
+                            <div className="grid grid-cols-4 gap-2 text-center mb-3">
+                                <div className="bg-red-900/30 rounded p-2">
+                                    <div className="text-lg font-bold text-red-400">
+                                        {globalIssues.filter(i => i.status === 'open').length}
+                                    </div>
+                                    <div className="text-xs text-slate-400">Open</div>
+                                </div>
+                                <div className="bg-yellow-900/30 rounded p-2">
+                                    <div className="text-lg font-bold text-yellow-400">
+                                        {globalIssues.filter(i => i.status === 'in-progress').length}
+                                    </div>
+                                    <div className="text-xs text-slate-400">WIP</div>
+                                </div>
+                                <div className="bg-blue-900/30 rounded p-2">
+                                    <div className="text-lg font-bold text-blue-400">
+                                        {globalIssues.filter(i => i.status === 'fixed').length}
+                                    </div>
+                                    <div className="text-xs text-slate-400">Fixed</div>
+                                </div>
+                                <div className="bg-green-900/30 rounded p-2">
+                                    <div className="text-lg font-bold text-green-400">
+                                        {globalIssues.filter(i => i.status === 'verified').length}
+                                    </div>
+                                    <div className="text-xs text-slate-400">Verified</div>
+                                </div>
+                            </div>
+                            {/* Recent open issues */}
+                            <div className="space-y-1">
+                                {globalIssues
+                                    .filter(i => i.status === 'open' || i.status === 'in-progress')
+                                    .slice(0, 3)
+                                    .map(issue => (
+                                        <div key={issue.id} className="flex items-center gap-2 text-sm p-2 bg-slate-700/50 rounded">
+                                            <span className="font-mono text-xs text-indigo-400">{issue.id}</span>
+                                            <span className="flex-1 truncate">{issue.title}</span>
+                                            <span className={`w-2 h-2 rounded-full ${
+                                                issue.status === 'open' ? 'bg-red-500' : 'bg-yellow-500'
+                                            }`} />
+                                        </div>
+                                    ))
+                                }
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
         );
@@ -1852,6 +2712,8 @@
         const currentFiles = repoFiles[selectedRepo]?.files || [];
         const isLoading = repoFiles[selectedRepo]?.loading;
         
+        const [versionAudit, setVersionAudit] = React.useState(null);
+        
         const toggleMarkForDeletion = (file) => {
             const existing = markedForDeletion.find(m => m.repo === selectedRepo && m.path === file.path);
             if (existing) {
@@ -1862,6 +2724,30 @@
         };
         
         const isMarked = (file) => markedForDeletion.some(m => m.repo === selectedRepo && m.path === file.path);
+        
+        const handleVersionAudit = async () => {
+            if (!github || !selectedRepo) return;
+            setVersionAudit({ loading: true });
+            
+            try {
+                const file = await github.getFile(selectedRepo, 'index.html');
+                if (file) {
+                    const content = atob(file.content);
+                    const versions = findAllVersionStrings(content);
+                    const primary = extractVersionFromHTML(content);
+                    
+                    // Check for mismatches
+                    const uniqueVersions = [...new Set(versions.map(v => v.value))];
+                    const hasMismatch = uniqueVersions.length > 1;
+                    
+                    setVersionAudit({ loading: false, versions, primary, hasMismatch, uniqueVersions });
+                } else {
+                    setVersionAudit({ loading: false, error: 'index.html not found' });
+                }
+            } catch (e) {
+                setVersionAudit({ loading: false, error: e.message });
+            }
+        };
         
         return (
             <div className="space-y-6">
@@ -1898,6 +2784,67 @@
                                 className="px-3 py-1.5 bg-slate-700 rounded text-sm flex items-center gap-1">
                                 <Icons.ExternalLink /> GitHub
                             </a>
+                            <button onClick={handleVersionAudit}
+                                className="px-3 py-1.5 bg-amber-700 rounded text-sm flex items-center gap-1">
+                                ð Version Audit
+                            </button>
+                        </div>
+                    )}
+                    
+                    {/* Version Audit Results */}
+                    {versionAudit && (
+                        <div className={`mb-4 p-4 rounded-lg border ${versionAudit.hasMismatch ? 'bg-red-900/30 border-red-700' : 'bg-slate-700/50 border-slate-600'}`}>
+                            <div className="flex items-center justify-between mb-3">
+                                <h3 className="font-semibold flex items-center gap-2">
+                                    {versionAudit.loading ? (
+                                        <>
+                                            <div className="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+                                            Scanning...
+                                        </>
+                                    ) : versionAudit.hasMismatch ? (
+                                        <><span className="text-red-400">â ï¸ Version Mismatch Found!</span></>
+                                    ) : (
+                                        <><span className="text-green-400">â Versions Consistent</span></>
+                                    )}
+                                </h3>
+                                <button onClick={() => setVersionAudit(null)} className="text-slate-400 hover:text-white">
+                                    <Icons.X />
+                                </button>
+                            </div>
+                            
+                            {versionAudit.error && (
+                                <div className="text-red-400 text-sm">{versionAudit.error}</div>
+                            )}
+                            
+                            {versionAudit.versions && (
+                                <>
+                                    <div className="text-sm mb-2">
+                                        <span className="text-slate-400">Primary version (meta tag): </span>
+                                        <span className="font-mono text-green-400">{versionAudit.primary || 'Not found'}</span>
+                                    </div>
+                                    
+                                    {versionAudit.hasMismatch && (
+                                        <div className="text-sm mb-2 text-amber-400">
+                                            Found {versionAudit.uniqueVersions.length} different versions: {versionAudit.uniqueVersions.join(', ')}
+                                        </div>
+                                    )}
+                                    
+                                    <div className="text-xs text-slate-400 mb-2">Found {versionAudit.versions.length} version string(s):</div>
+                                    <div className="space-y-1 max-h-48 overflow-auto">
+                                        {versionAudit.versions.map((v, i) => (
+                                            <div key={i} className={`text-xs p-2 rounded ${v.value === versionAudit.primary ? 'bg-green-900/30' : 'bg-red-900/30'}`}>
+                                                <div className="flex items-center gap-2">
+                                                    <span className={`font-mono ${v.value === versionAudit.primary ? 'text-green-400' : 'text-red-400'}`}>
+                                                        {v.value}
+                                                    </span>
+                                                    <span className="text-slate-500">â {v.source}</span>
+                                                </div>
+                                                <div className="text-slate-500 font-mono truncate mt-1">{v.context}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </>
+                            )}
                         </div>
                     )}
                     
@@ -2523,6 +3470,1356 @@
                         ))}
                     </div>
                 )}
+            </div>
+        );
+    }
+
+    // =========================================================================
+    // SESSION LOG VIEW
+    // =========================================================================
+    
+    function SessionLogView({ apps, sessionLog, setSessionLog, deployments, github, onFileDrop }) {
+        const [newEntry, setNewEntry] = React.useState('');
+        const [firebaseUser, setFirebaseUser] = React.useState(null);
+        const [syncStatus, setSyncStatus] = React.useState('local');
+        const [quickDeployCode, setQuickDeployCode] = React.useState('');
+        const [detectedFile, setDetectedFile] = React.useState(null);
+        const [projectFile, setProjectFile] = React.useState(null);
+        const [uploading, setUploading] = React.useState(false);
+        const [downloading, setDownloading] = React.useState(false);
+        const [pendingDeploys, setPendingDeploys] = React.useState([]);
+        const [apiKey, setApiKey] = React.useState(() => {
+            try { return localStorage.getItem('cc_api_key') || ''; } catch { return ''; }
+        });
+        
+        const configuredApps = Object.values(apps).filter(a => a.testRepo || a.prodRepo);
+        
+        // Listen for Firebase auth
+        React.useEffect(() => {
+            if (!firebaseAuth) return;
+            const unsubscribe = firebaseAuth.onAuthStateChanged((u) => {
+                setFirebaseUser(u);
+                if (u) {
+                    loadProjectFileInfo(u.uid);
+                    listenForPendingDeploys(u.uid);
+                }
+            });
+            return () => unsubscribe();
+        }, []);
+        
+        // Listen for pending deploys from Claude
+        const listenForPendingDeploys = (uid) => {
+            if (!firebaseDb) return;
+            
+            const ref = firebaseDb.ref(`command-center/${uid}/pending-deploys`);
+            ref.orderByChild('status').equalTo('pending').on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                    const deploys = Object.entries(data).map(([id, d]) => ({ id, ...d }));
+                    setPendingDeploys(deploys.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+                } else {
+                    setPendingDeploys([]);
+                }
+            });
+            
+            return () => ref.off();
+        };
+        
+        // Accept pending deploy
+        const acceptPendingDeploy = async (deploy) => {
+            if (!github) {
+                alert('Configure GitHub token first');
+                return;
+            }
+            
+            // Create file object for existing deploy handler
+            const file = {
+                id: Date.now(),
+                name: 'index.html',
+                content: deploy.code,
+                version: deploy.version,
+                targetPath: 'index.html'
+            };
+            
+            onFileDrop([file]);
+            
+            // Update status in Firebase
+            await firebaseDb.ref(`command-center/${firebaseUser.uid}/pending-deploys/${deploy.id}/status`).set('deployed');
+            await logEntry(`Deployed from queue: ${deploy.appName || deploy.appId} v${deploy.version}`, 'deploy');
+        };
+        
+        // Reject pending deploy
+        const rejectPendingDeploy = async (deployId) => {
+            await firebaseDb.ref(`command-center/${firebaseUser.uid}/pending-deploys/${deployId}/status`).set('rejected');
+        };
+        
+        // Generate API key for Claude
+        const generateApiKey = () => {
+            const key = 'cc_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+            setApiKey(key);
+            localStorage.setItem('cc_api_key', key);
+            
+            // Store in Firebase for validation
+            if (firebaseDb && firebaseUser) {
+                firebaseDb.ref(`command-center/${firebaseUser.uid}/apiKey`).set(key);
+            }
+        };
+        
+        // Load project file info from Firebase
+        const loadProjectFileInfo = async (uid) => {
+            if (!firebaseDb || !uid) return;
+            try {
+                const snapshot = await firebaseDb.ref(`command-center/${uid}/projectFile`).once('value');
+                const data = snapshot.val();
+                if (data) {
+                    setProjectFile(data);
+                }
+                setSyncStatus('synced');
+            } catch (e) {
+                console.error('Error loading project file info:', e);
+                setSyncStatus('error');
+            }
+        };
+        
+        // Upload gs-active.zip to Firebase
+        const uploadProjectFile = async (file) => {
+            if (!firebaseDb || !firebaseUser) {
+                alert('Please sign in via the Firebase tab first');
+                return;
+            }
+            
+            setUploading(true);
+            try {
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    const base64 = e.target.result.split(',')[1];
+                    
+                    const fileInfo = {
+                        name: file.name,
+                        size: file.size,
+                        lastModified: new Date().toISOString(),
+                        data: base64
+                    };
+                    
+                    await firebaseDb.ref(`command-center/${firebaseUser.uid}/projectFile`).set(fileInfo);
+                    
+                    setProjectFile({
+                        name: file.name,
+                        size: file.size,
+                        lastModified: fileInfo.lastModified
+                    });
+                    
+                    await logEntry(`Uploaded ${file.name} (${(file.size/1024).toFixed(1)}KB)`, 'upload');
+                    setUploading(false);
+                };
+                reader.readAsDataURL(file);
+            } catch (e) {
+                console.error('Upload error:', e);
+                alert('Upload failed: ' + e.message);
+                setUploading(false);
+            }
+        };
+        
+        // Download gs-active.zip from Firebase
+        const downloadProjectFile = async () => {
+            if (!firebaseDb || !firebaseUser) {
+                alert('Please sign in via the Firebase tab first');
+                return;
+            }
+            
+            setDownloading(true);
+            try {
+                const snapshot = await firebaseDb.ref(`command-center/${firebaseUser.uid}/projectFile`).once('value');
+                const data = snapshot.val();
+                
+                if (!data || !data.data) {
+                    alert('No project file found. Upload one first!');
+                    setDownloading(false);
+                    return;
+                }
+                
+                const byteCharacters = atob(data.data);
+                const byteNumbers = new Array(byteCharacters.length);
+                for (let i = 0; i < byteCharacters.length; i++) {
+                    byteNumbers[i] = byteCharacters.charCodeAt(i);
+                }
+                const byteArray = new Uint8Array(byteNumbers);
+                const blob = new Blob([byteArray], { type: 'application/zip' });
+                
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = data.name || 'gs-active.zip';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                await logEntry(`Downloaded ${data.name}`, 'download');
+                setDownloading(false);
+            } catch (e) {
+                console.error('Download error:', e);
+                alert('Download failed: ' + e.message);
+                setDownloading(false);
+            }
+        };
+        
+        // Handle file drop for project upload
+        const handleProjectFileDrop = (e) => {
+            e.preventDefault();
+            const file = e.dataTransfer?.files[0] || e.target.files?.[0];
+            if (file && (file.name.endsWith('.zip') || file.name === 'gs-active.zip')) {
+                uploadProjectFile(file);
+            } else {
+                alert('Please upload a .zip file (gs-active.zip)');
+            }
+        };
+        
+        // Log entry to Firebase
+        const logEntry = async (text, type = 'note') => {
+            if (!firebaseDb || !firebaseUser) return;
+            
+            const entry = {
+                time: new Date().toISOString(),
+                type,
+                text
+            };
+            
+            const today = new Date().toISOString().split('T')[0];
+            await firebaseDb.ref(`command-center/${firebaseUser.uid}/logs/${today}`).push(entry);
+        };
+        
+        // Add manual entry
+        const addEntry = async () => {
+            if (!newEntry.trim()) return;
+            await logEntry(newEntry.trim());
+            setNewEntry('');
+            
+            setSessionLog(prev => ({
+                ...prev,
+                recentEntries: [...(prev.recentEntries || []), {
+                    time: new Date().toISOString(),
+                    type: 'note',
+                    text: newEntry.trim()
+                }].slice(-20)
+            }));
+        };
+        
+        // Quick Deploy: Detect file from pasted code
+        const handleCodePaste = (code) => {
+            setQuickDeployCode(code);
+            
+            if (!code.trim()) {
+                setDetectedFile(null);
+                return;
+            }
+            
+            const versionMatch = code.match(/<meta\s+name=["']version["']\s+content=["']([^"']+)["']/i);
+            const titleMatch = code.match(/<title>([^<]+)<\/title>/i);
+            
+            const version = versionMatch?.[1] || 'unknown';
+            const title = titleMatch?.[1]?.toLowerCase() || '';
+            
+            let matchedApp = null;
+            for (const app of configuredApps) {
+                const name = app.name.toLowerCase();
+                if (title.includes(name) || code.toLowerCase().includes(`${name} v`)) {
+                    matchedApp = app;
+                    break;
+                }
+            }
+            
+            setDetectedFile({
+                content: code,
+                version,
+                detectedApp: matchedApp,
+                title: titleMatch?.[1] || 'Unknown',
+                size: code.length
+            });
+        };
+        
+        // Quick Deploy
+        const handleQuickDeploy = async (appId, target) => {
+            if (!detectedFile || !github) return;
+            
+            const file = {
+                id: Date.now(),
+                name: 'index.html',
+                content: detectedFile.content,
+                version: detectedFile.version,
+                targetPath: 'index.html'
+            };
+            
+            onFileDrop([file]);
+            await logEntry(`Quick deploy: ${apps[appId]?.name} v${detectedFile.version} â ${target.toUpperCase()}`, 'deploy');
+            
+            setQuickDeployCode('');
+            setDetectedFile(null);
+        };
+        
+        // Generate context for Claude
+        const generateContext = () => {
+            const lines = [
+                `# Session Context - ${new Date().toLocaleString()}`,
+                ``,
+                `## App Versions`,
+                `| App | TEST | PROD |`,
+                `|-----|------|------|`,
+            ];
+            configuredApps.forEach(app => {
+                lines.push(`| ${app.name} | ${app.currentTestVersion || 'â'} | ${app.currentProdVersion || 'â'} |`);
+            });
+            return lines.join('\n');
+        };
+        
+        const copyContext = async () => {
+            await navigator.clipboard.writeText(generateContext());
+        };
+        
+        // Copy Claude deploy instructions
+        const copyClaudeInstructions = () => {
+            const instructions = `## Deploy to Command Center
+
+To deploy code directly to Command Center, use this Firebase write:
+
+\`\`\`javascript
+// Firebase config (already in your context)
+const FIREBASE_CONFIG = {
+    apiKey: "AIzaSyBUgW3EkJ3P8Zj6Gq2x7X0nR1YQ2LdW8_A",
+    authDomain: "word-boxing.firebaseapp.com",
+    databaseURL: "https://word-boxing-default-rtdb.firebaseio.com",
+    projectId: "word-boxing"
+};
+
+// Write pending deploy
+await firebase.database().ref('command-center/${firebaseUser?.uid || 'USER_UID'}/pending-deploys').push({
+    code: YOUR_HTML_CODE,
+    appId: 'gameshelf', // or 'quotle', 'slate', 'rungs', 'wordboxing'
+    appName: 'Game Shelf',
+    version: '1.0.1',
+    target: 'test',
+    status: 'pending',
+    createdAt: new Date().toISOString()
+});
+\`\`\`
+
+The deploy will appear in Command Center's Session tab for one-click deployment.`;
+            
+            navigator.clipboard.writeText(instructions);
+        };
+        
+        return (
+            <div className="space-y-6">
+                {/* Pending Deploys from Claude */}
+                {pendingDeploys.length > 0 && (
+                    <div className="bg-green-900/30 border border-green-600 rounded-xl p-6 animate-pulse-slow">
+                        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 text-green-300">
+                            ð Incoming from Claude ({pendingDeploys.length})
+                        </h2>
+                        <div className="space-y-3">
+                            {pendingDeploys.map(deploy => (
+                                <div key={deploy.id} className="p-4 bg-slate-800 rounded-lg flex items-center justify-between">
+                                    <div>
+                                        <div className="font-medium">{deploy.appName || deploy.appId}</div>
+                                        <div className="text-sm text-slate-400">
+                                            v{deploy.version} â {deploy.target?.toUpperCase()} â¢ 
+                                            {(deploy.code?.length / 1024).toFixed(1)}KB â¢
+                                            {new Date(deploy.createdAt).toLocaleTimeString()}
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button
+                                            onClick={() => rejectPendingDeploy(deploy.id)}
+                                            className="px-3 py-1.5 bg-red-600 hover:bg-red-500 rounded text-sm">
+                                            â Reject
+                                        </button>
+                                        <button
+                                            onClick={() => acceptPendingDeploy(deploy)}
+                                            className="px-3 py-1.5 bg-green-600 hover:bg-green-500 rounded text-sm">
+                                            â Deploy
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+                
+                {/* Project File (gs-active.zip) */}
+                <div className="bg-indigo-900/30 border border-indigo-700 rounded-xl p-6">
+                    <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 text-indigo-300">
+                        ð¦ Project File (gs-active.zip)
+                    </h2>
+                    
+                    {!firebaseUser ? (
+                        <div className="text-amber-400 text-sm p-3 bg-amber-900/30 rounded-lg">
+                            â ï¸ Sign in via the Firebase tab to sync your project file
+                        </div>
+                    ) : (
+                        <div className="space-y-4">
+                            {projectFile ? (
+                                <div className="p-4 bg-slate-800 rounded-lg flex items-center justify-between">
+                                    <div>
+                                        <div className="font-medium">{projectFile.name}</div>
+                                        <div className="text-sm text-slate-400">
+                                            {(projectFile.size / 1024).toFixed(1)} KB â¢ 
+                                            Updated: {new Date(projectFile.lastModified).toLocaleString()}
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={downloadProjectFile}
+                                        disabled={downloading}
+                                        className="px-4 py-2 bg-green-600 hover:bg-green-500 rounded-lg flex items-center gap-2 disabled:opacity-50">
+                                        {downloading ? 'â³' : 'â¬ï¸'} Download
+                                    </button>
+                                </div>
+                            ) : (
+                                <div className="p-4 bg-slate-800 rounded-lg text-slate-400 text-center">
+                                    No project file uploaded yet
+                                </div>
+                            )}
+                            
+                            <div
+                                onDrop={handleProjectFileDrop}
+                                onDragOver={e => e.preventDefault()}
+                                className="border-2 border-dashed border-slate-600 rounded-lg p-4 text-center hover:border-indigo-500 transition-colors">
+                                <input
+                                    type="file"
+                                    accept=".zip"
+                                    onChange={handleProjectFileDrop}
+                                    className="hidden"
+                                    id="project-file-input"
+                                />
+                                <label htmlFor="project-file-input" className="cursor-pointer">
+                                    {uploading ? (
+                                        <span className="text-indigo-400">â³ Uploading...</span>
+                                    ) : (
+                                        <span className="text-slate-400">
+                                            ð¤ Drop gs-active.zip or <span className="text-indigo-400 underline">browse</span>
+                                        </span>
+                                    )}
+                                </label>
+                            </div>
+                        </div>
+                    )}
+                </div>
+                
+                {/* Claude API Integration */}
+                {firebaseUser && (
+                    <div className="bg-purple-900/30 border border-purple-700 rounded-xl p-6">
+                        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 text-purple-300">
+                            ð¤ Claude Direct Deploy
+                        </h2>
+                        <p className="text-sm text-slate-400 mb-4">
+                            If Claude has network access, it can push code directly here for one-click deployment.
+                        </p>
+                        
+                        <div className="space-y-3">
+                            <div className="p-3 bg-slate-800 rounded-lg">
+                                <div className="text-xs text-slate-500 mb-1">Your Firebase UID (for Claude):</div>
+                                <code className="text-sm text-purple-300 break-all">{firebaseUser.uid}</code>
+                            </div>
+                            
+                            <button
+                                onClick={copyClaudeInstructions}
+                                className="w-full px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-sm">
+                                ð Copy Instructions for Claude
+                            </button>
+                        </div>
+                    </div>
+                )}
+                
+                {/* Quick Deploy */}
+                <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
+                    <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                        â¡ Quick Deploy (Paste Code)
+                    </h2>
+                    <textarea
+                        value={quickDeployCode}
+                        onChange={e => handleCodePaste(e.target.value)}
+                        placeholder="Paste HTML code from Claude here..."
+                        className="w-full h-24 p-3 bg-slate-900 border border-slate-600 rounded-lg text-sm font-mono mb-3"
+                    />
+                    
+                    {detectedFile && (
+                        <div className="p-4 bg-slate-700/50 rounded-lg space-y-3">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <div className="font-medium">{detectedFile.title}</div>
+                                    <div className="text-sm text-slate-400">
+                                        v{detectedFile.version} â¢ {(detectedFile.size / 1024).toFixed(1)}KB
+                                    </div>
+                                </div>
+                                {detectedFile.detectedApp && (
+                                    <span className="px-2 py-1 bg-green-900/50 text-green-400 rounded text-sm">
+                                        â {detectedFile.detectedApp.name}
+                                    </span>
+                                )}
+                            </div>
+                            
+                            <div className="flex flex-wrap gap-2">
+                                {configuredApps.map(app => (
+                                    <button
+                                        key={app.id}
+                                        onClick={() => handleQuickDeploy(app.id, 'test')}
+                                        className={`px-3 py-1.5 rounded text-sm ${
+                                            detectedFile.detectedApp?.id === app.id 
+                                                ? 'bg-blue-600 hover:bg-blue-500' 
+                                                : 'bg-slate-600 hover:bg-slate-500'
+                                        }`}>
+                                        {app.icon} {app.name} â TEST
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+                
+                {/* Activity Log */}
+                <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
+                    <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-lg font-semibold">ð Activity Log</h2>
+                        <button onClick={copyContext} className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 rounded text-sm">
+                            ð Copy Context
+                        </button>
+                    </div>
+                    
+                    <div className="flex gap-2 mb-4">
+                        <input
+                            value={newEntry}
+                            onChange={e => setNewEntry(e.target.value)}
+                            onKeyDown={e => e.key === 'Enter' && addEntry()}
+                            placeholder="Log a note..."
+                            className="flex-1 p-2 bg-slate-900 border border-slate-600 rounded text-sm"
+                        />
+                        <button onClick={addEntry} className="px-4 bg-indigo-600 hover:bg-indigo-500 rounded">
+                            + Log
+                        </button>
+                    </div>
+                    
+                    {sessionLog.recentEntries?.length > 0 && (
+                        <div className="space-y-1 max-h-32 overflow-y-auto">
+                            {[...sessionLog.recentEntries].reverse().map((e, i) => (
+                                <div key={i} className="text-sm flex items-center gap-2">
+                                    <span className="text-xs text-slate-500 w-16">
+                                        {new Date(e.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                    </span>
+                                    <span className={
+                                        e.type === 'deploy' ? 'text-green-400' : 
+                                        e.type === 'upload' ? 'text-blue-400' : ''
+                                    }>
+                                        {e.text}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+                
+                {/* Current Versions */}
+                <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
+                    <h2 className="text-lg font-semibold mb-4">ð Current Versions</h2>
+                    <table className="w-full text-sm">
+                        <thead>
+                            <tr className="border-b border-slate-700">
+                                <th className="text-left p-2">App</th>
+                                <th className="text-center p-2">TEST</th>
+                                <th className="text-center p-2">PROD</th>
+                                <th className="text-center p-2">Sync</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {configuredApps.map(app => (
+                                <tr key={app.id} className="border-b border-slate-700/50">
+                                    <td className="p-2">{app.icon} {app.name}</td>
+                                    <td className="p-2 text-center font-mono text-blue-400">{app.currentTestVersion || 'â'}</td>
+                                    <td className="p-2 text-center font-mono text-green-400">{app.currentProdVersion || 'â'}</td>
+                                    <td className="p-2 text-center">
+                                        {app.currentTestVersion === app.currentProdVersion 
+                                            ? <span className="text-green-400">â</span>
+                                            : <span className="text-amber-400">â ï¸</span>
+                                        }
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+                
+                {/* Testing & Issues */}
+                <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
+                    <h2 className="text-lg font-semibold mb-4">ð§ª Testing & Issues</h2>
+                    
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                        <a href="https://stewartdavidp-ship-it.github.io/gameshelf-testplan/" 
+                           target="_blank"
+                           className="p-3 bg-indigo-900/30 border border-indigo-700 rounded-lg text-center hover:bg-indigo-900/50 transition-colors">
+                            <div className="text-2xl mb-1">ð</div>
+                            <div className="text-sm">Test Plan</div>
+                        </a>
+                        <a href="https://stewartdavidp-ship-it.github.io/gameshelf-testplan/issue-tracker.html" 
+                           target="_blank"
+                           className="p-3 bg-red-900/30 border border-red-700 rounded-lg text-center hover:bg-red-900/50 transition-colors">
+                            <div className="text-2xl mb-1">ð</div>
+                            <div className="text-sm">Issue Tracker</div>
+                        </a>
+                        <a href="https://stewartdavidp-ship-it.github.io/gameshelftest/" 
+                           target="_blank"
+                           className="p-3 bg-blue-900/30 border border-blue-700 rounded-lg text-center hover:bg-blue-900/50 transition-colors">
+                            <div className="text-2xl mb-1">ð§ª</div>
+                            <div className="text-sm">TEST Site</div>
+                        </a>
+                        <a href="https://stewartdavidp-ship-it.github.io/gameshelf/" 
+                           target="_blank"
+                           className="p-3 bg-green-900/30 border border-green-700 rounded-lg text-center hover:bg-green-900/50 transition-colors">
+                            <div className="text-2xl mb-1">ð</div>
+                            <div className="text-sm">PROD Site</div>
+                        </a>
+                    </div>
+                    
+                    <div className="text-xs text-slate-500 bg-slate-900/50 rounded-lg p-3">
+                        <div className="font-medium text-slate-400 mb-2">Test â Fix Workflow:</div>
+                        <ol className="list-decimal list-inside space-y-1">
+                            <li>Run tests in Test Plan â Issues logged to tracker</li>
+                            <li>Click issue â Copy details for Claude</li>
+                            <li>Claude fixes â Quick Deploy to TEST</li>
+                            <li>Re-test â Promote to PROD when passing</li>
+                        </ol>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // =========================================================================
+    // ISSUES VIEW - Full Issue Tracking & Release Management
+    // =========================================================================
+    
+    function IssuesView({ apps, deployments }) {
+        const [issues, setIssues] = React.useState([]);
+        const [releases, setReleases] = React.useState([]);
+        const [firebaseUser, setFirebaseUser] = React.useState(null);
+        const [loading, setLoading] = React.useState(true);
+        const [showNewIssue, setShowNewIssue] = React.useState(false);
+        const [selectedIssue, setSelectedIssue] = React.useState(null);
+        const [filter, setFilter] = React.useState('open'); // 'all', 'open', 'fixed', 'verified', 'closed'
+        const [appFilter, setAppFilter] = React.useState('all');
+        
+        const configuredApps = Object.values(apps).filter(a => a.testRepo || a.prodRepo);
+        
+        // Listen for Firebase auth
+        React.useEffect(() => {
+            if (!firebaseAuth) return;
+            const unsubscribe = firebaseAuth.onAuthStateChanged((u) => {
+                setFirebaseUser(u);
+                if (u) {
+                    loadIssues(u.uid);
+                    loadReleases(u.uid);
+                }
+            });
+            return () => unsubscribe();
+        }, []);
+        
+        // Load issues from Firebase
+        const loadIssues = async (uid) => {
+            if (!firebaseDb) return;
+            setLoading(true);
+            try {
+                const ref = firebaseDb.ref(`command-center/${uid}/issues`);
+                ref.on('value', (snapshot) => {
+                    const data = snapshot.val();
+                    if (data) {
+                        const list = Object.entries(data).map(([id, issue]) => ({ id, ...issue }));
+                        setIssues(list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+                    } else {
+                        setIssues([]);
+                    }
+                    setLoading(false);
+                });
+            } catch (e) {
+                console.error('Error loading issues:', e);
+                setLoading(false);
+            }
+        };
+        
+        // Load releases from Firebase
+        const loadReleases = async (uid) => {
+            if (!firebaseDb) return;
+            try {
+                const ref = firebaseDb.ref(`command-center/${uid}/releases`);
+                ref.on('value', (snapshot) => {
+                    const data = snapshot.val();
+                    if (data) {
+                        const list = Object.entries(data).map(([id, rel]) => ({ id, ...rel }));
+                        setReleases(list.sort((a, b) => new Date(b.deployedAt) - new Date(a.deployedAt)));
+                    } else {
+                        setReleases([]);
+                    }
+                });
+            } catch (e) {
+                console.error('Error loading releases:', e);
+            }
+        };
+        
+        // Generate next issue ID
+        const getNextIssueId = () => {
+            const existing = issues.map(i => parseInt(i.id?.replace('ISS-', '') || 0));
+            const max = Math.max(0, ...existing);
+            return `ISS-${String(max + 1).padStart(3, '0')}`;
+        };
+        
+        // Create new issue
+        const createIssue = async (issueData) => {
+            if (!firebaseDb || !firebaseUser) return;
+            
+            const id = getNextIssueId();
+            const issue = {
+                ...issueData,
+                id,
+                status: 'open',
+                createdAt: new Date().toISOString(),
+                createdBy: 'manual',
+                notes: []
+            };
+            
+            await firebaseDb.ref(`command-center/${firebaseUser.uid}/issues/${id}`).set(issue);
+            setShowNewIssue(false);
+        };
+        
+        // Update issue status
+        const updateIssueStatus = async (issueId, newStatus, extraData = {}) => {
+            if (!firebaseDb || !firebaseUser) return;
+            
+            const updates = {
+                status: newStatus,
+                [`${newStatus}At`]: new Date().toISOString(),
+                ...extraData
+            };
+            
+            await firebaseDb.ref(`command-center/${firebaseUser.uid}/issues/${issueId}`).update(updates);
+        };
+        
+        // Link issue to version (when deploying fix)
+        const linkIssueToVersion = async (issueId, version, app) => {
+            if (!firebaseDb || !firebaseUser) return;
+            
+            await firebaseDb.ref(`command-center/${firebaseUser.uid}/issues/${issueId}`).update({
+                status: 'fixed',
+                fixedAt: new Date().toISOString(),
+                fixedInVersion: version,
+                fixedInApp: app
+            });
+        };
+        
+        // Generate "Copy for Claude" text
+        const copyForClaude = (issue) => {
+            const text = `## Issue ${issue.id}: ${issue.title}
+
+**App:** ${issue.app}
+**Severity:** ${issue.severity}
+**Status:** ${issue.status}
+
+### Description
+${issue.description}
+
+### Steps to Reproduce
+${issue.stepsToReproduce?.map((s, i) => `${i + 1}. ${s}`).join('\n') || 'N/A'}
+
+### Expected Behavior
+${issue.expected || 'N/A'}
+
+### Actual Behavior
+${issue.actual || 'N/A'}
+
+---
+When you fix this, please note: "Fixes ${issue.id}" in the code or deploy notes.`;
+            
+            navigator.clipboard.writeText(text);
+        };
+        
+        // Get issues ready for release (fixed in TEST, not yet in PROD)
+        const getIssuesForRelease = (app) => {
+            return issues.filter(i => 
+                i.app === app && 
+                (i.status === 'fixed' || i.status === 'verified') &&
+                !i.releasedToProd
+            );
+        };
+        
+        // Generate release notes
+        const generateReleaseNotes = (app) => {
+            const releaseIssues = getIssuesForRelease(app);
+            const appInfo = configuredApps.find(a => a.id === app);
+            const version = appInfo?.currentTestVersion || '?.?.?';
+            
+            const notes = `# ${appInfo?.name || app} v${version} Release Notes
+
+## What's New
+
+${releaseIssues.map(i => `- **${i.id}**: ${i.title}`).join('\n') || 'No tracked issues in this release.'}
+
+## Details
+
+${releaseIssues.map(i => `### ${i.id}: ${i.title}
+${i.description}
+`).join('\n')}
+
+---
+Released: ${new Date().toLocaleDateString()}
+`;
+            return notes;
+        };
+        
+        // Mark issues as released to PROD
+        const markReleasedToProd = async (app) => {
+            if (!firebaseDb || !firebaseUser) return;
+            
+            const releaseIssues = getIssuesForRelease(app);
+            const appInfo = configuredApps.find(a => a.id === app);
+            const version = appInfo?.currentTestVersion;
+            
+            // Update each issue
+            for (const issue of releaseIssues) {
+                await firebaseDb.ref(`command-center/${firebaseUser.uid}/issues/${issue.id}`).update({
+                    status: 'closed',
+                    closedAt: new Date().toISOString(),
+                    releasedToProd: true,
+                    releasedInVersion: version
+                });
+            }
+            
+            // Create release record
+            const releaseId = `${app}-${version}-${Date.now()}`;
+            await firebaseDb.ref(`command-center/${firebaseUser.uid}/releases/${releaseId}`).set({
+                app,
+                version,
+                deployedAt: new Date().toISOString(),
+                issues: releaseIssues.map(i => i.id),
+                environment: 'prod'
+            });
+            
+            // Copy release notes
+            navigator.clipboard.writeText(generateReleaseNotes(app));
+            alert('Release notes copied to clipboard!');
+        };
+        
+        // Filter issues
+        const filteredIssues = issues.filter(i => {
+            if (filter !== 'all' && i.status !== filter) return false;
+            if (appFilter !== 'all' && i.app !== appFilter) return false;
+            return true;
+        });
+        
+        // Status badge
+        const StatusBadge = ({ status }) => {
+            const colors = {
+                open: 'bg-red-900/50 text-red-300 border-red-700',
+                'in-progress': 'bg-yellow-900/50 text-yellow-300 border-yellow-700',
+                fixed: 'bg-blue-900/50 text-blue-300 border-blue-700',
+                verified: 'bg-green-900/50 text-green-300 border-green-700',
+                closed: 'bg-slate-700 text-slate-400 border-slate-600'
+            };
+            return (
+                <span className={`px-2 py-0.5 rounded border text-xs ${colors[status] || colors.open}`}>
+                    {status}
+                </span>
+            );
+        };
+        
+        // Severity badge
+        const SeverityBadge = ({ severity }) => {
+            const colors = {
+                critical: 'text-red-400',
+                high: 'text-orange-400',
+                medium: 'text-yellow-400',
+                low: 'text-slate-400'
+            };
+            const icons = { critical: 'ð´', high: 'ð ', medium: 'ð¡', low: 'âª' };
+            return <span className={colors[severity]}>{icons[severity]} {severity}</span>;
+        };
+        
+        if (!firebaseUser) {
+            return (
+                <div className="bg-amber-900/30 border border-amber-700 rounded-xl p-6 text-center">
+                    <div className="text-amber-400 mb-2">â ï¸ Sign in Required</div>
+                    <div className="text-sm text-slate-400">Go to the Firebase tab to sign in and enable issue tracking.</div>
+                </div>
+            );
+        }
+        
+        return (
+            <div className="space-y-6">
+                {/* Header & Stats */}
+                <div className="flex items-center justify-between">
+                    <div>
+                        <h2 className="text-xl font-bold">ð Issue Tracker</h2>
+                        <div className="text-sm text-slate-400">
+                            {issues.filter(i => i.status === 'open').length} open â¢ 
+                            {issues.filter(i => i.status === 'fixed').length} fixed â¢ 
+                            {issues.filter(i => i.status === 'verified').length} verified
+                        </div>
+                    </div>
+                    <button
+                        onClick={() => setShowNewIssue(true)}
+                        className="px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg flex items-center gap-2">
+                        + New Issue
+                    </button>
+                </div>
+                
+                {/* Filters */}
+                <div className="flex gap-2 flex-wrap">
+                    {['all', 'open', 'in-progress', 'fixed', 'verified', 'closed'].map(f => (
+                        <button
+                            key={f}
+                            onClick={() => setFilter(f)}
+                            className={`px-3 py-1 rounded text-sm ${filter === f ? 'bg-indigo-600' : 'bg-slate-700 hover:bg-slate-600'}`}>
+                            {f}
+                        </button>
+                    ))}
+                    <select
+                        value={appFilter}
+                        onChange={e => setAppFilter(e.target.value)}
+                        className="px-3 py-1 rounded text-sm bg-slate-700 border-none">
+                        <option value="all">All Apps</option>
+                        {configuredApps.map(app => (
+                            <option key={app.id} value={app.id}>{app.name}</option>
+                        ))}
+                    </select>
+                </div>
+                
+                {/* Release Ready Banner */}
+                {configuredApps.map(app => {
+                    const ready = getIssuesForRelease(app.id);
+                    if (ready.length === 0) return null;
+                    return (
+                        <div key={app.id} className="bg-green-900/30 border border-green-700 rounded-xl p-4 flex items-center justify-between">
+                            <div>
+                                <div className="font-medium text-green-300">
+                                    {app.icon} {app.name}: {ready.length} issue{ready.length !== 1 ? 's' : ''} ready for PROD
+                                </div>
+                                <div className="text-sm text-slate-400">
+                                    {ready.map(i => i.id).join(', ')}
+                                </div>
+                            </div>
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={() => navigator.clipboard.writeText(generateReleaseNotes(app.id))}
+                                    className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-sm">
+                                    ð Copy Notes
+                                </button>
+                                <button
+                                    onClick={() => markReleasedToProd(app.id)}
+                                    className="px-3 py-1.5 bg-green-600 hover:bg-green-500 rounded text-sm">
+                                    ð Mark Released
+                                </button>
+                            </div>
+                        </div>
+                    );
+                })}
+                
+                {/* Issues List */}
+                <div className="space-y-3">
+                    {loading ? (
+                        <div className="text-center text-slate-400 py-8">Loading issues...</div>
+                    ) : filteredIssues.length === 0 ? (
+                        <div className="text-center text-slate-400 py-8">No issues found</div>
+                    ) : (
+                        filteredIssues.map(issue => (
+                            <div
+                                key={issue.id}
+                                className="bg-slate-800 border border-slate-700 rounded-lg p-4 hover:border-slate-600 transition-colors">
+                                <div className="flex items-start justify-between gap-4">
+                                    <div className="flex-1">
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <span className="font-mono text-sm text-indigo-400">{issue.id}</span>
+                                            <StatusBadge status={issue.status} />
+                                            <SeverityBadge severity={issue.severity} />
+                                        </div>
+                                        <div className="font-medium">{issue.title}</div>
+                                        <div className="text-sm text-slate-400 mt-1">
+                                            {issue.app && <span className="mr-3">ð± {configuredApps.find(a => a.id === issue.app)?.name || issue.app}</span>}
+                                            <span>ð {new Date(issue.createdAt).toLocaleDateString()}</span>
+                                            {issue.fixedInVersion && <span className="ml-3 text-blue-400">ð§ Fixed in v{issue.fixedInVersion}</span>}
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-1">
+                                        <button
+                                            onClick={() => copyForClaude(issue)}
+                                            className="px-2 py-1 bg-purple-600 hover:bg-purple-500 rounded text-xs"
+                                            title="Copy for Claude">
+                                            ð¤
+                                        </button>
+                                        <button
+                                            onClick={() => setSelectedIssue(issue)}
+                                            className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs">
+                                            Edit
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                {/* Quick status buttons */}
+                                <div className="flex gap-2 mt-3 pt-3 border-t border-slate-700">
+                                    {issue.status === 'open' && (
+                                        <button
+                                            onClick={() => updateIssueStatus(issue.id, 'in-progress')}
+                                            className="px-2 py-1 bg-yellow-700 hover:bg-yellow-600 rounded text-xs">
+                                            Start Working
+                                        </button>
+                                    )}
+                                    {(issue.status === 'open' || issue.status === 'in-progress') && (
+                                        <button
+                                            onClick={() => {
+                                                const version = prompt('Fixed in version:');
+                                                if (version) linkIssueToVersion(issue.id, version, issue.app);
+                                            }}
+                                            className="px-2 py-1 bg-blue-700 hover:bg-blue-600 rounded text-xs">
+                                            Mark Fixed
+                                        </button>
+                                    )}
+                                    {issue.status === 'fixed' && (
+                                        <button
+                                            onClick={() => updateIssueStatus(issue.id, 'verified')}
+                                            className="px-2 py-1 bg-green-700 hover:bg-green-600 rounded text-xs">
+                                            â Verify Fixed
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        ))
+                    )}
+                </div>
+                
+                {/* Recent Releases */}
+                {releases.length > 0 && (
+                    <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
+                        <h3 className="text-lg font-semibold mb-4">ð¦ Recent Releases</h3>
+                        <div className="space-y-2">
+                            {releases.slice(0, 5).map(rel => (
+                                <div key={rel.id} className="flex items-center justify-between p-3 bg-slate-700/50 rounded-lg">
+                                    <div>
+                                        <span className="font-medium">{configuredApps.find(a => a.id === rel.app)?.name || rel.app}</span>
+                                        <span className="ml-2 font-mono text-green-400">v{rel.version}</span>
+                                        <span className="ml-2 text-xs text-slate-400">â {rel.environment?.toUpperCase()}</span>
+                                    </div>
+                                    <div className="text-sm text-slate-400">
+                                        {rel.issues?.length || 0} issues â¢ {new Date(rel.deployedAt).toLocaleDateString()}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+                
+                {/* Test Plan Integration */}
+                {firebaseUser && (
+                    <div className="bg-purple-900/30 border border-purple-700 rounded-xl p-6">
+                        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2 text-purple-300">
+                            ð§ª Test Plan Integration
+                        </h3>
+                        <p className="text-sm text-slate-400 mb-4">
+                            The Test Plan app can automatically push issues here when tests fail.
+                        </p>
+                        
+                        <div className="space-y-3">
+                            <div className="p-3 bg-slate-800 rounded-lg">
+                                <div className="text-xs text-slate-500 mb-1">Firebase Path:</div>
+                                <code className="text-sm text-purple-300 break-all">
+                                    command-center/{firebaseUser.uid}/issues/
+                                </code>
+                            </div>
+                            
+                            <details className="bg-slate-800 rounded-lg">
+                                <summary className="p-3 cursor-pointer text-sm font-medium">
+                                    ð Test Plan Integration Code
+                                </summary>
+                                <pre className="p-3 text-xs overflow-auto border-t border-slate-700 bg-slate-900">
+{`// Add to Test Plan - Push issue when test fails
+const pushIssueToCommandCenter = async (testResult) => {
+  const uid = '${firebaseUser.uid}';
+  const issueId = 'ISS-' + String(Date.now()).slice(-6);
+  
+  await firebase.database()
+    .ref(\`command-center/\${uid}/issues/\${issueId}\`)
+    .set({
+      id: issueId,
+      title: testResult.testName + ' failed',
+      description: testResult.error || 'Test failed',
+      app: testResult.appId, // 'gameshelf', 'quotle', etc
+      severity: testResult.critical ? 'high' : 'medium',
+      status: 'open',
+      createdAt: new Date().toISOString(),
+      createdBy: 'test-plan',
+      stepsToReproduce: testResult.steps || [],
+      expected: testResult.expected,
+      actual: testResult.actual,
+      testId: testResult.testId
+    });
+};`}
+                                </pre>
+                            </details>
+                            
+                            <div className="flex gap-2">
+                                <a href="https://stewartdavidp-ship-it.github.io/gameshelf-testplan/"
+                                   target="_blank"
+                                   className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-center text-sm">
+                                    ð Open Test Plan
+                                </a>
+                                <a href="https://stewartdavidp-ship-it.github.io/gameshelf-testplan/issue-tracker.html"
+                                   target="_blank"
+                                   className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-center text-sm">
+                                    ð Legacy Tracker
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                )}
+                
+                {/* New Issue Modal */}
+                {showNewIssue && (
+                    <NewIssueModal
+                        apps={configuredApps}
+                        onSave={createIssue}
+                        onCancel={() => setShowNewIssue(false)}
+                    />
+                )}
+                
+                {/* Edit Issue Modal */}
+                {selectedIssue && (
+                    <EditIssueModal
+                        issue={selectedIssue}
+                        apps={configuredApps}
+                        onSave={async (updated) => {
+                            await firebaseDb.ref(`command-center/${firebaseUser.uid}/issues/${updated.id}`).update(updated);
+                            setSelectedIssue(null);
+                        }}
+                        onCancel={() => setSelectedIssue(null)}
+                    />
+                )}
+            </div>
+        );
+    }
+    
+    // New Issue Modal
+    function NewIssueModal({ apps, onSave, onCancel }) {
+        const [title, setTitle] = React.useState('');
+        const [description, setDescription] = React.useState('');
+        const [app, setApp] = React.useState(apps[0]?.id || '');
+        const [severity, setSeverity] = React.useState('medium');
+        const [stepsText, setStepsText] = React.useState('');
+        const [expected, setExpected] = React.useState('');
+        const [actual, setActual] = React.useState('');
+        
+        const handleSubmit = () => {
+            if (!title.trim()) return;
+            onSave({
+                title: title.trim(),
+                description: description.trim(),
+                app,
+                severity,
+                stepsToReproduce: stepsText.split('\n').filter(s => s.trim()),
+                expected: expected.trim(),
+                actual: actual.trim()
+            });
+        };
+        
+        return (
+            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+                <div className="bg-slate-800 rounded-xl border border-slate-700 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                    <div className="p-6 border-b border-slate-700">
+                        <h3 className="text-lg font-semibold">New Issue</h3>
+                    </div>
+                    <div className="p-6 space-y-4">
+                        <div>
+                            <label className="block text-sm text-slate-400 mb-1">Title *</label>
+                            <input
+                                value={title}
+                                onChange={e => setTitle(e.target.value)}
+                                className="w-full p-2 bg-slate-900 border border-slate-600 rounded"
+                                placeholder="Brief description of the issue"
+                            />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm text-slate-400 mb-1">App</label>
+                                <select
+                                    value={app}
+                                    onChange={e => setApp(e.target.value)}
+                                    className="w-full p-2 bg-slate-900 border border-slate-600 rounded">
+                                    {apps.map(a => (
+                                        <option key={a.id} value={a.id}>{a.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm text-slate-400 mb-1">Severity</label>
+                                <select
+                                    value={severity}
+                                    onChange={e => setSeverity(e.target.value)}
+                                    className="w-full p-2 bg-slate-900 border border-slate-600 rounded">
+                                    <option value="critical">ð´ Critical</option>
+                                    <option value="high">ð  High</option>
+                                    <option value="medium">ð¡ Medium</option>
+                                    <option value="low">âª Low</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div>
+                            <label className="block text-sm text-slate-400 mb-1">Description</label>
+                            <textarea
+                                value={description}
+                                onChange={e => setDescription(e.target.value)}
+                                className="w-full p-2 bg-slate-900 border border-slate-600 rounded h-20"
+                                placeholder="Detailed description"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm text-slate-400 mb-1">Steps to Reproduce (one per line)</label>
+                            <textarea
+                                value={stepsText}
+                                onChange={e => setStepsText(e.target.value)}
+                                className="w-full p-2 bg-slate-900 border border-slate-600 rounded h-20 font-mono text-sm"
+                                placeholder="1. Go to...&#10;2. Click on...&#10;3. Observe..."
+                            />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm text-slate-400 mb-1">Expected</label>
+                                <textarea
+                                    value={expected}
+                                    onChange={e => setExpected(e.target.value)}
+                                    className="w-full p-2 bg-slate-900 border border-slate-600 rounded h-16"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm text-slate-400 mb-1">Actual</label>
+                                <textarea
+                                    value={actual}
+                                    onChange={e => setActual(e.target.value)}
+                                    className="w-full p-2 bg-slate-900 border border-slate-600 rounded h-16"
+                                />
+                            </div>
+                        </div>
+                    </div>
+                    <div className="p-6 border-t border-slate-700 flex justify-end gap-3">
+                        <button onClick={onCancel} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded">
+                            Cancel
+                        </button>
+                        <button onClick={handleSubmit} className="px-4 py-2 bg-red-600 hover:bg-red-500 rounded">
+                            Create Issue
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+    
+    // Edit Issue Modal
+    function EditIssueModal({ issue, apps, onSave, onCancel }) {
+        const [title, setTitle] = React.useState(issue.title || '');
+        const [description, setDescription] = React.useState(issue.description || '');
+        const [app, setApp] = React.useState(issue.app || apps[0]?.id || '');
+        const [severity, setSeverity] = React.useState(issue.severity || 'medium');
+        const [stepsText, setStepsText] = React.useState(issue.stepsToReproduce?.join('\n') || '');
+        const [expected, setExpected] = React.useState(issue.expected || '');
+        const [actual, setActual] = React.useState(issue.actual || '');
+        
+        const handleSubmit = () => {
+            onSave({
+                ...issue,
+                title: title.trim(),
+                description: description.trim(),
+                app,
+                severity,
+                stepsToReproduce: stepsText.split('\n').filter(s => s.trim()),
+                expected: expected.trim(),
+                actual: actual.trim()
+            });
+        };
+        
+        return (
+            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+                <div className="bg-slate-800 rounded-xl border border-slate-700 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                    <div className="p-6 border-b border-slate-700">
+                        <h3 className="text-lg font-semibold">Edit {issue.id}</h3>
+                    </div>
+                    <div className="p-6 space-y-4">
+                        <div>
+                            <label className="block text-sm text-slate-400 mb-1">Title</label>
+                            <input
+                                value={title}
+                                onChange={e => setTitle(e.target.value)}
+                                className="w-full p-2 bg-slate-900 border border-slate-600 rounded"
+                            />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm text-slate-400 mb-1">App</label>
+                                <select
+                                    value={app}
+                                    onChange={e => setApp(e.target.value)}
+                                    className="w-full p-2 bg-slate-900 border border-slate-600 rounded">
+                                    {apps.map(a => (
+                                        <option key={a.id} value={a.id}>{a.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm text-slate-400 mb-1">Severity</label>
+                                <select
+                                    value={severity}
+                                    onChange={e => setSeverity(e.target.value)}
+                                    className="w-full p-2 bg-slate-900 border border-slate-600 rounded">
+                                    <option value="critical">ð´ Critical</option>
+                                    <option value="high">ð  High</option>
+                                    <option value="medium">ð¡ Medium</option>
+                                    <option value="low">âª Low</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div>
+                            <label className="block text-sm text-slate-400 mb-1">Description</label>
+                            <textarea
+                                value={description}
+                                onChange={e => setDescription(e.target.value)}
+                                className="w-full p-2 bg-slate-900 border border-slate-600 rounded h-20"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm text-slate-400 mb-1">Steps to Reproduce</label>
+                            <textarea
+                                value={stepsText}
+                                onChange={e => setStepsText(e.target.value)}
+                                className="w-full p-2 bg-slate-900 border border-slate-600 rounded h-20 font-mono text-sm"
+                            />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm text-slate-400 mb-1">Expected</label>
+                                <textarea
+                                    value={expected}
+                                    onChange={e => setExpected(e.target.value)}
+                                    className="w-full p-2 bg-slate-900 border border-slate-600 rounded h-16"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm text-slate-400 mb-1">Actual</label>
+                                <textarea
+                                    value={actual}
+                                    onChange={e => setActual(e.target.value)}
+                                    className="w-full p-2 bg-slate-900 border border-slate-600 rounded h-16"
+                                />
+                            </div>
+                        </div>
+                    </div>
+                    <div className="p-6 border-t border-slate-700 flex justify-end gap-3">
+                        <button onClick={onCancel} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded">
+                            Cancel
+                        </button>
+                        <button onClick={handleSubmit} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded">
+                            Save Changes
+                        </button>
+                    </div>
+                </div>
             </div>
         );
     }
