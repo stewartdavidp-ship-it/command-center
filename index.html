@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Game Shelf Command Center</title>
-    <meta name="version" content="6.7.6">
+    <meta name="version" content="6.7.7">
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -25,7 +25,7 @@
     <div id="root"><div style="display:flex;align-items:center;justify-content:center;min-height:100vh;"><div style="text-align:center;"><div style="font-size:48px;margin-bottom:20px;">ð®</div>Loading...</div></div></div>
 
     <script type="text/babel">
-    console.log('Command Center v6.7.6 starting...');
+    console.log('Command Center v6.7.7 starting...');
     
     // =========================================================================
     // FIREBASE CONFIG
@@ -389,6 +389,7 @@
         const fullContent = content.toLowerCase();
         
         // App signatures - MANAGEMENT FIRST (it contains refs to other apps)
+        // GAME SHELF SECOND (it contains links to testplan)
         const signatures = [
             {
                 // Management/Command Center - CHECK FIRST because it references other app names
@@ -405,24 +406,25 @@
                 confidence: 'high'
             },
             {
-                id: 'testplan',
+                // Game Shelf - CHECK BEFORE Test Plan (GS links to testplan URL)
+                id: 'gameshelf',
                 patterns: [
-                    /<title>.*test\s*plan/i,
-                    /gameshelf-testplan/i,
-                    /playwrightResults/i,
-                    /importPlaywrightFile/i,
-                    /test-plan-app/i
+                    /<title>game\s*shelf/i,           // Primary: title tag
+                    /gameshelf_setup_complete/i,      // Unique localStorage key
+                    /gameShelfData/i,                 // Unique data key
+                    /game.shelf.pwa/i,
+                    /#setup-welcome.*#setup-games/i   // Onboarding flow unique to GS
                 ],
                 confidence: 'high'
             },
             {
-                id: 'gameshelf',
+                id: 'testplan',
                 patterns: [
-                    /<title>game\s*shelf/i,
-                    /game.shelf.pwa/i,
-                    /game-shelf-app/i,
-                    /#setup-welcome/i,  // Unique to Game Shelf onboarding
-                    /gameshelf_setup_complete/i  // Unique localStorage key
+                    /<title>.*test\s*plan/i,          // Primary: title tag
+                    /playwrightResults/i,             // Unique variable
+                    /importPlaywrightFile/i,          // Unique function
+                    /testSections\s*=/i,              // Unique data structure
+                    /processPlaywrightResults/i       // Unique function
                 ],
                 confidence: 'high'
             },
@@ -1884,7 +1886,7 @@
                             <span className="text-2xl">ð®</span>
                             <div>
                                 <h1 className="text-lg font-bold">Command Center</h1>
-                                <div className="text-xs text-slate-400">v6.7.6 â¢ App Detection + Quick Rollback</div>
+                                <div className="text-xs text-slate-400">v6.7.7 â¢ App Detection + Quick Rollback</div>
                             </div>
                         </div>
                         <div className="flex items-center gap-2">
