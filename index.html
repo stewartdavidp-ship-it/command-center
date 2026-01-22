@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Game Shelf Command Center</title>
-    <meta name="version" content="6.7.4">
+    <meta name="version" content="6.7.6">
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -25,7 +25,7 @@
     <div id="root"><div style="display:flex;align-items:center;justify-content:center;min-height:100vh;"><div style="text-align:center;"><div style="font-size:48px;margin-bottom:20px;">ð®</div>Loading...</div></div></div>
 
     <script type="text/babel">
-    console.log('Command Center v6.7.4 starting...');
+    console.log('Command Center v6.7.6 starting...');
     
     // =========================================================================
     // FIREBASE CONFIG
@@ -100,17 +100,29 @@
     function findAllVersionStrings(content) {
         const versions = [];
         
+        // Helper to check if a match is inside a comment
+        function isInComment(matchIndex) {
+            const lineStart = content.lastIndexOf('\n', matchIndex) + 1;
+            const lineContent = content.substring(lineStart, matchIndex);
+            // Skip if line starts with // or * (comment) or contains Pattern/Example keywords
+            return /^\s*(\/\/|\*|#)/.test(lineContent) || /Pattern|Example|e\.g\.|like/i.test(lineContent);
+        }
+        
         // Meta tag versions
         const metaMatches = content.matchAll(/<meta\s+[^>]*name=["']version["'][^>]*content=["']([^"']+)["'][^>]*>/gi);
         for (const m of metaMatches) {
             // Skip if the content contains template literal syntax
             if (m[1].includes('${') || m[1].includes('targetVersion')) continue;
+            // Skip if inside a comment
+            if (isInComment(m.index)) continue;
             versions.push({ source: 'meta tag', value: m[1], line: content.substring(0, m.index).split('\n').length });
         }
         // Also check reverse order: content before name
         const metaMatches2 = content.matchAll(/<meta\s+[^>]*content=["']([^"']+)["'][^>]*name=["']version["'][^>]*>/gi);
         for (const m of metaMatches2) {
             if (m[1].includes('${') || m[1].includes('targetVersion')) continue;
+            // Skip if inside a comment
+            if (isInComment(m.index)) continue;
             versions.push({ source: 'meta tag', value: m[1], line: content.substring(0, m.index).split('\n').length });
         }
         
@@ -122,6 +134,8 @@
             if (!before.includes('GAMESHELF_VERSION') && !before.includes('Integration Module')) {
                 // Skip template literals and code examples
                 if (m[2].includes('${') || m[2].includes('targetVersion')) continue;
+                // Skip if inside a comment
+                if (isInComment(m.index)) continue;
                 versions.push({ source: `JS: ${m[1]}`, value: m[2], line: content.substring(0, m.index).split('\n').length });
             }
         }
@@ -131,10 +145,7 @@
         const footerMatches = content.matchAll(/[>\s]v(\d+\.\d+\.\d+)\s*[â¢<Â·]/g);
         for (const m of footerMatches) {
             // Check if this is inside a comment or code example
-            const lineStart = content.lastIndexOf('\n', m.index) + 1;
-            const lineContent = content.substring(lineStart, m.index);
-            // Skip if line starts with // or * (comment) or contains Pattern or Example
-            if (/^\s*(\/\/|\*|#)/.test(lineContent) || /Pattern|Example|e\.g\.|like/i.test(lineContent)) continue;
+            if (isInComment(m.index)) continue;
             versions.push({ source: 'footer/visible', value: m[1], line: content.substring(0, m.index).split('\n').length });
         }
         
@@ -142,9 +153,7 @@
         const aboutMatches = content.matchAll(/Version:?\s*<\/?\w*>?\s*v?(\d+\.\d+\.\d+)/gi);
         for (const m of aboutMatches) {
             // Skip code comments
-            const lineStart = content.lastIndexOf('\n', m.index) + 1;
-            const lineContent = content.substring(lineStart, m.index);
-            if (/^\s*(\/\/|\*|#)/.test(lineContent) || /Pattern|Example/i.test(lineContent)) continue;
+            if (isInComment(m.index)) continue;
             versions.push({ source: 'about/info text', value: m[1], line: content.substring(0, m.index).split('\n').length });
         }
         
@@ -379,16 +388,41 @@
         const sample = content.substring(0, 5000).toLowerCase();
         const fullContent = content.toLowerCase();
         
-        // App signatures - ordered by specificity
+        // App signatures - MANAGEMENT FIRST (it contains refs to other apps)
         const signatures = [
+            {
+                // Management/Command Center - CHECK FIRST because it references other app names
+                id: 'management',
+                patterns: [
+                    /<title>.*command\s*center/i,
+                    /cc_token/i,           // Unique localStorage key
+                    /cc_apps/i,            // Unique localStorage key  
+                    /setDeployments/i,     // Unique state setter
+                    /rollbackSnapshots/i,  // Unique feature
+                    /handleBatchDeploy/i,  // Unique function
+                    /githubToken.*setGithubToken/i  // Unique pattern
+                ],
+                confidence: 'high'
+            },
+            {
+                id: 'testplan',
+                patterns: [
+                    /<title>.*test\s*plan/i,
+                    /gameshelf-testplan/i,
+                    /playwrightResults/i,
+                    /importPlaywrightFile/i,
+                    /test-plan-app/i
+                ],
+                confidence: 'high'
+            },
             {
                 id: 'gameshelf',
                 patterns: [
                     /<title>game\s*shelf/i,
-                    /gameshelfdata/i,
                     /game.shelf.pwa/i,
                     /game-shelf-app/i,
-                    /#setup-welcome/i  // Unique to Game Shelf onboarding
+                    /#setup-welcome/i,  // Unique to Game Shelf onboarding
+                    /gameshelf_setup_complete/i  // Unique localStorage key
                 ],
                 confidence: 'high'
             },
@@ -433,28 +467,6 @@
                     /wordboxing/i,
                     /boxing-ring/i,
                     /word_boxing_version/i
-                ],
-                confidence: 'high'
-            },
-            {
-                id: 'testplan',
-                patterns: [
-                    /<title>.*test\s*plan/i,
-                    /gameshelf-testplan/i,
-                    /playwright.*runner/i,
-                    /test-plan-app/i
-                ],
-                confidence: 'high'
-            },
-            {
-                id: 'management',
-                patterns: [
-                    /<title>.*command\s*center/i,
-                    /<title>.*ship\s*it/i,
-                    /command-center/i,
-                    /ship.it.console/i,
-                    /management.*console/i,
-                    /claude.*deploy.*queue/i  // Unique Command Center feature
                 ],
                 confidence: 'high'
             }
@@ -1217,13 +1229,20 @@
             e.preventDefault();
             const files = e.dataTransfer?.files || e.target.files;
             
+            // Capture files into array BEFORE resetting input
+            // (FileList is live and gets cleared when input is reset)
+            const fileArray = Array.from(files || []);
+            
             // Reset file input so same file can be selected again
             // (without this, onChange won't fire for the same file twice)
             if (e.target && e.target.value) {
                 e.target.value = '';
             }
             
-            Array.from(files).forEach(file => {
+            // Exit early if no files
+            if (fileArray.length === 0) return;
+            
+            fileArray.forEach(file => {
                 const reader = new FileReader();
                 reader.onload = (e) => {
                     const content = e.target.result;
@@ -1865,7 +1884,7 @@
                             <span className="text-2xl">ð®</span>
                             <div>
                                 <h1 className="text-lg font-bold">Command Center</h1>
-                                <div className="text-xs text-slate-400">v6.7.2 â¢ Version Detection Fix</div>
+                                <div className="text-xs text-slate-400">v6.7.6 â¢ App Detection + Quick Rollback</div>
                             </div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -2710,17 +2729,17 @@
                                         </div>
                                     )}
                                     
-                                    <button onClick={() => {
+                                    <button onClick={async () => {
                                         // Show confirmation if mismatch detected
                                         if (hasMismatch) {
-                                            showConfirm(
+                                            const confirmed = await showConfirm(
                                                 `File detected as ${apps[primaryDetected]?.name} but deploying to ${apps[deployTarget.appId]?.name}. Continue anyway?`,
-                                                () => {
-                                                    console.log('Deploying files:', selectedFiles.map(f => ({ name: f.name, id: f.id, size: f.content?.length })));
-                                                    onBatchDeploy(selectedFiles, deployTarget.appId, deployTarget.target);
-                                                },
                                                 'Deploy Mismatch Warning'
                                             );
+                                            if (confirmed) {
+                                                console.log('Deploying files:', selectedFiles.map(f => ({ name: f.name, id: f.id, size: f.content?.length })));
+                                                onBatchDeploy(selectedFiles, deployTarget.appId, deployTarget.target);
+                                            }
                                         } else {
                                             console.log('Deploying files:', selectedFiles.map(f => ({ name: f.name, id: f.id, size: f.content?.length })));
                                             onBatchDeploy(selectedFiles, deployTarget.appId, deployTarget.target);
@@ -2967,8 +2986,18 @@
                                                         
                                                         {/* Quick Actions */}
                                                         <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-600">
+                                                            {/* Rollback Status Header */}
+                                                            {(rollbackSnapshots?.[`${app.id}:test`] || rollbackSnapshots?.[`${app.id}:prod`]) && (
+                                                                <div className="w-full text-xs text-slate-400 mb-1 flex items-center gap-2">
+                                                                    ð¸ Snapshots available:
+                                                                    {rollbackSnapshots?.[`${app.id}:test`] && <span className="text-blue-400">TEST v{rollbackSnapshots[`${app.id}:test`].version}</span>}
+                                                                    {rollbackSnapshots?.[`${app.id}:test`] && rollbackSnapshots?.[`${app.id}:prod`] && <span>â¢</span>}
+                                                                    {rollbackSnapshots?.[`${app.id}:prod`] && <span className="text-green-400">PROD v{rollbackSnapshots[`${app.id}:prod`].version}</span>}
+                                                                </div>
+                                                            )}
+                                                            
                                                             {/* Quick Rollback TEST */}
-                                                            {rollbackSnapshots[`${app.id}:test`] && (
+                                                            {rollbackSnapshots?.[`${app.id}:test`] && (
                                                                 <button 
                                                                     onClick={() => onQuickRollback(app.id, 'test')}
                                                                     className="px-2 py-1 bg-red-700 hover:bg-red-600 text-xs rounded flex items-center gap-1"
@@ -2978,7 +3007,7 @@
                                                             )}
                                                             
                                                             {/* Quick Rollback PROD */}
-                                                            {rollbackSnapshots[`${app.id}:prod`] && (
+                                                            {rollbackSnapshots?.[`${app.id}:prod`] && (
                                                                 <button 
                                                                     onClick={() => onQuickRollback(app.id, 'prod')}
                                                                     className="px-2 py-1 bg-red-700 hover:bg-red-600 text-xs rounded flex items-center gap-1"
@@ -4074,6 +4103,8 @@
         // Handle file drop for project upload
         const handleProjectFileDrop = (e) => {
             e.preventDefault();
+            
+            // Capture file BEFORE resetting input
             const file = e.dataTransfer?.files[0] || e.target.files?.[0];
             
             // Reset file input so same file can be selected again
@@ -4083,7 +4114,7 @@
             
             if (file && (file.name.endsWith('.zip') || file.name === 'gs-active.zip')) {
                 uploadProjectFile(file);
-            } else {
+            } else if (file) {
                 alert('Please upload a .zip file (gs-active.zip)');
             }
         };
