@@ -4,11 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Game Shelf Command Center</title>
-    <meta name="version" content="6.7.7">
+    <meta name="version" content="7.0.2">
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
@@ -22,10 +23,10 @@
     </style>
 </head>
 <body>
-    <div id="root"><div style="display:flex;align-items:center;justify-content:center;min-height:100vh;"><div style="text-align:center;"><div style="font-size:48px;margin-bottom:20px;">ð®</div>Loading...</div></div></div>
+    <div id="root"><div style="display:flex;align-items:center;justify-content:center;min-height:100vh;"><div style="text-align:center;"><div style="margin-bottom:20px;"><svg viewBox="0 0 100 100" width="64" height="64" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="gsLoadGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#667eea"/><stop offset="100%" style="stop-color:#764ba2"/></linearGradient></defs><rect x="5" y="5" width="90" height="90" rx="20" fill="url(#gsLoadGrad)"/><g transform="rotate(-12, 35, 50)"><rect x="15" y="28" width="28" height="36" rx="4" fill="white"/><circle cx="43" cy="46" r="6" fill="white"/><text x="29" y="54" font-family="Arial" font-size="20" font-weight="bold" fill="#667eea" text-anchor="middle">G</text></g><g transform="rotate(12, 65, 50)"><rect x="57" y="28" width="28" height="36" rx="4" fill="rgba(255,255,255,0.9)"/><circle cx="57" cy="46" r="6" fill="url(#gsLoadGrad)"/><text x="71" y="54" font-family="Arial" font-size="20" font-weight="bold" fill="#764ba2" text-anchor="middle">S</text></g></svg></div>Loading...</div></div></div>
 
     <script type="text/babel">
-    console.log('Command Center v6.7.7 starting...');
+    console.log('Command Center v7.0.2 starting...');
     
     // =========================================================================
     // FIREBASE CONFIG
@@ -145,7 +146,10 @@
         const footerMatches = content.matchAll(/[>\s]v(\d+\.\d+\.\d+)\s*[â¢<Â·]/g);
         for (const m of footerMatches) {
             // Check if this is inside a comment or code example
-            if (isInComment(m.index)) continue;
+            const lineStart = content.lastIndexOf('\n', m.index) + 1;
+            const lineContent = content.substring(lineStart, m.index);
+            // Skip if line starts with // or * (comment) or contains Pattern or Example
+            if (/^\s*(\/\/|\*|#)/.test(lineContent) || /Pattern|Example|e\.g\.|like/i.test(lineContent)) continue;
             versions.push({ source: 'footer/visible', value: m[1], line: content.substring(0, m.index).split('\n').length });
         }
         
@@ -153,7 +157,9 @@
         const aboutMatches = content.matchAll(/Version:?\s*<\/?\w*>?\s*v?(\d+\.\d+\.\d+)/gi);
         for (const m of aboutMatches) {
             // Skip code comments
-            if (isInComment(m.index)) continue;
+            const lineStart = content.lastIndexOf('\n', m.index) + 1;
+            const lineContent = content.substring(lineStart, m.index);
+            if (/^\s*(\/\/|\*|#)/.test(lineContent) || /Pattern|Example/i.test(lineContent)) continue;
             versions.push({ source: 'about/info text', value: m[1], line: content.substring(0, m.index).split('\n').length });
         }
         
@@ -268,58 +274,312 @@
     }
 
     // =========================================================================
-    // DEFAULT APPS
+    // DYNAMIC CONFIGURATION SYSTEM (v7.0.0)
     // =========================================================================
     
-    const DEFAULT_APPS = {
+    // Environment definitions - extensible for dev, test, prod, beta
+    const DEFAULT_ENVIRONMENTS = {
+        available: ['dev', 'test', 'prod', 'beta'],
+        active: ['test', 'prod'],  // Currently enabled
+        colors: {
+            dev: { bg: 'bg-purple-600', text: 'text-purple-300', border: 'border-purple-500', hex: '#9333ea' },
+            test: { bg: 'bg-blue-600', text: 'text-blue-300', border: 'border-blue-500', hex: '#2563eb' },
+            prod: { bg: 'bg-green-600', text: 'text-green-300', border: 'border-green-500', hex: '#16a34a' },
+            beta: { bg: 'bg-orange-600', text: 'text-orange-300', border: 'border-orange-500', hex: '#ea580c' }
+        },
+        labels: { dev: 'DEV', test: 'TEST', prod: 'PROD', beta: 'BETA' },
+        icons: { dev: 'ð ï¸', test: 'ð§ª', prod: 'ð', beta: 'ð¬' }
+    };
+    
+    // Default app definitions
+    const DEFAULT_APP_DEFINITIONS = {
         gameshelf: {
-            id: 'gameshelf', name: 'Game Shelf', icon: 'ð',
-            testRepo: '', prodRepo: '',
+            id: 'gameshelf', name: 'Game Shelf', icon: 'gs-logo',
             targetPath: 'index.html', swPath: 'sw.js', hasServiceWorker: true,
-            currentTestVersion: '', currentProdVersion: '',
-            repoPatterns: { test: ['gameshelftest', 'gameshelf-test'], prod: ['gameshelf'] }
+            repos: { dev: '', test: '', prod: '', beta: '' },
+            versions: { dev: '', test: '', prod: '', beta: '' },
+            repoPatterns: {
+                dev: ['gameshelfdev', 'gameshelf-dev'],
+                test: ['gameshelftest', 'gameshelf-test'],
+                prod: ['gameshelf'],
+                beta: ['gameshelfbeta', 'gameshelf-beta']
+            },
+            detectionPatterns: ['<title>game\\s*shelf', 'gameshelfdata', 'game.shelf.pwa', '#setup-welcome']
         },
         slate: {
             id: 'slate', name: 'Slate', icon: 'ðª¨',
-            testRepo: '', prodRepo: '',
-            targetPath: 'index.html', swPath: '', hasServiceWorker: false,
-            currentTestVersion: '', currentProdVersion: '',
-            repoPatterns: { test: ['slatetest', 'slate-test'], prod: ['slate'] }
+            targetPath: 'index.html', swPath: 'sw.js', hasServiceWorker: true,
+            repos: { dev: '', test: '', prod: '', beta: '' },
+            versions: { dev: '', test: '', prod: '', beta: '' },
+            repoPatterns: {
+                dev: ['slatedev', 'slate-dev'],
+                test: ['slatetest', 'slate-test'],
+                prod: ['slate'],
+                beta: ['slatebeta', 'slate-beta']
+            },
+            detectionPatterns: ['<title>slate', 'slate.*daily.*word', 'chalkboard-bg', 'slate-board']
         },
         rungs: {
             id: 'rungs', name: 'Rungs', icon: 'ðª',
-            testRepo: '', prodRepo: '',
-            targetPath: 'index.html', swPath: '', hasServiceWorker: false,
-            currentTestVersion: '', currentProdVersion: '',
-            repoPatterns: { test: ['rungstest', 'rungs-test'], prod: ['rungs'] }
+            targetPath: 'index.html', swPath: 'sw.js', hasServiceWorker: true,
+            repos: { dev: '', test: '', prod: '', beta: '' },
+            versions: { dev: '', test: '', prod: '', beta: '' },
+            repoPatterns: {
+                dev: ['rungsdev', 'rungs-dev'],
+                test: ['rungstest', 'rungs-test'],
+                prod: ['rungs'],
+                beta: ['rungsbeta', 'rungs-beta']
+            },
+            detectionPatterns: ['<title>rungs', 'rungs.*daily', 'word-ladder', 'rung-container']
         },
         quotle: {
             id: 'quotle', name: 'Quotle', icon: 'ð¬',
-            testRepo: '', prodRepo: '',
-            targetPath: 'index.html', swPath: '', hasServiceWorker: false,
-            currentTestVersion: '', currentProdVersion: '',
-            repoPatterns: { test: ['quotletest', 'quotle-test'], prod: ['quotle'] }
+            targetPath: 'index.html', swPath: 'sw.js', hasServiceWorker: true,
+            repos: { dev: '', test: '', prod: '', beta: '' },
+            versions: { dev: '', test: '', prod: '', beta: '' },
+            repoPatterns: {
+                dev: ['quotledev', 'quotle-dev'],
+                test: ['quotletest', 'quotle-test'],
+                prod: ['quotle'],
+                beta: ['quotlebeta', 'quotle-beta']
+            },
+            detectionPatterns: ['<title>quotle', 'quotle.*daily.*quote', 'quotes-database']
         },
         wordboxing: {
             id: 'wordboxing', name: 'Word Boxing', icon: 'ð¥',
-            testRepo: '', prodRepo: '',
-            targetPath: 'index.html', swPath: '', hasServiceWorker: false,
-            currentTestVersion: '', currentProdVersion: '',
-            repoPatterns: { test: ['wordboxingtest', 'wordboxing-test'], prod: ['wordboxing'] }
+            targetPath: 'index.html', swPath: 'sw.js', hasServiceWorker: true,
+            repos: { dev: '', test: '', prod: '', beta: '' },
+            versions: { dev: '', test: '', prod: '', beta: '' },
+            repoPatterns: {
+                dev: ['wordboxingdev', 'wordboxing-dev'],
+                test: ['wordboxingtest', 'wordboxing-test'],
+                prod: ['wordboxing', 'word-boxing'],
+                beta: ['wordboxingbeta', 'wordboxing-beta']
+            },
+            detectionPatterns: ['<title>word\\s*boxing', 'word-boxing', 'boxing-ring']
         },
         testplan: {
             id: 'testplan', name: 'Test Plan', icon: 'ð§ª',
-            testRepo: '', prodRepo: '',
             targetPath: 'index.html', swPath: '', hasServiceWorker: false,
-            currentTestVersion: '', currentProdVersion: '',
-            repoPatterns: { test: ['gameshelf-testplan'], prod: ['testplan'] }
+            repos: { dev: '', test: '', prod: '', beta: '' },
+            versions: { dev: '', test: '', prod: '', beta: '' },
+            repoPatterns: {
+                dev: ['testplandev', 'testplan-dev'],
+                test: ['gameshelf-testplan'],
+                prod: ['testplan'],
+                beta: ['testplanbeta', 'testplan-beta']
+            },
+            detectionPatterns: ['<title>.*test\\s*plan', 'playwright.*runner', 'test-plan-app']
         },
         management: {
-            id: 'management', name: 'Management', icon: 'ð§',
-            testRepo: '', prodRepo: '',
+            id: 'management', name: 'Command Center', icon: 'ðï¸',
             targetPath: 'index.html', swPath: '', hasServiceWorker: false,
-            currentTestVersion: '', currentProdVersion: '',
-            repoPatterns: { test: ['managementtest', 'management-test'], prod: ['management', 'managementprod', 'management-prod'] }
+            repos: { dev: '', test: '', prod: '', beta: '' },
+            versions: { dev: '', test: '', prod: '', beta: '' },
+            repoPatterns: {
+                dev: ['managementdev', 'management-dev'],
+                test: ['managementtest', 'management-test'],
+                prod: ['management', 'managementprod'],
+                beta: ['managementbeta', 'management-beta']
+            },
+            detectionPatterns: ['<title>.*command\\s*center', '<title>.*ship\\s*it', 'command-center', 'claude.*deploy.*queue']
+        }
+    };
+    
+    // Configuration manager
+    const ConfigManager = {
+        STORAGE_KEY: 'commandCenterConfig',
+        REPO_STORAGE_KEY: 'githubRepoAssignments',
+        
+        // Load config from localStorage or use defaults
+        load() {
+            try {
+                const stored = localStorage.getItem(this.STORAGE_KEY);
+                if (stored) {
+                    const config = JSON.parse(stored);
+                    return this.mergeWithDefaults(config);
+                }
+            } catch (e) {
+                console.warn('Failed to load config, using defaults:', e);
+            }
+            return this.getDefaultConfig();
+        },
+        
+        // Save config to localStorage
+        save(config) {
+            try {
+                localStorage.setItem(this.STORAGE_KEY, JSON.stringify(config));
+                return true;
+            } catch (e) {
+                console.error('Failed to save config:', e);
+                return false;
+            }
+        },
+        
+        // Get default configuration
+        getDefaultConfig() {
+            return {
+                version: '7.0.0',
+                environments: { ...DEFAULT_ENVIRONMENTS },
+                apps: JSON.parse(JSON.stringify(DEFAULT_APP_DEFINITIONS))
+            };
+        },
+        
+        // Merge stored config with defaults (handles upgrades)
+        mergeWithDefaults(stored) {
+            const defaults = this.getDefaultConfig();
+            
+            // Ensure environments structure
+            if (!stored.environments) {
+                stored.environments = defaults.environments;
+            } else {
+                stored.environments = { ...defaults.environments, ...stored.environments };
+            }
+            
+            // Ensure all default apps exist (but preserve user's repo mappings)
+            for (const [id, defaultApp] of Object.entries(defaults.apps)) {
+                if (!stored.apps[id]) {
+                    stored.apps[id] = defaultApp;
+                } else {
+                    // Merge to ensure new fields are added
+                    stored.apps[id] = { ...defaultApp, ...stored.apps[id] };
+                    stored.apps[id].repos = { ...defaultApp.repos, ...(stored.apps[id].repos || {}) };
+                    stored.apps[id].versions = { ...defaultApp.versions, ...(stored.apps[id].versions || {}) };
+                }
+            }
+            
+            return stored;
+        },
+        
+        // Migrate from old format (testRepo/prodRepo to repos object)
+        migrateFromOldFormat(oldApps, config) {
+            const repoAssignments = JSON.parse(localStorage.getItem(this.REPO_STORAGE_KEY) || '{}');
+            
+            for (const [id, oldApp] of Object.entries(oldApps)) {
+                if (config.apps[id]) {
+                    // Check repo assignments first, then fall back to old format
+                    const assignment = repoAssignments[id] || {};
+                    config.apps[id].repos.test = assignment.testRepo || oldApp.testRepo || '';
+                    config.apps[id].repos.prod = assignment.prodRepo || oldApp.prodRepo || '';
+                    config.apps[id].versions.test = oldApp.currentTestVersion || '';
+                    config.apps[id].versions.prod = oldApp.currentProdVersion || '';
+                }
+            }
+            
+            return config;
+        },
+        
+        // Add a new app
+        addApp(config, appData) {
+            const id = appData.id || appData.name.toLowerCase().replace(/\s+/g, '');
+            config.apps[id] = {
+                id,
+                name: appData.name,
+                icon: appData.icon || 'ð¦',
+                targetPath: appData.targetPath || 'index.html',
+                swPath: appData.swPath || '',
+                hasServiceWorker: appData.hasServiceWorker || false,
+                repos: { dev: '', test: '', prod: '', beta: '' },
+                versions: { dev: '', test: '', prod: '', beta: '' },
+                repoPatterns: {
+                    dev: [`${id}dev`, `${id}-dev`],
+                    test: [`${id}test`, `${id}-test`],
+                    prod: [id],
+                    beta: [`${id}beta`, `${id}-beta`]
+                },
+                detectionPatterns: appData.detectionPatterns || [`<title>${appData.name.toLowerCase()}`]
+            };
+            return config;
+        },
+        
+        // Remove an app
+        removeApp(config, appId) {
+            delete config.apps[appId];
+            return config;
+        },
+        
+        // Update app
+        updateApp(config, appId, updates) {
+            if (config.apps[appId]) {
+                config.apps[appId] = { ...config.apps[appId], ...updates };
+            }
+            return config;
+        },
+        
+        // Enable/disable an environment
+        toggleEnvironment(config, envId) {
+            const idx = config.environments.active.indexOf(envId);
+            if (idx >= 0) {
+                // Don't allow disabling all environments
+                if (config.environments.active.length > 1) {
+                    config.environments.active.splice(idx, 1);
+                }
+            } else {
+                config.environments.active.push(envId);
+                // Sort by the defined order
+                config.environments.active.sort((a, b) => 
+                    config.environments.available.indexOf(a) - config.environments.available.indexOf(b)
+                );
+            }
+            return config;
+        },
+        
+        // Convert config to legacy apps format for backward compatibility
+        toLegacyAppsFormat(config) {
+            const apps = {};
+            const activeEnvs = config.environments.active;
+            
+            for (const [id, app] of Object.entries(config.apps)) {
+                apps[id] = {
+                    id: app.id,
+                    name: app.name,
+                    icon: app.icon,
+                    targetPath: app.targetPath,
+                    swPath: app.swPath,
+                    hasServiceWorker: app.hasServiceWorker,
+                    repoPatterns: app.repoPatterns,
+                    // Legacy format fields
+                    testRepo: app.repos.test || '',
+                    prodRepo: app.repos.prod || '',
+                    currentTestVersion: app.versions.test || '',
+                    currentProdVersion: app.versions.prod || '',
+                    // New format - include all env repos
+                    repos: app.repos,
+                    versions: app.versions
+                };
+            }
+            
+            return apps;
+        },
+        
+        // Build detection signatures from config
+        buildDetectionSignatures(config) {
+            return Object.values(config.apps).map(app => ({
+                id: app.id,
+                patterns: app.detectionPatterns.map(p => {
+                    try {
+                        return new RegExp(p, 'i');
+                    } catch (e) {
+                        console.warn(`Invalid pattern for ${app.id}: ${p}`);
+                        return null;
+                    }
+                }).filter(Boolean),
+                confidence: 'high'
+            }));
+        },
+        
+        // Get active environments
+        getActiveEnvironments(config) {
+            return config.environments.active;
+        },
+        
+        // Get environment display info
+        getEnvDisplay(config, envId) {
+            return {
+                label: config.environments.labels[envId] || envId.toUpperCase(),
+                icon: config.environments.icons[envId] || 'ð¦',
+                colors: config.environments.colors[envId] || config.environments.colors.test
+            };
         }
     };
 
@@ -328,6 +588,28 @@
     // =========================================================================
     
     const Icons = {
+        // Game Shelf badge logo (puzzle pieces G and S)
+        GameShelfLogo: ({ size = 20 }) => (
+            <svg viewBox="0 0 100 100" width={size} height={size} xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                    <linearGradient id="gsBadgeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" style={{stopColor:'#667eea'}}/>
+                        <stop offset="100%" style={{stopColor:'#764ba2'}}/>
+                    </linearGradient>
+                </defs>
+                <rect x="5" y="5" width="90" height="90" rx="20" fill="url(#gsBadgeGrad)"/>
+                <g transform="rotate(-12, 35, 50)">
+                    <rect x="15" y="28" width="28" height="36" rx="4" fill="white"/>
+                    <circle cx="43" cy="46" r="6" fill="white"/>
+                    <text x="29" y="54" fontFamily="Arial" fontSize="20" fontWeight="bold" fill="#667eea" textAnchor="middle">G</text>
+                </g>
+                <g transform="rotate(12, 65, 50)">
+                    <rect x="57" y="28" width="28" height="36" rx="4" fill="rgba(255,255,255,0.9)"/>
+                    <circle cx="57" cy="46" r="6" fill="url(#gsBadgeGrad)"/>
+                    <text x="71" y="54" fontFamily="Arial" fontSize="20" fontWeight="bold" fill="#764ba2" textAnchor="middle">S</text>
+                </g>
+            </svg>
+        ),
         Upload: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>,
         Rocket: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.631 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58m-.119-8.54a6 6 0 00-7.381 5.84h4.8m2.581-5.84a14.927 14.927 0 00-2.58 5.84m2.699 2.7c-.103.021-.207.041-.311.06a15.09 15.09 0 01-2.448-2.448 14.9 14.9 0 01.06-.312m-2.24 2.39a4.493 4.493 0 00-1.757 4.306 4.493 4.493 0 004.306-1.758M16.5 9a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" /></svg>,
         X: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>,
@@ -355,6 +637,15 @@
         AlertCircle: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
         Edit: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>,
         Copy: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>,
+    };
+    
+    // Helper to render app icons (handles both emojis and special logo identifiers)
+    const AppIcon = ({ icon, size = 20 }) => {
+        if (icon === 'gs-logo') {
+            return <Icons.GameShelfLogo size={size} />;
+        }
+        // Return emoji as-is
+        return <span style={{ fontSize: size * 0.9 }}>{icon}</span>;
     };
 
     // =========================================================================
@@ -388,43 +679,40 @@
         const sample = content.substring(0, 5000).toLowerCase();
         const fullContent = content.toLowerCase();
         
-        // App signatures - MANAGEMENT FIRST (it contains refs to other apps)
-        // GAME SHELF SECOND (it contains links to testplan)
+        // App signatures - ordered by specificity (most specific first!)
+        // IMPORTANT: Command Center must come before Game Shelf because
+        // "Game Shelf Command Center" would otherwise match Game Shelf first
         const signatures = [
             {
-                // Management/Command Center - CHECK FIRST because it references other app names
                 id: 'management',
                 patterns: [
                     /<title>.*command\s*center/i,
-                    /cc_token/i,           // Unique localStorage key
-                    /cc_apps/i,            // Unique localStorage key  
-                    /setDeployments/i,     // Unique state setter
-                    /rollbackSnapshots/i,  // Unique feature
-                    /handleBatchDeploy/i,  // Unique function
-                    /githubToken.*setGithubToken/i  // Unique pattern
-                ],
-                confidence: 'high'
-            },
-            {
-                // Game Shelf - CHECK BEFORE Test Plan (GS links to testplan URL)
-                id: 'gameshelf',
-                patterns: [
-                    /<title>game\s*shelf/i,           // Primary: title tag
-                    /gameshelf_setup_complete/i,      // Unique localStorage key
-                    /gameShelfData/i,                 // Unique data key
-                    /game.shelf.pwa/i,
-                    /#setup-welcome.*#setup-games/i   // Onboarding flow unique to GS
+                    /<title>.*ship\s*it/i,
+                    /command-center/i,
+                    /ship.it.console/i,
+                    /management.*console/i,
+                    /claude.*deploy.*queue/i  // Unique Command Center feature
                 ],
                 confidence: 'high'
             },
             {
                 id: 'testplan',
                 patterns: [
-                    /<title>.*test\s*plan/i,          // Primary: title tag
-                    /playwrightResults/i,             // Unique variable
-                    /importPlaywrightFile/i,          // Unique function
-                    /testSections\s*=/i,              // Unique data structure
-                    /processPlaywrightResults/i       // Unique function
+                    /<title>.*test\s*plan/i,
+                    /gameshelf-testplan/i,
+                    /playwright.*runner/i,
+                    /test-plan-app/i
+                ],
+                confidence: 'high'
+            },
+            {
+                id: 'gameshelf',
+                patterns: [
+                    /<title>game\s*shelf/i,  // Will NOT match "Game Shelf Command Center" (already caught above)
+                    /gameshelfdata/i,
+                    /game.shelf.pwa/i,
+                    /game-shelf-app/i,
+                    /#setup-welcome/i  // Unique to Game Shelf onboarding
                 ],
                 confidence: 'high'
             },
@@ -672,6 +960,51 @@
             return { enabled: true };
         }
         
+        // Create a new repository
+        async createRepo(name, description = '', isPrivate = false) {
+            const response = await fetch(`${this.baseUrl}/user/repos`, {
+                method: 'POST',
+                headers: { 
+                    'Authorization': `token ${this.token}`, 
+                    'Accept': 'application/vnd.github.v3+json', 
+                    'Content-Type': 'application/json' 
+                },
+                body: JSON.stringify({
+                    name,
+                    description,
+                    private: isPrivate,
+                    auto_init: true, // Creates with README so we have a main branch
+                    has_issues: false,
+                    has_projects: false,
+                    has_wiki: false
+                })
+            });
+            
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.message || 'Failed to create repository');
+            }
+            
+            const repo = await response.json();
+            return {
+                fullName: repo.full_name,
+                name: repo.name,
+                owner: repo.owner.login,
+                url: repo.html_url,
+                pagesUrl: `https://${repo.owner.login}.github.io/${repo.name}/`
+            };
+        }
+        
+        // Check if a repo exists
+        async repoExists(owner, repoName) {
+            try {
+                await this.request(`/repos/${owner}/${repoName}`);
+                return true;
+            } catch {
+                return false;
+            }
+        }
+        
         async getPagesDeploymentStatus(repo) {
             const [owner, repoName] = repo.split('/');
             try {
@@ -817,8 +1150,28 @@
         const [githubToken, setGithubToken] = React.useState(() => {
             try { return localStorage.getItem('cc_token') || ''; } catch { return ''; }
         });
+        
+        // Dynamic configuration (v7.0.0)
+        const [config, setConfig] = React.useState(() => {
+            return ConfigManager.load();
+        });
+        
+        // Apps derived from config (legacy compatibility + v7 format)
         const [apps, setApps] = React.useState(() => {
-            try { const s = localStorage.getItem('cc_apps_v6'); return s ? JSON.parse(s) : DEFAULT_APPS; } catch { return DEFAULT_APPS; }
+            try { 
+                const s = localStorage.getItem('cc_apps_v6'); 
+                const oldApps = s ? JSON.parse(s) : null;
+                if (oldApps) {
+                    // Migrate old format to config
+                    const cfg = ConfigManager.load();
+                    const migrated = ConfigManager.migrateFromOldFormat(oldApps, cfg);
+                    ConfigManager.save(migrated);
+                    return ConfigManager.toLegacyAppsFormat(migrated);
+                }
+                return ConfigManager.toLegacyAppsFormat(ConfigManager.load()); 
+            } catch { 
+                return ConfigManager.toLegacyAppsFormat(ConfigManager.load()); 
+            }
         });
         const [stagedFiles, setStagedFiles] = React.useState([]);
         const [deployments, setDeployments] = React.useState(() => {
@@ -829,6 +1182,18 @@
         const [modal, setModal] = React.useState(null);
         const [dialog, setDialog] = React.useState(null); // { type: 'alert'|'confirm'|'prompt', title, message, defaultValue, onConfirm, onCancel }
         const [settings, setSettings] = React.useState({ createTag: true, updateServiceWorker: true });
+        
+        // Config change handler
+        const handleConfigChange = (newConfig) => {
+            setConfig(newConfig);
+            setApps(ConfigManager.toLegacyAppsFormat(newConfig));
+            ConfigManager.save(newConfig);
+        };
+        
+        // Get active environments from config
+        const activeEnvironments = config.environments.active;
+        const getEnvColors = (env) => config.environments.colors[env] || config.environments.colors.test;
+        const getEnvLabel = (env) => config.environments.labels[env] || env.toUpperCase();
         
         // Dialog helper functions (Promise-based for async usage)
         const showAlert = (message, title) => {
@@ -1136,6 +1501,19 @@
             return { success: false, timeout: true };
         };
         
+        // Refresh repos list
+        const refreshRepos = async () => {
+            if (!github) return;
+            try {
+                const repos = await github.listRepos();
+                setAvailableRepos(repos);
+                // Re-run auto-mapping
+                setApps(prev => autoMapRepos(prev, repos));
+            } catch (e) {
+                console.error('Failed to refresh repos:', e);
+            }
+        };
+        
         // Fetch repos and auto-refresh versions on load
         React.useEffect(() => {
             if (github) {
@@ -1244,7 +1622,112 @@
             // Exit early if no files
             if (fileArray.length === 0) return;
             
-            fileArray.forEach(file => {
+            fileArray.forEach(async (file) => {
+                // Handle ZIP files specially
+                if (file.name.endsWith('.zip')) {
+                    console.log('=== PROCESSING ZIP FILE ===');
+                    console.log('Name:', file.name);
+                    
+                    if (typeof JSZip === 'undefined') {
+                        alert('ZIP support not available');
+                        return;
+                    }
+                    
+                    try {
+                        const zip = await JSZip.loadAsync(file);
+                        let primaryApp = null;
+                        let primaryVersion = null;
+                        
+                        // Detect if ZIP has a root folder (common in downloads)
+                        const allPaths = [];
+                        zip.forEach((path) => { if (!path.endsWith('/')) allPaths.push(path); });
+                        const hasRootFolder = allPaths.length > 0 && allPaths.every(p => p.includes('/'));
+                        const rootFolder = hasRootFolder ? allPaths[0].split('/')[0] + '/' : '';
+                        
+                        const extractPromises = [];
+                        zip.forEach((relativePath, zipEntry) => {
+                            if (zipEntry.dir || relativePath.startsWith('.') || relativePath.includes('__MACOSX')) return;
+                            
+                            // Strip root folder if present (e.g., 'quotle-deploy-v1_0_2/' prefix)
+                            let cleanPath = relativePath;
+                            if (rootFolder && relativePath.startsWith(rootFolder)) {
+                                cleanPath = relativePath.substring(rootFolder.length);
+                            }
+                            
+                            const fileName = cleanPath.split('/').pop();
+                            const isText = /\.(html|js|css|json|md|txt|xml|svg)$/i.test(fileName);
+                            
+                            // Determine target path - preserve directory structure for non-HTML files
+                            let targetPath;
+                            if (fileName.endsWith('.html') && !cleanPath.includes('/')) {
+                                // Root HTML files â index.html
+                                targetPath = 'index.html';
+                            } else if (cleanPath.includes('/')) {
+                                // Files in subdirectories â preserve path (e.g., icons/icon-72.png)
+                                targetPath = cleanPath;
+                            } else {
+                                // Root non-HTML files â keep filename
+                                targetPath = fileName;
+                            }
+                            
+                            extractPromises.push(
+                                zipEntry.async(isText ? 'string' : 'binarystring').then(content => {
+                                    const parsed = parseFilename(fileName);
+                                    let version = null;
+                                    let suggestedApp = null;
+                                    let appDetection = null;
+                                    let versionValidation = null;
+                                    
+                                    if (fileName.endsWith('.html')) {
+                                        appDetection = detectAppFromContent(content);
+                                        suggestedApp = appDetection?.id || parsed.app;
+                                        version = extractVersionFromHTML(content) || parsed.version;
+                                        versionValidation = validateVersions(content, fileName);
+                                        if (appDetection) {
+                                            primaryApp = suggestedApp;
+                                            primaryVersion = version;
+                                        }
+                                    } else if (fileName === 'sw.js') {
+                                        const swMatch = content.match(/CACHE_VERSION\s*=\s*['"]v?([^'"]+)['"]/);
+                                        version = swMatch ? swMatch[1] : null;
+                                        suggestedApp = parsed.app;
+                                    } else {
+                                        suggestedApp = parsed.app;
+                                    }
+                                    
+                                    console.log('Extracted:', cleanPath, 'â', targetPath, 'v' + version);
+                                    
+                                    setStagedFiles(prev => [...prev, {
+                                        id: Date.now() + Math.random(),
+                                        name: fileName,
+                                        originalPath: cleanPath,
+                                        size: content.length,
+                                        content: isText ? content : btoa(content),
+                                        encoding: isText ? 'utf-8' : 'base64',
+                                        isText,
+                                        suggestedApp,
+                                        appDetection,
+                                        version,
+                                        versionSource: version ? 'extracted' : 'none',
+                                        versionValidation,
+                                        targetPath
+                                    }]);
+                                })
+                            );
+                        });
+                        
+                        await Promise.all(extractPromises);
+                        console.log('=== ZIP EXTRACTED ===');
+                        console.log('Primary app:', primaryApp, 'v' + primaryVersion);
+                        
+                    } catch (err) {
+                        console.error('ZIP extraction failed:', err);
+                        alert('Failed to extract ZIP: ' + err.message);
+                    }
+                    return;
+                }
+                
+                // Handle regular files
                 const reader = new FileReader();
                 reader.onload = (e) => {
                     const content = e.target.result;
@@ -1726,13 +2209,85 @@
             };
             
             try {
-                addStep('Fetching from TEST', 'running');
-                const testFile = await github.getFile(app.testRepo, app.targetPath);
-                if (!testFile) throw new Error('File not found');
-                const content = atob(testFile.content);
-                const testVersion = extractVersionFromHTML(content);
-                deployment.fileContent = content;
-                addStep('Fetching from TEST', 'complete', formatVersion(testVersion));
+                // Determine which files to promote
+                // For PWA apps: index.html, sw.js, manifest.json, icons/*
+                // For regular apps: just the targetPath (index.html)
+                const filesToPromote = [app.targetPath];
+                if (app.hasServiceWorker && app.swPath) {
+                    filesToPromote.push(app.swPath);
+                }
+                // Always check for manifest.json for PWA apps
+                if (app.hasServiceWorker) {
+                    filesToPromote.push('manifest.json');
+                }
+                
+                // For PWA apps, also check for icons folder
+                let iconFiles = [];
+                if (app.hasServiceWorker) {
+                    try {
+                        const iconsContents = await github.listRepoContents(app.testRepo, 'icons');
+                        iconFiles = iconsContents
+                            .filter(f => f.type === 'file' && /\.(png|ico|svg|webp)$/i.test(f.name))
+                            .map(f => `icons/${f.name}`);
+                        console.log(`Found ${iconFiles.length} icon files in TEST`);
+                    } catch (e) {
+                        console.log('No icons folder found in TEST');
+                    }
+                }
+                
+                addStep('Fetching from TEST', 'running', `${filesToPromote.length + iconFiles.length} files`);
+                
+                const filesToCommit = [];
+                let testVersion = null;
+                
+                // Fetch main PWA files
+                for (const filePath of filesToPromote) {
+                    try {
+                        const testFile = await github.getFile(app.testRepo, filePath);
+                        if (testFile) {
+                            const content = atob(testFile.content);
+                            filesToCommit.push({
+                                path: filePath,
+                                content: content,
+                                encoding: 'utf-8'
+                            });
+                            
+                            // Extract version from main HTML file
+                            if (filePath === app.targetPath) {
+                                testVersion = extractVersionFromHTML(content);
+                                deployment.fileContent = content;
+                            }
+                            
+                            console.log(`â Found ${filePath} in TEST`);
+                        }
+                    } catch (e) {
+                        // File doesn't exist in TEST, skip it (manifest.json might not exist)
+                        console.log(`â  ${filePath} not found in TEST, skipping`);
+                    }
+                }
+                
+                // Fetch icon files (binary - use base64)
+                for (const iconPath of iconFiles) {
+                    try {
+                        const iconFile = await github.getFile(app.testRepo, iconPath);
+                        if (iconFile) {
+                            filesToCommit.push({
+                                path: iconPath,
+                                content: iconFile.content, // Already base64 from GitHub
+                                encoding: 'base64'
+                            });
+                            console.log(`â Found ${iconPath} in TEST`);
+                        }
+                    } catch (e) {
+                        console.log(`â  ${iconPath} not found in TEST, skipping`);
+                    }
+                }
+                
+                if (filesToCommit.length === 0) {
+                    throw new Error('No files found in TEST repo');
+                }
+                
+                addStep('Fetching from TEST', 'complete', `${filesToCommit.length} files, ${formatVersion(testVersion)}`);
                 
                 addStep('Checking PROD', 'running');
                 const prodFile = await github.getFile(app.prodRepo, app.targetPath);
@@ -1740,14 +2295,21 @@
                 deployment.previousVersion = prodVersion;
                 addStep('Checking PROD', 'complete', prodVersion ? formatVersion(prodVersion) : 'Empty');
                 
-                addStep('Deploying', 'running');
-                const result = await github.createOrUpdateFile(
-                    app.prodRepo, app.targetPath, content,
-                    `Promote ${app.name} ${formatVersion(testVersion)} from test`,
-                    prodFile?.sha
+                // ð¸ Save rollback snapshot BEFORE promoting
+                await saveRollbackSnapshot(appId, 'prod', app.prodRepo, app.targetPath);
+                
+                addStep('Deploying', 'running', `${filesToCommit.length} files`);
+                
+                // Use batch commit for multiple files
+                const result = await github.batchCommit(
+                    app.prodRepo,
+                    filesToCommit,
+                    `Promote ${app.name} ${formatVersion(testVersion)} from test (${filesToCommit.length} files)`
                 );
-                deployment.commitSha = result.commit.sha;
-                addStep('Deploying', 'complete', result.commit.sha.substring(0, 7));
+                
+                deployment.commitSha = result.sha;
+                deployment.fileCount = filesToCommit.length;
+                addStep('Deploying', 'complete', `${result.sha.substring(0, 7)} (${filesToCommit.length} files)`);
                 
                 addStep('GitHub Pages', 'running');
                 try {
@@ -1760,7 +2322,7 @@
                 if (settings.createTag && testVersion) {
                     addStep('Tagging', 'running');
                     try {
-                        await github.createTag(app.prodRepo, `v${testVersion}`, result.commit.sha, 'Release');
+                        await github.createTag(app.prodRepo, `v${testVersion}`, result.sha, 'Release');
                         addStep('Tagging', 'complete', `v${testVersion}`);
                     } catch {
                         addStep('Tagging', 'warning', 'May exist');
@@ -1883,10 +2445,10 @@
                 <header className="bg-slate-800 border-b border-slate-700 sticky top-0 z-50">
                     <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
                         <div className="flex items-center gap-3">
-                            <span className="text-2xl">ð®</span>
+                            <Icons.GameShelfLogo size={32} />
                             <div>
                                 <h1 className="text-lg font-bold">Command Center</h1>
-                                <div className="text-xs text-slate-400">v6.7.7 â¢ App Detection + Quick Rollback</div>
+                                <div className="text-xs text-slate-400">v7.0.2 â¢ Dynamic Config + Repo Management</div>
                             </div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -1895,10 +2457,11 @@
                                 title="Refresh versions">
                                 <Icons.Refresh />
                             </button>
-                            {['dashboard', 'files', 'firebase', 'session', 'issues', 'apps', 'history', 'settings'].map(v => (
+                            {['dashboard', 'files', 'firebase', 'session', 'issues', 'apps', 'history', 'config', 'settings'].map(v => (
                                 <button key={v} onClick={() => setView(v)}
                                     className={`px-3 py-1.5 rounded text-sm capitalize flex items-center gap-1 ${view === v ? 'bg-indigo-600' : 'text-slate-400 hover:text-white'}`}>
                                     {v === 'settings' && <Icons.Settings />}
+                                    {v === 'config' && <><Icons.GitBranch /> Config</>}
                                     {v === 'files' && <><Icons.Folder /> Files</>}
                                     {v === 'firebase' && <><Icons.Database /> Firebase</>}
                                     {v === 'session' && <><Icons.File /> Session</>}
@@ -1977,6 +2540,18 @@
                     
                     {view === 'issues' && (
                         <IssuesView apps={apps} deployments={deployments} />
+                    )}
+                    
+                    {view === 'config' && (
+                        <ConfigView 
+                            config={config} 
+                            onConfigChange={handleConfigChange}
+                            showAlert={showAlert}
+                            showConfirm={showConfirm}
+                            github={github}
+                            availableRepos={availableRepos}
+                            onRefreshRepos={refreshRepos}
+                        />
                     )}
                     
                     {view === 'settings' && (
@@ -2479,7 +3054,7 @@
                         </h2>
                         <div onDrop={onFileDrop} onDragOver={e => e.preventDefault()}
                             className="border-2 border-dashed border-slate-600 rounded-lg p-8 text-center hover:border-indigo-500 cursor-pointer">
-                            <input type="file" multiple onChange={onFileDrop} className="hidden" id="upload" />
+                            <input type="file" multiple accept=".html,.js,.css,.json,.zip" onChange={onFileDrop} className="hidden" id="upload" />
                             <label htmlFor="upload" className="cursor-pointer">
                                 <div className="text-4xl mb-3">ð</div>
                                 <div>Drop files here (HTML, JS, CSS, images...)</div>
@@ -2537,7 +3112,7 @@
                                                         }`} title={f.appDetection 
                                                             ? `Detected from content (${f.appDetection.matchCount} matches)` 
                                                             : 'From filename'}>
-                                                            <span>{apps[f.suggestedApp].icon}</span>
+                                                            <AppIcon icon={apps[f.suggestedApp].icon} size={16} />
                                                             <span>{apps[f.suggestedApp].name}</span>
                                                             {f.appDetection && (
                                                                 <span className="text-xs opacity-75">
@@ -2741,10 +3316,14 @@
                                             if (confirmed) {
                                                 console.log('Deploying files:', selectedFiles.map(f => ({ name: f.name, id: f.id, size: f.content?.length })));
                                                 onBatchDeploy(selectedFiles, deployTarget.appId, deployTarget.target);
+                                                // Always reset to TEST after initiating deploy (safety default)
+                                                setDeployTarget(prev => ({ ...prev, target: 'test' }));
                                             }
                                         } else {
                                             console.log('Deploying files:', selectedFiles.map(f => ({ name: f.name, id: f.id, size: f.content?.length })));
                                             onBatchDeploy(selectedFiles, deployTarget.appId, deployTarget.target);
+                                            // Always reset to TEST after initiating deploy (safety default)
+                                            setDeployTarget(prev => ({ ...prev, target: 'test' }));
                                         }
                                     }}
                                         disabled={!github}
@@ -2840,7 +3419,7 @@
                                         >
                                             <div className="flex items-center gap-2 mb-2">
                                                 <span className={`transform transition-transform ${isExpanded ? 'rotate-90' : ''}`}>â¶</span>
-                                                <span>{app.icon}</span>
+                                                <AppIcon icon={app.icon} size={20} />
                                                 <span className="font-medium flex-1">{app.name}</span>
                                                 {canPromote && (
                                                     <button onClick={(e) => { e.stopPropagation(); onPromote(app.id); }}
@@ -3826,7 +4405,7 @@
                     {Object.values(apps).map(app => (
                         <div key={app.id} className="bg-slate-800 rounded-xl border border-slate-700 p-4">
                             <div className="flex items-center gap-2 mb-3">
-                                <span className="text-2xl">{app.icon}</span>
+                                <AppIcon icon={app.icon} size={28} />
                                 <span className="font-semibold">{app.name}</span>
                             </div>
                             <div className="space-y-2">
@@ -4413,7 +4992,7 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
                                                 ? 'bg-blue-600 hover:bg-blue-500' 
                                                 : 'bg-slate-600 hover:bg-slate-500'
                                         }`}>
-                                        {app.icon} {app.name} â TEST
+                                        <AppIcon icon={app.icon} size={16} /> {app.name} â TEST
                                     </button>
                                 ))}
                             </div>
@@ -4477,7 +5056,7 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
                         <tbody>
                             {configuredApps.map(app => (
                                 <tr key={app.id} className="border-b border-slate-700/50">
-                                    <td className="p-2">{app.icon} {app.name}</td>
+                                    <td className="p-2"><span className="inline-flex items-center gap-1"><AppIcon icon={app.icon} size={16} /> {app.name}</span></td>
                                     <td className="p-2 text-center font-mono text-blue-400">{app.currentTestVersion || 'â'}</td>
                                     <td className="p-2 text-center font-mono text-green-400">{app.currentProdVersion || 'â'}</td>
                                     <td className="p-2 text-center">
@@ -4544,10 +5123,13 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
     function IssuesView({ apps, deployments }) {
         const [issues, setIssues] = React.useState([]);
         const [releases, setReleases] = React.useState([]);
+        const [userReports, setUserReports] = React.useState([]);
+        const [userReportsExpanded, setUserReportsExpanded] = React.useState(true);
         const [firebaseUser, setFirebaseUser] = React.useState(null);
         const [loading, setLoading] = React.useState(true);
         const [showNewIssue, setShowNewIssue] = React.useState(false);
         const [selectedIssue, setSelectedIssue] = React.useState(null);
+        const [selectedUserReport, setSelectedUserReport] = React.useState(null);
         const [filter, setFilter] = React.useState('open'); // 'all', 'open', 'fixed', 'verified', 'closed'
         const [appFilter, setAppFilter] = React.useState('all');
         
@@ -4561,10 +5143,36 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
                 if (u) {
                     loadIssues(u.uid);
                     loadReleases(u.uid);
+                    loadUserReports(); // Load user-submitted reports
                 }
             });
             return () => unsubscribe();
         }, []);
+        
+        // Load user-reported issues from Game Shelf
+        const loadUserReports = () => {
+            if (!firebaseDb) return;
+            try {
+                const ref = firebaseDb.ref('reported-issues');
+                ref.on('value', (snapshot) => {
+                    const data = snapshot.val();
+                    if (data) {
+                        const list = Object.entries(data).map(([id, report]) => ({ 
+                            firebaseKey: id, 
+                            ...report 
+                        }));
+                        // Sort by timestamp, newest first
+                        setUserReports(list.sort((a, b) => 
+                            new Date(b.timestamp || b.createdAt || 0) - new Date(a.timestamp || a.createdAt || 0)
+                        ));
+                    } else {
+                        setUserReports([]);
+                    }
+                });
+            } catch (e) {
+                console.error('Error loading user reports:', e);
+            }
+        };
         
         // Load issues from Firebase
         const loadIssues = async (uid) => {
@@ -4749,6 +5357,66 @@ Released: ${new Date().toLocaleDateString()}
             alert('Release notes copied to clipboard!');
         };
         
+        // Convert user report to tracked issue
+        const convertToTrackedIssue = async (report) => {
+            if (!firebaseDb || !firebaseUser) return;
+            
+            const id = getNextIssueId();
+            const issue = {
+                id,
+                title: report.title || report.description?.substring(0, 50) || 'User reported issue',
+                description: report.description || '',
+                app: report.section || 'gameshelf',
+                severity: report.severity || 'medium',
+                status: 'open',
+                createdAt: new Date().toISOString(),
+                createdBy: 'user-report',
+                originalReport: {
+                    firebaseKey: report.firebaseKey,
+                    type: report.type,
+                    section: report.section,
+                    userAgent: report.userAgent,
+                    appVersion: report.appVersion,
+                    timestamp: report.timestamp,
+                    screenshot: report.screenshot
+                },
+                stepsToReproduce: [],
+                expected: '',
+                actual: report.description || ''
+            };
+            
+            await firebaseDb.ref(`command-center/${firebaseUser.uid}/issues/${id}`).set(issue);
+            
+            // Mark original report as converted
+            await firebaseDb.ref(`reported-issues/${report.firebaseKey}`).update({
+                convertedToIssue: id,
+                convertedAt: new Date().toISOString()
+            });
+            
+            setSelectedUserReport(null);
+        };
+        
+        // Dismiss user report (archive without tracking)
+        const dismissUserReport = async (report) => {
+            if (!firebaseDb) return;
+            
+            await firebaseDb.ref(`reported-issues/${report.firebaseKey}`).update({
+                dismissed: true,
+                dismissedAt: new Date().toISOString()
+            });
+        };
+        
+        // Delete user report permanently
+        const deleteUserReport = async (report) => {
+            if (!firebaseDb) return;
+            if (!confirm('Permanently delete this report?')) return;
+            
+            await firebaseDb.ref(`reported-issues/${report.firebaseKey}`).remove();
+        };
+        
+        // Get active (non-dismissed, non-converted) user reports
+        const activeUserReports = userReports.filter(r => !r.dismissed && !r.convertedToIssue);
+        
         // Filter issues
         const filteredIssues = issues.filter(i => {
             if (filter !== 'all' && i.status !== filter) return false;
@@ -4803,6 +5471,9 @@ Released: ${new Date().toLocaleDateString()}
                             {issues.filter(i => i.status === 'open').length} open â¢ 
                             {issues.filter(i => i.status === 'fixed').length} fixed â¢ 
                             {issues.filter(i => i.status === 'verified').length} verified
+                            {activeUserReports.length > 0 && (
+                                <span className="text-orange-400"> â¢ {activeUserReports.length} user reports</span>
+                            )}
                         </div>
                     </div>
                     <button
@@ -4833,6 +5504,217 @@ Released: ${new Date().toLocaleDateString()}
                     </select>
                 </div>
                 
+                {/* User-Reported Issues Section */}
+                {activeUserReports.length > 0 && (
+                    <div className="bg-orange-900/30 border border-orange-700 rounded-xl overflow-hidden">
+                        <button 
+                            onClick={() => setUserReportsExpanded(!userReportsExpanded)}
+                            className="w-full p-4 flex items-center justify-between hover:bg-orange-900/20 transition-colors"
+                        >
+                            <div className="flex items-center gap-3">
+                                <span className="text-2xl">ð¬</span>
+                                <div className="text-left">
+                                    <div className="font-semibold text-orange-300">
+                                        {activeUserReports.length} User Report{activeUserReports.length !== 1 ? 's' : ''} Pending
+                                    </div>
+                                    <div className="text-sm text-slate-400">
+                                        Submitted from Game Shelf app
+                                    </div>
+                                </div>
+                            </div>
+                            <span className="text-xl">{userReportsExpanded ? 'â¼' : 'â¶'}</span>
+                        </button>
+                        
+                        {userReportsExpanded && (
+                            <div className="border-t border-orange-800 p-4 space-y-3">
+                                {activeUserReports.slice(0, 10).map(report => (
+                                    <div key={report.firebaseKey} className="bg-slate-800 rounded-lg p-4 border border-slate-700">
+                                        <div className="flex items-start justify-between gap-4">
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                                    <span className={`px-2 py-0.5 rounded text-xs ${
+                                                        report.type === 'bug' ? 'bg-red-900/50 text-red-300' :
+                                                        report.type === 'feature' ? 'bg-blue-900/50 text-blue-300' :
+                                                        report.type === 'ux' ? 'bg-purple-900/50 text-purple-300' :
+                                                        'bg-slate-700 text-slate-300'
+                                                    }`}>
+                                                        {report.type === 'bug' && 'ð'}
+                                                        {report.type === 'feature' && 'ð¡'}
+                                                        {report.type === 'ux' && 'ð¨'}
+                                                        {report.type === 'other' && 'ð'}
+                                                        {' '}{report.type || 'report'}
+                                                    </span>
+                                                    {report.section && (
+                                                        <span className="px-2 py-0.5 rounded text-xs bg-slate-700 text-slate-300">
+                                                            ð {report.section}
+                                                        </span>
+                                                    )}
+                                                    {report.severity && (
+                                                        <span className={`px-2 py-0.5 rounded text-xs ${
+                                                            report.severity === 'critical' ? 'bg-red-900 text-red-200' :
+                                                            report.severity === 'major' ? 'bg-orange-900 text-orange-200' :
+                                                            report.severity === 'minor' ? 'bg-yellow-900 text-yellow-200' :
+                                                            'bg-slate-700 text-slate-300'
+                                                        }`}>
+                                                            {report.severity}
+                                                        </span>
+                                                    )}
+                                                    {report.appVersion && (
+                                                        <span className="text-xs text-slate-500">
+                                                            v{report.appVersion}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className="font-medium truncate">
+                                                    {report.title || report.description?.substring(0, 60) || 'No description'}
+                                                </div>
+                                                {report.description && report.title && (
+                                                    <div className="text-sm text-slate-400 mt-1 line-clamp-2">
+                                                        {report.description}
+                                                    </div>
+                                                )}
+                                                <div className="text-xs text-slate-500 mt-2">
+                                                    ð {new Date(report.timestamp || report.createdAt).toLocaleString()}
+                                                </div>
+                                            </div>
+                                            <div className="flex flex-col gap-1">
+                                                <button
+                                                    onClick={() => setSelectedUserReport(report)}
+                                                    className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs whitespace-nowrap"
+                                                >
+                                                    ðï¸ View
+                                                </button>
+                                                <button
+                                                    onClick={() => convertToTrackedIssue(report)}
+                                                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded text-xs whitespace-nowrap"
+                                                >
+                                                    â Track
+                                                </button>
+                                                <button
+                                                    onClick={() => dismissUserReport(report)}
+                                                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded text-xs text-slate-400 whitespace-nowrap"
+                                                >
+                                                    â Dismiss
+                                                </button>
+                                            </div>
+                                        </div>
+                                        {report.screenshot && (
+                                            <div className="mt-3 pt-3 border-t border-slate-700">
+                                                <img 
+                                                    src={report.screenshot} 
+                                                    alt="Screenshot" 
+                                                    className="max-h-32 rounded cursor-pointer hover:opacity-80"
+                                                    onClick={() => window.open(report.screenshot, '_blank')}
+                                                />
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                                {activeUserReports.length > 10 && (
+                                    <div className="text-center text-sm text-slate-400">
+                                        + {activeUserReports.length - 10} more reports
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
+                
+                {/* User Report Detail Modal */}
+                {selectedUserReport && (
+                    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setSelectedUserReport(null)}>
+                        <div className="bg-slate-800 rounded-xl border border-slate-600 w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                            <div className="p-6 border-b border-slate-700 flex items-center justify-between">
+                                <h3 className="text-lg font-semibold">ð¬ User Report</h3>
+                                <button onClick={() => setSelectedUserReport(null)} className="text-slate-400 hover:text-white">â</button>
+                            </div>
+                            <div className="p-6 space-y-4">
+                                <div className="flex flex-wrap gap-2">
+                                    <span className={`px-3 py-1 rounded ${
+                                        selectedUserReport.type === 'bug' ? 'bg-red-900/50 text-red-300' :
+                                        selectedUserReport.type === 'feature' ? 'bg-blue-900/50 text-blue-300' :
+                                        'bg-slate-700'
+                                    }`}>
+                                        {selectedUserReport.type || 'report'}
+                                    </span>
+                                    {selectedUserReport.section && (
+                                        <span className="px-3 py-1 rounded bg-slate-700">ð {selectedUserReport.section}</span>
+                                    )}
+                                    {selectedUserReport.severity && (
+                                        <span className="px-3 py-1 rounded bg-slate-700">{selectedUserReport.severity}</span>
+                                    )}
+                                </div>
+                                
+                                {selectedUserReport.title && (
+                                    <div>
+                                        <div className="text-sm text-slate-400 mb-1">Title</div>
+                                        <div className="font-medium">{selectedUserReport.title}</div>
+                                    </div>
+                                )}
+                                
+                                <div>
+                                    <div className="text-sm text-slate-400 mb-1">Description</div>
+                                    <div className="bg-slate-900 rounded p-3 whitespace-pre-wrap">
+                                        {selectedUserReport.description || 'No description provided'}
+                                    </div>
+                                </div>
+                                
+                                {selectedUserReport.screenshot && (
+                                    <div>
+                                        <div className="text-sm text-slate-400 mb-1">Screenshot</div>
+                                        <img 
+                                            src={selectedUserReport.screenshot} 
+                                            alt="Screenshot" 
+                                            className="max-w-full rounded cursor-pointer"
+                                            onClick={() => window.open(selectedUserReport.screenshot, '_blank')}
+                                        />
+                                    </div>
+                                )}
+                                
+                                <div className="grid grid-cols-2 gap-4 text-sm">
+                                    <div>
+                                        <div className="text-slate-400">Submitted</div>
+                                        <div>{new Date(selectedUserReport.timestamp || selectedUserReport.createdAt).toLocaleString()}</div>
+                                    </div>
+                                    <div>
+                                        <div className="text-slate-400">App Version</div>
+                                        <div>{selectedUserReport.appVersion || 'Unknown'}</div>
+                                    </div>
+                                </div>
+                                
+                                {selectedUserReport.userAgent && (
+                                    <div>
+                                        <div className="text-sm text-slate-400 mb-1">Device/Browser</div>
+                                        <div className="text-xs bg-slate-900 rounded p-2 font-mono break-all">
+                                            {selectedUserReport.userAgent}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                            <div className="p-6 border-t border-slate-700 flex gap-3">
+                                <button
+                                    onClick={() => convertToTrackedIssue(selectedUserReport)}
+                                    className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg"
+                                >
+                                    â Convert to Tracked Issue
+                                </button>
+                                <button
+                                    onClick={() => { dismissUserReport(selectedUserReport); setSelectedUserReport(null); }}
+                                    className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg"
+                                >
+                                    Dismiss
+                                </button>
+                                <button
+                                    onClick={() => { deleteUserReport(selectedUserReport); setSelectedUserReport(null); }}
+                                    className="px-4 py-2 bg-red-900 hover:bg-red-800 rounded-lg"
+                                >
+                                    ðï¸
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+                
                 {/* Release Ready Banner */}
                 {configuredApps.map(app => {
                     const ready = getIssuesForRelease(app.id);
@@ -4840,8 +5722,8 @@ Released: ${new Date().toLocaleDateString()}
                     return (
                         <div key={app.id} className="bg-green-900/30 border border-green-700 rounded-xl p-4 flex items-center justify-between">
                             <div>
-                                <div className="font-medium text-green-300">
-                                    {app.icon} {app.name}: {ready.length} issue{ready.length !== 1 ? 's' : ''} ready for PROD
+                                <div className="font-medium text-green-300 flex items-center gap-1">
+                                    <AppIcon icon={app.icon} size={18} /> {app.name}: {ready.length} issue{ready.length !== 1 ? 's' : ''} ready for PROD
                                 </div>
                                 <div className="text-sm text-slate-400">
                                     {ready.map(i => i.id).join(', ')}
@@ -5263,6 +6145,705 @@ const pushIssueToCommandCenter = async (testResult) => {
                         </button>
                         <button onClick={handleSubmit} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded">
                             Save Changes
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // =========================================================================
+    // CONFIG VIEW (v7.0.0) - Dynamic Environment & App Configuration
+    // =========================================================================
+    
+    function ConfigView({ config, onConfigChange, showAlert, showConfirm, github, availableRepos, onRefreshRepos }) {
+        const [activeTab, setActiveTab] = React.useState('environments');
+        const [editingApp, setEditingApp] = React.useState(null);
+        const [newAppForm, setNewAppForm] = React.useState(null);
+        const [creatingRepo, setCreatingRepo] = React.useState(null); // { appId, env }
+        const [repoCreationStatus, setRepoCreationStatus] = React.useState({});
+        
+        // Internal tools that don't need DEV/BETA repos
+        const internalTools = ['testplan', 'management'];
+        const gameApps = Object.values(config.apps).filter(app => !internalTools.includes(app.id));
+        
+        // Get GitHub username from available repos
+        const githubOwner = availableRepos[0]?.owner || 'stewartdavidp-ship-it';
+        
+        const updateConfig = (newConfig) => {
+            onConfigChange(newConfig);
+        };
+        
+        // Environment Management
+        const toggleEnv = (envId) => {
+            const newConfig = ConfigManager.toggleEnvironment({ ...config }, envId);
+            updateConfig(newConfig);
+        };
+        
+        // App Management
+        const saveApp = (appData) => {
+            let newConfig = { ...config, apps: { ...config.apps } };
+            if (editingApp) {
+                newConfig = ConfigManager.updateApp(newConfig, editingApp.id, appData);
+            } else {
+                newConfig = ConfigManager.addApp(newConfig, appData);
+            }
+            updateConfig(newConfig);
+            setEditingApp(null);
+            setNewAppForm(null);
+        };
+        
+        const deleteApp = async (appId) => {
+            const confirmed = await showConfirm(`Delete "${config.apps[appId]?.name}"? This cannot be undone.`, 'Delete App');
+            if (confirmed) {
+                const newConfig = ConfigManager.removeApp({ ...config, apps: { ...config.apps } }, appId);
+                updateConfig(newConfig);
+            }
+        };
+        
+        // Create a new repository for an app environment
+        const createRepoForApp = async (appId, env) => {
+            if (!github) {
+                await showAlert('Configure GitHub token first', 'GitHub Required');
+                return;
+            }
+            
+            const app = config.apps[appId];
+            if (!app) return;
+            
+            // Generate repo name based on patterns
+            const repoPatterns = app.repoPatterns[env] || [];
+            const suggestedName = repoPatterns[0] || `${appId}${env}`;
+            
+            // Check if repo already exists
+            const exists = await github.repoExists(githubOwner, suggestedName);
+            if (exists) {
+                const useExisting = await showConfirm(
+                    `Repository "${suggestedName}" already exists.\n\nAssign it to ${app.name} ${env.toUpperCase()}?`,
+                    'Repository Exists'
+                );
+                if (useExisting) {
+                    // Update config with existing repo
+                    const newConfig = { ...config, apps: { ...config.apps } };
+                    newConfig.apps[appId] = {
+                        ...newConfig.apps[appId],
+                        repos: { ...newConfig.apps[appId].repos, [env]: `${githubOwner}/${suggestedName}` }
+                    };
+                    updateConfig(newConfig);
+                    setRepoCreationStatus(prev => ({ ...prev, [`${appId}-${env}`]: 'assigned' }));
+                }
+                return;
+            }
+            
+            // Confirm creation
+            const confirmed = await showConfirm(
+                `Create new repository?\n\n` +
+                `Name: ${suggestedName}\n` +
+                `For: ${app.name} (${env.toUpperCase()})\n` +
+                `URL: https://${githubOwner}.github.io/${suggestedName}/\n\n` +
+                `This will create a public repo with GitHub Pages enabled.`,
+                `Create ${env.toUpperCase()} Repository`
+            );
+            
+            if (!confirmed) return;
+            
+            setCreatingRepo({ appId, env });
+            setRepoCreationStatus(prev => ({ ...prev, [`${appId}-${env}`]: 'creating' }));
+            
+            try {
+                // Create the repository
+                const description = `${app.name} - ${env.toUpperCase()} environment`;
+                const result = await github.createRepo(suggestedName, description, false);
+                
+                setRepoCreationStatus(prev => ({ ...prev, [`${appId}-${env}`]: 'enabling-pages' }));
+                
+                // Wait a moment for GitHub to initialize the repo
+                await new Promise(r => setTimeout(r, 2000));
+                
+                // Enable GitHub Pages
+                try {
+                    await github.enablePages(result.fullName);
+                } catch (e) {
+                    console.log('Pages may need manual enabling:', e);
+                }
+                
+                // Update config with new repo
+                const newConfig = { ...config, apps: { ...config.apps } };
+                newConfig.apps[appId] = {
+                    ...newConfig.apps[appId],
+                    repos: { ...newConfig.apps[appId].repos, [env]: result.fullName }
+                };
+                updateConfig(newConfig);
+                
+                // Refresh repo list
+                if (onRefreshRepos) onRefreshRepos();
+                
+                setRepoCreationStatus(prev => ({ ...prev, [`${appId}-${env}`]: 'complete' }));
+                await showAlert(
+                    `Repository created successfully!\n\n` +
+                    `${result.fullName}\n` +
+                    `${result.pagesUrl}`,
+                    'â Repository Created'
+                );
+                
+            } catch (error) {
+                console.error('Failed to create repo:', error);
+                setRepoCreationStatus(prev => ({ ...prev, [`${appId}-${env}`]: 'error' }));
+                await showAlert(`Failed to create repository: ${error.message}`, 'Error');
+            } finally {
+                setCreatingRepo(null);
+            }
+        };
+        
+        // Get repo status for an app/env
+        const getRepoStatus = (appId, env) => {
+            const app = config.apps[appId];
+            const repo = app?.repos?.[env];
+            const statusKey = `${appId}-${env}`;
+            
+            if (repoCreationStatus[statusKey]) {
+                return repoCreationStatus[statusKey];
+            }
+            if (repo) {
+                return 'configured';
+            }
+            return 'not-created';
+        };
+        
+        const envColors = config.environments.colors;
+        const activeEnvs = config.environments.active;
+        
+        return (
+            <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                    <h2 className="text-xl font-bold flex items-center gap-2">
+                        âï¸ Configuration
+                    </h2>
+                    <div className="text-xs text-slate-500">Config v{config.version}</div>
+                </div>
+                
+                {/* Tab Navigation */}
+                <div className="flex gap-2 border-b border-slate-700 pb-2">
+                    {[
+                        { id: 'environments', label: 'ð Environments' },
+                        { id: 'repos', label: 'ðï¸ Repositories' },
+                        { id: 'apps', label: 'ð¦ Apps' },
+                        { id: 'detection', label: 'ð Detection' }
+                    ].map(tab => (
+                        <button
+                            key={tab.id}
+                            onClick={() => setActiveTab(tab.id)}
+                            className={`px-4 py-2 rounded-t-lg font-medium transition-colors ${
+                                activeTab === tab.id 
+                                    ? 'bg-slate-700 text-white' 
+                                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                            }`}
+                        >
+                            {tab.label}
+                        </button>
+                    ))}
+                </div>
+                
+                {/* Environments Tab */}
+                {activeTab === 'environments' && (
+                    <div className="space-y-6">
+                        <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                            <h3 className="font-semibold mb-4">Deployment Tiers</h3>
+                            <p className="text-sm text-slate-400 mb-4">
+                                Enable the environments you use. Files deploy through active tiers in order.
+                            </p>
+                            
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                {config.environments.available.map(env => {
+                                    const isActive = activeEnvs.includes(env);
+                                    const colors = envColors[env];
+                                    return (
+                                        <button
+                                            key={env}
+                                            onClick={() => toggleEnv(env)}
+                                            className={`p-4 rounded-xl border-2 transition-all ${
+                                                isActive 
+                                                    ? `${colors.bg} ${colors.border} text-white` 
+                                                    : 'bg-slate-900 border-slate-600 text-slate-400 hover:border-slate-500'
+                                            }`}
+                                        >
+                                            <div className="text-2xl mb-2">
+                                                {config.environments.icons[env]}
+                                            </div>
+                                            <div className="font-bold uppercase">{config.environments.labels[env]}</div>
+                                            <div className="text-xs mt-1 opacity-75">
+                                                {isActive ? 'â Active' : 'Disabled'}
+                                            </div>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            
+                            <div className="mt-6 p-4 bg-slate-900 rounded-lg">
+                                <div className="text-sm font-medium mb-2">Current Flow:</div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                    {activeEnvs.map((env, idx) => (
+                                        <React.Fragment key={env}>
+                                            <span className={`px-3 py-1 rounded-full text-sm font-medium ${envColors[env].bg}`}>
+                                                {config.environments.labels[env]}
+                                            </span>
+                                            {idx < activeEnvs.length - 1 && (
+                                                <span className="text-slate-500">â</span>
+                                            )}
+                                        </React.Fragment>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div className="bg-amber-900/30 border border-amber-700 rounded-xl p-4">
+                            <div className="flex items-start gap-3">
+                                <Icons.AlertTriangle className="text-amber-400 mt-0.5" />
+                                <div>
+                                    <div className="font-medium text-amber-300">Environment Changes</div>
+                                    <div className="text-sm text-slate-300 mt-1">
+                                        Adding DEV creates a rapid-build tier before TEST. Adding BETA creates a feature-flag tier after PROD.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+                
+                {/* Repositories Tab */}
+                {activeTab === 'repos' && (
+                    <div className="space-y-6">
+                        <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                            <h3 className="font-semibold mb-2">Repository Management</h3>
+                            <p className="text-sm text-slate-400 mb-4">
+                                Create and manage GitHub repositories for each app environment. 
+                                DEV is for rapid iteration, BETA is for feature-flagged production testing.
+                            </p>
+                            
+                            {!github && (
+                                <div className="bg-amber-900/30 border border-amber-700 rounded-lg p-4 mb-4">
+                                    <div className="text-amber-300 font-medium">â ï¸ GitHub Token Required</div>
+                                    <div className="text-sm text-slate-300 mt-1">
+                                        Configure your GitHub token in Settings to create repositories.
+                                    </div>
+                                </div>
+                            )}
+                            
+                            <div className="space-y-4">
+                                {gameApps.map(app => (
+                                    <div key={app.id} className="bg-slate-900 rounded-xl p-4 border border-slate-700">
+                                        <div className="flex items-center gap-3 mb-4">
+                                            <AppIcon icon={app.icon} size={28} />
+                                            <div>
+                                                <div className="font-semibold">{app.name}</div>
+                                                <div className="text-xs text-slate-400">
+                                                    {app.hasServiceWorker ? 'PWA' : 'Web App'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                            {['dev', 'test', 'prod', 'beta'].map(env => {
+                                                const isActive = activeEnvs.includes(env);
+                                                const repo = app.repos?.[env];
+                                                const status = getRepoStatus(app.id, env);
+                                                const colors = envColors[env];
+                                                const isCreating = creatingRepo?.appId === app.id && creatingRepo?.env === env;
+                                                
+                                                return (
+                                                    <div 
+                                                        key={env} 
+                                                        className={`p-3 rounded-lg border ${
+                                                            isActive ? colors.border : 'border-slate-700 opacity-50'
+                                                        } ${isActive ? 'bg-slate-800' : 'bg-slate-900'}`}
+                                                    >
+                                                        <div className={`text-xs font-medium mb-2 ${isActive ? colors.text : 'text-slate-500'}`}>
+                                                            {config.environments.labels[env]}
+                                                            {!isActive && ' (disabled)'}
+                                                        </div>
+                                                        
+                                                        {repo ? (
+                                                            <div>
+                                                                <div className="text-xs font-mono text-green-400 truncate" title={repo}>
+                                                                    â {repo.split('/')[1]}
+                                                                </div>
+                                                                <a 
+                                                                    href={`https://github.com/${repo}`}
+                                                                    target="_blank"
+                                                                    className="text-xs text-slate-400 hover:text-white"
+                                                                >
+                                                                    View â
+                                                                </a>
+                                                            </div>
+                                                        ) : isActive ? (
+                                                            <button
+                                                                onClick={() => createRepoForApp(app.id, env)}
+                                                                disabled={!github || isCreating}
+                                                                className={`w-full px-2 py-1.5 rounded text-xs font-medium transition-colors ${
+                                                                    isCreating 
+                                                                        ? 'bg-slate-700 text-slate-400 cursor-wait'
+                                                                        : github
+                                                                            ? `${colors.bg} hover:opacity-90 text-white`
+                                                                            : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                                                                }`}
+                                                            >
+                                                                {isCreating ? (
+                                                                    status === 'enabling-pages' ? 'â³ Enabling Pages...' : 'â³ Creating...'
+                                                                ) : (
+                                                                    <>+ Create Repo</>
+                                                                )}
+                                                            </button>
+                                                        ) : (
+                                                            <div className="text-xs text-slate-500 italic">
+                                                                Enable {env.toUpperCase()} first
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        
+                        <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                            <h3 className="font-semibold mb-2">Internal Tools</h3>
+                            <p className="text-sm text-slate-400 mb-4">
+                                These tools only use TEST and PROD environments.
+                            </p>
+                            
+                            <div className="space-y-3">
+                                {Object.values(config.apps)
+                                    .filter(app => internalTools.includes(app.id))
+                                    .map(app => (
+                                        <div key={app.id} className="flex items-center justify-between p-3 bg-slate-900 rounded-lg">
+                                            <div className="flex items-center gap-3">
+                                                <AppIcon icon={app.icon} size={24} />
+                                                <span className="font-medium">{app.name}</span>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                {['test', 'prod'].map(env => {
+                                                    const repo = app.repos?.[env];
+                                                    return repo ? (
+                                                        <span key={env} className="text-xs px-2 py-1 bg-slate-800 rounded text-slate-400">
+                                                            {env.toUpperCase()}: {repo.split('/')[1]}
+                                                        </span>
+                                                    ) : (
+                                                        <span key={env} className="text-xs px-2 py-1 bg-slate-800 rounded text-slate-500">
+                                                            {env.toUpperCase()}: â
+                                                        </span>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    ))}
+                            </div>
+                        </div>
+                    </div>
+                )}
+                
+                {/* Apps Tab */}
+                {activeTab === 'apps' && (
+                    <div className="space-y-4">
+                        <div className="flex justify-between items-center">
+                            <div className="text-sm text-slate-400">
+                                {Object.keys(config.apps).length} apps configured
+                            </div>
+                            <button 
+                                onClick={() => setNewAppForm({ name: '', icon: 'ð¦', targetPath: 'index.html' })}
+                                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg"
+                            >
+                                <Icons.Plus /> Add App
+                            </button>
+                        </div>
+                        
+                        {/* App List */}
+                        <div className="grid gap-4">
+                            {Object.values(config.apps).map(app => (
+                                <div key={app.id} className="bg-slate-800 rounded-xl border border-slate-700 p-4">
+                                    <div className="flex items-start justify-between mb-4">
+                                        <div className="flex items-center gap-3">
+                                            <AppIcon icon={app.icon} size={32} />
+                                            <div>
+                                                <div className="font-semibold">{app.name}</div>
+                                                <div className="text-xs text-slate-400">
+                                                    {app.targetPath} {app.hasServiceWorker && 'â¢ PWA'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <button 
+                                                onClick={() => setEditingApp(app)}
+                                                className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded"
+                                            >
+                                                <Icons.Edit />
+                                            </button>
+                                            <button 
+                                                onClick={() => deleteApp(app.id)}
+                                                className="p-2 text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded"
+                                            >
+                                                <Icons.Trash />
+                                            </button>
+                                        </div>
+                                    </div>
+                                    
+                                    {/* Environment Repos */}
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                        {activeEnvs.map(env => (
+                                            <div key={env} className={`p-3 rounded-lg bg-slate-900 border ${envColors[env].border}`}>
+                                                <div className={`text-xs font-medium mb-1 ${envColors[env].text}`}>
+                                                    {config.environments.labels[env]}
+                                                </div>
+                                                <div className="text-sm font-mono truncate">
+                                                    {app.repos[env] || <span className="text-slate-500 italic">Not set</span>}
+                                                </div>
+                                                {app.versions[env] && (
+                                                    <div className="text-xs text-slate-400 mt-1">
+                                                        v{app.versions[env]}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        
+                        {/* Add/Edit App Modal */}
+                        {(newAppForm || editingApp) && (
+                            <AppEditModal 
+                                app={editingApp || newAppForm}
+                                isNew={!editingApp}
+                                environments={activeEnvs}
+                                envLabels={config.environments.labels}
+                                onSave={saveApp}
+                                onCancel={() => { setEditingApp(null); setNewAppForm(null); }}
+                            />
+                        )}
+                    </div>
+                )}
+                
+                {/* Detection Tab */}
+                {activeTab === 'detection' && (
+                    <div className="space-y-4">
+                        <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                            <h3 className="font-semibold mb-2">Content Detection Patterns</h3>
+                            <p className="text-sm text-slate-400 mb-4">
+                                Regex patterns (case-insensitive) used to auto-detect which app a file belongs to.
+                            </p>
+                            
+                            <div className="space-y-4">
+                                {Object.values(config.apps).map(app => (
+                                    <div key={app.id} className="p-4 bg-slate-900 rounded-lg">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <AppIcon icon={app.icon} size={20} />
+                                            <span className="font-medium">{app.name}</span>
+                                        </div>
+                                        <div className="flex flex-wrap gap-2">
+                                            {app.detectionPatterns.map((pattern, idx) => (
+                                                <code key={idx} className="px-2 py-1 bg-slate-800 rounded text-xs text-green-400">
+                                                    {pattern}
+                                                </code>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        
+                        <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                            <h3 className="font-semibold mb-2">Repo Name Patterns</h3>
+                            <p className="text-sm text-slate-400 mb-4">
+                                Patterns for auto-suggesting apps based on GitHub repo names.
+                            </p>
+                            
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm">
+                                    <thead>
+                                        <tr className="text-left text-slate-400 border-b border-slate-700">
+                                            <th className="pb-2 pr-4">App</th>
+                                            {activeEnvs.map(env => (
+                                                <th key={env} className={`pb-2 pr-4 ${envColors[env].text}`}>
+                                                    {config.environments.labels[env]}
+                                                </th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {Object.values(config.apps).map(app => (
+                                            <tr key={app.id} className="border-b border-slate-800">
+                                                <td className="py-2 pr-4 font-medium">
+                                                    <span className="flex items-center gap-2">
+                                                        <AppIcon icon={app.icon} size={16} />
+                                                        {app.name}
+                                                    </span>
+                                                </td>
+                                                {activeEnvs.map(env => (
+                                                    <td key={env} className="py-2 pr-4">
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {(app.repoPatterns[env] || []).map((p, i) => (
+                                                                <code key={i} className="px-1 bg-slate-800 rounded text-xs">
+                                                                    {p}
+                                                                </code>
+                                                            ))}
+                                                        </div>
+                                                    </td>
+                                                ))}
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    }
+    
+    // App Edit Modal Component
+    function AppEditModal({ app, isNew, environments, envLabels, onSave, onCancel }) {
+        const [form, setForm] = React.useState({
+            id: app.id || '',
+            name: app.name || '',
+            icon: app.icon || 'ð¦',
+            targetPath: app.targetPath || 'index.html',
+            swPath: app.swPath || '',
+            hasServiceWorker: app.hasServiceWorker || false,
+            repos: app.repos || {},
+            detectionPatterns: (app.detectionPatterns || []).join('\n'),
+            repoPatterns: Object.fromEntries(
+                environments.map(env => [env, (app.repoPatterns?.[env] || []).join(', ')])
+            )
+        });
+        
+        const handleSave = () => {
+            const data = {
+                ...form,
+                id: form.id || form.name.toLowerCase().replace(/\s+/g, ''),
+                detectionPatterns: form.detectionPatterns.split('\n').filter(p => p.trim()),
+                repoPatterns: Object.fromEntries(
+                    environments.map(env => [
+                        env, 
+                        form.repoPatterns[env]?.split(',').map(s => s.trim()).filter(Boolean) || []
+                    ])
+                )
+            };
+            onSave(data);
+        };
+        
+        return (
+            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+                <div className="bg-slate-800 rounded-xl border border-slate-600 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                    <div className="p-6 border-b border-slate-700">
+                        <h3 className="text-lg font-bold">{isNew ? 'Add New App' : `Edit ${app.name}`}</h3>
+                    </div>
+                    
+                    <div className="p-6 space-y-4">
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium mb-1">App Name</label>
+                                <input 
+                                    type="text"
+                                    value={form.name}
+                                    onChange={e => setForm({ ...form, name: e.target.value })}
+                                    className="w-full p-2 bg-slate-900 border border-slate-600 rounded"
+                                    placeholder="My App"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium mb-1">Icon (emoji)</label>
+                                <input 
+                                    type="text"
+                                    value={form.icon}
+                                    onChange={e => setForm({ ...form, icon: e.target.value })}
+                                    className="w-full p-2 bg-slate-900 border border-slate-600 rounded"
+                                    placeholder="ð¦"
+                                />
+                            </div>
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium mb-1">Target Path</label>
+                                <input 
+                                    type="text"
+                                    value={form.targetPath}
+                                    onChange={e => setForm({ ...form, targetPath: e.target.value })}
+                                    className="w-full p-2 bg-slate-900 border border-slate-600 rounded"
+                                    placeholder="index.html"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium mb-1">Service Worker Path</label>
+                                <input 
+                                    type="text"
+                                    value={form.swPath}
+                                    onChange={e => setForm({ ...form, swPath: e.target.value })}
+                                    className="w-full p-2 bg-slate-900 border border-slate-600 rounded"
+                                    placeholder="sw.js (leave empty if none)"
+                                />
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <label className="flex items-center gap-2">
+                                <input 
+                                    type="checkbox"
+                                    checked={form.hasServiceWorker}
+                                    onChange={e => setForm({ ...form, hasServiceWorker: e.target.checked })}
+                                    className="rounded"
+                                />
+                                <span className="text-sm">Has Service Worker (PWA)</span>
+                            </label>
+                        </div>
+                        
+                        <div>
+                            <label className="block text-sm font-medium mb-1">Detection Patterns (one per line, regex)</label>
+                            <textarea 
+                                value={form.detectionPatterns}
+                                onChange={e => setForm({ ...form, detectionPatterns: e.target.value })}
+                                className="w-full p-2 bg-slate-900 border border-slate-600 rounded font-mono text-sm"
+                                rows={4}
+                                placeholder="<title>my app&#10;myapp-container"
+                            />
+                        </div>
+                        
+                        <div>
+                            <label className="block text-sm font-medium mb-2">Repo Name Patterns (comma-separated)</label>
+                            <div className="grid grid-cols-2 gap-3">
+                                {environments.map(env => (
+                                    <div key={env}>
+                                        <label className="block text-xs text-slate-400 mb-1">{envLabels[env]}</label>
+                                        <input 
+                                            type="text"
+                                            value={form.repoPatterns[env] || ''}
+                                            onChange={e => setForm({ 
+                                                ...form, 
+                                                repoPatterns: { ...form.repoPatterns, [env]: e.target.value }
+                                            })}
+                                            className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-sm"
+                                            placeholder={`myapp-${env}, myapp${env}`}
+                                        />
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div className="p-6 border-t border-slate-700 flex justify-end gap-3">
+                        <button 
+                            onClick={onCancel}
+                            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded"
+                        >
+                            Cancel
+                        </button>
+                        <button 
+                            onClick={handleSave}
+                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded"
+                        >
+                            {isNew ? 'Add App' : 'Save Changes'}
                         </button>
                     </div>
                 </div>
