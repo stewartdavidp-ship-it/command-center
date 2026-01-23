@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Game Shelf Command Center</title>
-    <meta name="version" content="7.0.9">
+    <meta name="version" content="7.1.3">
     <meta name="gs-app-id" content="management">
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -27,7 +27,7 @@
     <div id="root"><div style="display:flex;align-items:center;justify-content:center;min-height:100vh;"><div style="text-align:center;"><div style="margin-bottom:20px;"><svg viewBox="0 0 100 100" width="64" height="64" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="gsLoadGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#667eea"/><stop offset="100%" style="stop-color:#764ba2"/></linearGradient></defs><rect x="5" y="5" width="90" height="90" rx="20" fill="url(#gsLoadGrad)"/><g transform="rotate(-12, 35, 50)"><rect x="15" y="28" width="28" height="36" rx="4" fill="white"/><circle cx="43" cy="46" r="6" fill="white"/><text x="29" y="54" font-family="Arial" font-size="20" font-weight="bold" fill="#667eea" text-anchor="middle">G</text></g><g transform="rotate(12, 65, 50)"><rect x="57" y="28" width="28" height="36" rx="4" fill="rgba(255,255,255,0.9)"/><circle cx="57" cy="46" r="6" fill="url(#gsLoadGrad)"/><text x="71" y="54" font-family="Arial" font-size="20" font-weight="bold" fill="#764ba2" text-anchor="middle">S</text></g></svg></div>Loading...</div></div></div>
 
     <script type="text/babel">
-    console.log('Command Center v7.0.9 starting...');
+    console.log('Command Center v7.1.3 starting...');
     
     // =========================================================================
     // FIREBASE CONFIG
@@ -142,9 +142,9 @@
             }
         }
         
-        // Footer versions - look for patterns like "v1.0.0 â¢" or ">v1.0.0<"
+        // Footer versions - look for patterns like "v1.0.0 •" or ">v1.0.0<"
         // But skip anything in code comments or template literals
-        const footerMatches = content.matchAll(/[>\s]v(\d+\.\d+\.\d+)\s*[â¢<Â·]/g);
+        const footerMatches = content.matchAll(/[>\s]v(\d+\.\d+\.\d+)\s*[•<·]/g);
         for (const m of footerMatches) {
             // Check if this is inside a comment or code example
             const lineStart = content.lastIndexOf('\n', m.index) + 1;
@@ -232,9 +232,9 @@
             `$1${targetVersion}$2`
         );
         
-        // Fix footer versions like "v1.0.0 â¢" or "v1.0.0 Â·"
+        // Fix footer versions like "v1.0.0 •" or "v1.0.0 ·"
         fixed = fixed.replace(
-            /(>\s*)v\d+\.\d+\.\d+(\s*[â¢Â·])/g,
+            /(>\s*)v\d+\.\d+\.\d+(\s*[•·])/g,
             `$1v${targetVersion}$2`
         );
         
@@ -271,7 +271,7 @@
     }
     
     function formatVersion(v) {
-        return v ? `v${v}` : 'â';
+        return v ? `v${v}` : '—';
     }
 
     // =========================================================================
@@ -289,7 +289,7 @@
             beta: { bg: 'bg-orange-600', text: 'text-orange-300', border: 'border-orange-500', hex: '#ea580c' }
         },
         labels: { dev: 'DEV', test: 'TEST', prod: 'PROD', beta: 'BETA' },
-        icons: { dev: 'ð ï¸', test: 'ð§ª', prod: 'ð', beta: 'ð¬' }
+        icons: { dev: '🛠️', test: '🧪', prod: '🚀', beta: '🔬' }
     };
     
     // Default app definitions
@@ -308,7 +308,7 @@
             detectionPatterns: ['<title>game\\s*shelf', 'gameshelfdata', 'game.shelf.pwa', '#setup-welcome']
         },
         slate: {
-            id: 'slate', name: 'Slate', icon: 'ðª¨',
+            id: 'slate', name: 'Slate', icon: '🪨',
             targetPath: 'index.html', swPath: 'sw.js', hasServiceWorker: true,
             repos: { dev: '', test: '', prod: '', beta: '' },
             versions: { dev: '', test: '', prod: '', beta: '' },
@@ -321,7 +321,7 @@
             detectionPatterns: ['<title>slate', 'slate.*daily.*word', 'chalkboard-bg', 'slate-board']
         },
         rungs: {
-            id: 'rungs', name: 'Rungs', icon: 'ðª',
+            id: 'rungs', name: 'Rungs', icon: '🪜',
             targetPath: 'index.html', swPath: 'sw.js', hasServiceWorker: true,
             repos: { dev: '', test: '', prod: '', beta: '' },
             versions: { dev: '', test: '', prod: '', beta: '' },
@@ -334,7 +334,7 @@
             detectionPatterns: ['<title>rungs', 'rungs.*daily', 'word-ladder', 'rung-container']
         },
         quotle: {
-            id: 'quotle', name: 'Quotle', icon: 'ð¬',
+            id: 'quotle', name: 'Quotle', icon: '💬',
             targetPath: 'index.html', swPath: 'sw.js', hasServiceWorker: true,
             repos: { dev: '', test: '', prod: '', beta: '' },
             versions: { dev: '', test: '', prod: '', beta: '' },
@@ -347,7 +347,7 @@
             detectionPatterns: ['<title>quotle', 'quotle.*daily.*quote', 'quotes-database']
         },
         wordboxing: {
-            id: 'wordboxing', name: 'Word Boxing', icon: 'ð¥',
+            id: 'wordboxing', name: 'Word Boxing', icon: '🥊',
             targetPath: 'index.html', swPath: 'sw.js', hasServiceWorker: true,
             repos: { dev: '', test: '', prod: '', beta: '' },
             versions: { dev: '', test: '', prod: '', beta: '' },
@@ -360,7 +360,7 @@
             detectionPatterns: ['<title>word\\s*boxing', 'word-boxing', 'boxing-ring']
         },
         testplan: {
-            id: 'testplan', name: 'Test Plan', icon: 'ð§ª',
+            id: 'testplan', name: 'Test Plan', icon: '🧪',
             targetPath: 'index.html', swPath: '', hasServiceWorker: false,
             repos: { dev: '', test: '', prod: '', beta: '' },
             versions: { dev: '', test: '', prod: '', beta: '' },
@@ -373,7 +373,7 @@
             detectionPatterns: ['<title>.*test\\s*plan', 'playwright.*runner', 'test-plan-app']
         },
         management: {
-            id: 'management', name: 'Command Center', icon: 'ðï¸',
+            id: 'management', name: 'Command Center', icon: '🎛️',
             targetPath: 'index.html', swPath: '', hasServiceWorker: false,
             repos: { dev: '', test: '', prod: '', beta: '' },
             versions: { dev: '', test: '', prod: '', beta: '' },
@@ -386,7 +386,7 @@
             detectionPatterns: ['<title>.*command\\s*center', '<title>.*ship\\s*it', 'command-center', 'claude.*deploy.*queue']
         },
         edutrack: {
-            id: 'edutrack', name: 'EduTrack', icon: 'ð',
+            id: 'edutrack', name: 'EduTrack', icon: '📚',
             targetPath: 'index.html', swPath: 'sw.js', hasServiceWorker: true,
             repos: { dev: '', test: '', prod: '', beta: '' },
             versions: { dev: '', test: '', prod: '', beta: '' },
@@ -489,7 +489,7 @@
             config.apps[id] = {
                 id,
                 name: appData.name,
-                icon: appData.icon || 'ð¦',
+                icon: appData.icon || '📦',
                 targetPath: appData.targetPath || 'index.html',
                 swPath: appData.swPath || '',
                 hasServiceWorker: appData.hasServiceWorker || false,
@@ -591,7 +591,7 @@
         getEnvDisplay(config, envId) {
             return {
                 label: config.environments.labels[envId] || envId.toUpperCase(),
-                icon: config.environments.icons[envId] || 'ð¦',
+                icon: config.environments.icons[envId] || '📦',
                 colors: config.environments.colors[envId] || config.environments.colors.test
             };
         }
@@ -664,8 +664,8 @@
     
     // Helper for native <option> elements that can't render components
     const getAppEmoji = (icon) => {
-        if (icon === 'gs-logo') return 'ð®'; // Fallback emoji for Game Shelf
-        return icon || 'ð¦';
+        if (icon === 'gs-logo') return '🎮'; // Fallback emoji for Game Shelf
+        return icon || '📦';
     };
 
     // =========================================================================
@@ -867,11 +867,11 @@
     function getFileIcon(filename) {
         const ext = filename.split('.').pop()?.toLowerCase();
         const icons = {
-            html: 'ð', js: 'ð', css: 'ð¨', json: 'ð', md: 'ð',
-            png: 'ð¼ï¸', jpg: 'ð¼ï¸', jpeg: 'ð¼ï¸', gif: 'ð¼ï¸', svg: 'ð¨',
-            ico: 'ð·', txt: 'ð', xml: 'ð°'
+            html: '📄', js: '📜', css: '🎨', json: '📋', md: '📝',
+            png: '🖼️', jpg: '🖼️', jpeg: '🖼️', gif: '🖼️', svg: '🎨',
+            ico: '🔷', txt: '📃', xml: '📰'
         };
-        return icons[ext] || 'ð';
+        return icons[ext] || '📄';
     }
 
     // =========================================================================
@@ -882,6 +882,17 @@
         constructor(token) {
             this.token = token;
             this.baseUrl = 'https://api.github.com';
+        }
+        
+        // Helper: Clean base64 content from GitHub (remove newlines)
+        cleanBase64(content) {
+            return content ? content.replace(/[\r\n\s]/g, '') : '';
+        }
+        
+        // Helper: Decode base64 content from GitHub to UTF-8 string
+        decodeContent(content) {
+            const clean = this.cleanBase64(content);
+            return decodeURIComponent(escape(atob(clean)));
         }
         
         async request(endpoint, options = {}) {
@@ -959,6 +970,16 @@
         
         async createTag(repo, tagName, sha, message) {
             const [owner, repoName] = repo.split('/');
+            
+            // Check if tag already exists
+            try {
+                await this.request(`/repos/${owner}/${repoName}/git/ref/tags/${tagName}`);
+                console.log(`Tag ${tagName} already exists, skipping`);
+                return { existing: true, tag: tagName };
+            } catch {
+                // Tag doesn't exist, create it
+            }
+            
             const tagObj = await this.request(`/repos/${owner}/${repoName}/git/tags`, {
                 method: 'POST',
                 body: JSON.stringify({
@@ -1157,10 +1178,10 @@
             });
             console.log('New commit SHA:', newCommit.sha);
             
-            // Update ref
+            // Update ref (force: true handles non-fast-forward cases)
             const updatedRef = await this.request(`/repos/${owner}/${repoName}/git/refs/heads/main`, {
                 method: 'PATCH',
-                body: JSON.stringify({ sha: newCommit.sha })
+                body: JSON.stringify({ sha: newCommit.sha, force: true })
             });
             console.log('Ref updated:', updatedRef);
             console.log('=== BATCH COMMIT COMPLETE ===');
@@ -1275,7 +1296,8 @@
                 const currentFile = await github.getFile(repo, targetPath);
                 if (!currentFile) return null;
                 
-                const content = atob(currentFile.content);
+                // Proper UTF-8 decode from base64
+                const content = decodeURIComponent(escape(atob(currentFile.content)));
                 const version = extractVersionFromHTML(content);
                 
                 const key = `${appId}:${target}`;
@@ -1289,7 +1311,7 @@
                 };
                 
                 setRollbackSnapshots(prev => ({ ...prev, [key]: snapshot }));
-                console.log(`ð¸ Saved rollback snapshot for ${appId} ${target}: v${version}`);
+                console.log(`📸 Saved rollback snapshot for ${appId} ${target}: v${version}`);
                 return snapshot;
             } catch (err) {
                 console.error('Failed to save rollback snapshot:', err);
@@ -1310,7 +1332,7 @@
             const app = apps[appId];
             const confirmed = await showConfirm(
                 `Roll back ${app.name} ${target.toUpperCase()} to v${snapshot.version || 'unknown'}?\n\nSaved: ${new Date(snapshot.savedAt).toLocaleString()}`,
-                'âª Quick Rollback'
+                '⏪ Quick Rollback'
             );
             
             if (!confirmed) return;
@@ -1336,9 +1358,10 @@
             try {
                 addStep('Preparing rollback', 'running');
                 const currentFile = await github.getFile(snapshot.repo, snapshot.targetPath);
-                const currentVersion = currentFile ? extractVersionFromHTML(atob(currentFile.content)) : null;
+                // Proper UTF-8 decode from base64
+                const currentVersion = currentFile ? extractVersionFromHTML(decodeURIComponent(escape(atob(currentFile.content)))) : null;
                 deployment.previousVersion = currentVersion;
-                addStep('Preparing rollback', 'complete', `${formatVersion(currentVersion)} â ${formatVersion(snapshot.version)}`);
+                addStep('Preparing rollback', 'complete', `${formatVersion(currentVersion)} → ${formatVersion(snapshot.version)}`);
                 
                 addStep('Restoring snapshot', 'running');
                 const result = await github.createOrUpdateFile(
@@ -1577,7 +1600,8 @@
                         console.log(`[${appId}] Fetching TEST from ${app.testRepo}/${app.targetPath}...`);
                         const testFile = await github.getFile(app.testRepo, app.targetPath);
                         if (testFile) {
-                            const content = atob(testFile.content);
+                            // Proper UTF-8 decode from base64
+                            const content = decodeURIComponent(escape(atob(testFile.content)));
                             const version = extractVersionFromHTML(content);
                             console.log(`[${appId}] TEST version from REPO: ${version || 'NO VERSION'}`);
                             console.log(`[${appId}] TEST file SHA: ${testFile.sha}`);
@@ -1594,7 +1618,8 @@
                         console.log(`[${appId}] Fetching PROD from ${app.prodRepo}/${app.targetPath}...`);
                         const prodFile = await github.getFile(app.prodRepo, app.targetPath);
                         if (prodFile) {
-                            const content = atob(prodFile.content);
+                            // Proper UTF-8 decode from base64
+                            const content = decodeURIComponent(escape(atob(prodFile.content)));
                             const version = extractVersionFromHTML(content);
                             console.log(`[${appId}] PROD version from REPO: ${version || 'NO VERSION'}`);
                             console.log(`[${appId}] PROD file SHA: ${prodFile.sha}`);
@@ -1613,7 +1638,7 @@
                 for (const [appId, upd] of Object.entries(updates)) {
                     newApps[appId] = { ...newApps[appId], ...upd };
                 }
-                console.log('Updated apps state:', Object.entries(newApps).map(([id, a]) => `${id}: TEST=${a.currentTestVersion || 'â'}, PROD=${a.currentProdVersion || 'â'}`));
+                console.log('Updated apps state:', Object.entries(newApps).map(([id, a]) => `${id}: TEST=${a.currentTestVersion || '—'}, PROD=${a.currentProdVersion || '—'}`));
                 return newApps;
             });
             
@@ -1688,13 +1713,13 @@
                             // Determine target path - preserve directory structure for non-HTML files
                             let targetPath;
                             if (fileName.endsWith('.html') && !cleanPath.includes('/')) {
-                                // Root HTML files â index.html
+                                // Root HTML files → index.html
                                 targetPath = 'index.html';
                             } else if (cleanPath.includes('/')) {
-                                // Files in subdirectories â preserve path (e.g., icons/icon-72.png)
+                                // Files in subdirectories → preserve path (e.g., icons/icon-72.png)
                                 targetPath = cleanPath;
                             } else {
-                                // Root non-HTML files â keep filename
+                                // Root non-HTML files → keep filename
                                 targetPath = fileName;
                             }
                             
@@ -1723,7 +1748,7 @@
                                         suggestedApp = parsed.app;
                                     }
                                     
-                                    console.log('Extracted:', cleanPath, 'â', targetPath, 'v' + version);
+                                    console.log('Extracted:', cleanPath, '→', targetPath, 'v' + version);
                                     
                                     setStagedFiles(prev => [...prev, {
                                         id: Date.now() + Math.random(),
@@ -1802,7 +1827,7 @@
                         console.log('Unique versions:', versionValidation.uniqueVersions);
                         console.log('Is valid:', versionValidation.isValid);
                         if (!versionValidation.isValid) {
-                            console.warn('â ï¸ VERSION ISSUES:', {
+                            console.warn('⚠️ VERSION ISSUES:', {
                                 mismatches: versionValidation.mismatches,
                                 missing: versionValidation.missing
                             });
@@ -1850,7 +1875,8 @@
             if (!github || !repo) return null;
             const file = await github.getFile(repo, targetPath);
             if (!file) return null;
-            const content = atob(file.content);
+            // Proper UTF-8 decode from base64
+            const content = decodeURIComponent(escape(atob(file.content)));
             return extractVersionFromHTML(content);
         };
         
@@ -1872,7 +1898,7 @@
                 }
             }
             
-            // ð¸ Save rollback snapshot BEFORE deploying
+            // 📸 Save rollback snapshot BEFORE deploying
             await saveRollbackSnapshot(appId, target, repo, app.targetPath);
             
             const deployment = {
@@ -1904,9 +1930,9 @@
                 addStep('Safety Check', 'running');
                 if (currentVersion) {
                     if (isNewerVersion(newVersion, currentVersion)) {
-                        addStep('Safety Check', 'complete', `${formatVersion(currentVersion)} â ${formatVersion(newVersion)} â`);
+                        addStep('Safety Check', 'complete', `${formatVersion(currentVersion)} → ${formatVersion(newVersion)} ✓`);
                     } else {
-                        addStep('Safety Check', 'warning', `Force deploy: ${formatVersion(currentVersion)} â ${formatVersion(newVersion)}`);
+                        addStep('Safety Check', 'warning', `Force deploy: ${formatVersion(currentVersion)} → ${formatVersion(newVersion)}`);
                     }
                 } else {
                     addStep('Safety Check', 'complete', 'First deploy');
@@ -1959,7 +1985,7 @@
                         const result = await showPrompt(
                             `This deploy may fix these issues:\n\n${issueList}\n\nEnter issue IDs to link (comma-separated), or leave blank:`,
                             '',
-                            'ð Link Issues to v' + newVersion
+                            '🔗 Link Issues to v' + newVersion
                         );
                         
                         if (result && result.trim()) {
@@ -2019,13 +2045,13 @@
                     filesWithIssues.map(f => {
                         const v = f.versionValidation;
                         let msg = `${f.name}:\n`;
-                        if (v.missing.length > 0) msg += `  â¢ Missing: ${v.missing.join(', ')}\n`;
-                        if (v.uniqueVersions.length > 1) msg += `  â¢ Mismatched versions: ${v.uniqueVersions.join(', ')}\n`;
+                        if (v.missing.length > 0) msg += `  • Missing: ${v.missing.join(', ')}\n`;
+                        if (v.uniqueVersions.length > 1) msg += `  • Mismatched versions: ${v.uniqueVersions.join(', ')}\n`;
                         return msg;
                     }).join('\n') +
                     `\nYou can click "Fix to v${newVersion}" on each file to auto-correct.\n\n` +
                     `Deploy anyway with inconsistent versions?`,
-                    'â ï¸ Version Issues Detected'
+                    '⚠️ Version Issues Detected'
                 );
                 if (!proceed) return;
             }
@@ -2039,7 +2065,7 @@
                         `New version: v${newVersion}\n\n` +
                         `This may be a downgrade or same version.\n` +
                         `Deploy anyway?`,
-                        'â ï¸ Version Not Incrementing'
+                        '⚠️ Version Not Incrementing'
                     );
                     if (!proceed) return;
                 }
@@ -2055,7 +2081,7 @@
                 contentLength: f.content?.length
             })));
             
-            // ð¸ Save rollback snapshot BEFORE deploying
+            // 📸 Save rollback snapshot BEFORE deploying
             await saveRollbackSnapshot(appId, target, repo, app.targetPath);
             
             const deployment = {
@@ -2123,18 +2149,26 @@
                 // Verify the deployment by fetching back from repo
                 console.log('=== VERIFYING DEPLOYMENT ===');
                 await new Promise(r => setTimeout(r, 1000)); // Wait a bit for GitHub to process
-                const verifyFile = await github.getFile(repo, files[0]?.targetPath || files[0]?.path || 'index.html');
-                if (verifyFile) {
-                    const verifyContent = atob(verifyFile.content);
-                    const verifyVersion = extractVersionFromHTML(verifyContent);
-                    console.log('Verification - version in repo after deploy:', verifyVersion);
-                    console.log('Verification - expected version:', newVersion);
-                    if (verifyVersion !== newVersion && newVersion !== 'batch') {
-                        console.error('VERSION MISMATCH! Deploy may have failed.');
-                        addStep('Verification', 'warning', `Expected ${newVersion}, found ${verifyVersion}`);
-                    } else {
-                        addStep('Verification', 'complete', `Confirmed ${verifyVersion} in repo`);
+                
+                // Always verify index.html (not binary files like PNGs)
+                try {
+                    const verifyFile = await github.getFile(repo, 'index.html');
+                    if (verifyFile) {
+                        // Proper UTF-8 decode from base64
+                        const verifyContent = decodeURIComponent(escape(atob(verifyFile.content)));
+                        const verifyVersion = extractVersionFromHTML(verifyContent);
+                        console.log('Verification - version in repo after deploy:', verifyVersion);
+                        console.log('Verification - expected version:', newVersion);
+                        if (verifyVersion !== newVersion && newVersion !== 'batch') {
+                            console.warn('VERSION MISMATCH! Deploy may have failed.');
+                            addStep('Verification', 'warning', `Expected ${newVersion}, found ${verifyVersion}`);
+                        } else {
+                            addStep('Verification', 'complete', `Confirmed ${verifyVersion || 'batch'} in repo`);
+                        }
                     }
+                } catch (verifyError) {
+                    console.warn('Verification skipped:', verifyError.message);
+                    addStep('Verification', 'warning', 'Could not verify (deploy likely succeeded)');
                 }
                 
                 if (newVersion !== 'batch') {
@@ -2209,7 +2243,7 @@
             }
         };
         
-        // Promote TEST â PROD
+        // Promote TEST → PROD
         const handlePromote = async (appId) => {
             const app = apps[appId];
             if (!app.testRepo || !app.prodRepo) return;
@@ -2273,24 +2307,26 @@
                     try {
                         const testFile = await github.getFile(app.testRepo, filePath);
                         if (testFile) {
-                            const content = atob(testFile.content);
+                            // Keep base64 for committing to avoid UTF-8 corruption
+                            // Strip newlines - GitHub returns base64 with line breaks
                             filesToCommit.push({
                                 path: filePath,
-                                content: content,
-                                encoding: 'utf-8'
+                                content: github.cleanBase64(testFile.content),
+                                encoding: 'base64'
                             });
                             
-                            // Extract version from main HTML file
+                            // Extract version from main HTML file (decode properly for reading)
                             if (filePath === app.targetPath) {
-                                testVersion = extractVersionFromHTML(content);
-                                deployment.fileContent = content;
+                                const decodedContent = github.decodeContent(testFile.content);
+                                testVersion = extractVersionFromHTML(decodedContent);
+                                deployment.fileContent = decodedContent;
                             }
                             
-                            console.log(`â Found ${filePath} in TEST`);
+                            console.log(`✓ Found ${filePath} in TEST`);
                         }
                     } catch (e) {
                         // File doesn't exist in TEST, skip it (manifest.json might not exist)
-                        console.log(`â  ${filePath} not found in TEST, skipping`);
+                        console.log(`⚠ ${filePath} not found in TEST, skipping`);
                     }
                 }
                 
@@ -2301,13 +2337,13 @@
                         if (iconFile) {
                             filesToCommit.push({
                                 path: iconPath,
-                                content: iconFile.content, // Already base64 from GitHub
+                                content: github.cleanBase64(iconFile.content),
                                 encoding: 'base64'
                             });
-                            console.log(`â Found ${iconPath} in TEST`);
+                            console.log(`✓ Found ${iconPath} in TEST`);
                         }
                     } catch (e) {
-                        console.log(`â  ${iconPath} not found in TEST, skipping`);
+                        console.log(`⚠ ${iconPath} not found in TEST, skipping`);
                     }
                 }
                 
@@ -2319,11 +2355,11 @@
                 
                 addStep('Checking PROD', 'running');
                 const prodFile = await github.getFile(app.prodRepo, app.targetPath);
-                const prodVersion = prodFile ? extractVersionFromHTML(atob(prodFile.content)) : null;
+                const prodVersion = prodFile ? extractVersionFromHTML(decodeURIComponent(escape(atob(prodFile.content)))) : null;
                 deployment.previousVersion = prodVersion;
                 addStep('Checking PROD', 'complete', prodVersion ? formatVersion(prodVersion) : 'Empty');
                 
-                // ð¸ Save rollback snapshot BEFORE promoting
+                // 📸 Save rollback snapshot BEFORE promoting
                 await saveRollbackSnapshot(appId, 'prod', app.prodRepo, app.targetPath);
                 
                 addStep('Deploying', 'running', `${filesToCommit.length} files`);
@@ -2422,14 +2458,16 @@
             try {
                 addStep('Getting current state', 'running');
                 const currentFile = await github.getFile(repo, app.targetPath);
-                const currentVersion = currentFile ? extractVersionFromHTML(atob(currentFile.content)) : null;
+                // Proper UTF-8 decode from base64
+                const currentVersion = currentFile ? extractVersionFromHTML(decodeURIComponent(escape(atob(currentFile.content)))) : null;
                 deployment.previousVersion = currentVersion;
                 addStep('Getting current state', 'complete', formatVersion(currentVersion));
                 
                 addStep('Fetching rollback version', 'running');
                 const rollbackFile = await github.getFileAtCommit(repo, app.targetPath, deploymentToRollbackTo.commitSha);
                 if (!rollbackFile) throw new Error('Cannot find file at that commit');
-                const content = atob(rollbackFile.content);
+                // Proper UTF-8 decode from base64
+                const content = decodeURIComponent(escape(atob(rollbackFile.content)));
                 deployment.fileContent = content;
                 addStep('Fetching rollback version', 'complete', formatVersion(targetVersion));
                 
@@ -2476,7 +2514,7 @@
                             <Icons.GameShelfLogo size={32} />
                             <div>
                                 <h1 className="text-lg font-bold">Command Center</h1>
-                                <div className="text-xs text-slate-400">v7.0.9 â¢ Added EduTrack app support</div>
+                                <div className="text-xs text-slate-400">v7.1.3 • Fix batch deploy verification URI error</div>
                             </div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -2506,7 +2544,7 @@
                 <main className="max-w-6xl mx-auto px-4 py-6">
                     {!githubToken && (
                         <div className="mb-6 p-4 bg-amber-900/50 border border-amber-700 rounded-lg">
-                            â ï¸ <strong>GitHub Token Required</strong> - Go to Settings
+                            ⚠️ <strong>GitHub Token Required</strong> - Go to Settings
                         </div>
                     )}
                     
@@ -2655,7 +2693,7 @@
                             <div className="text-sm text-slate-400">Currently Deployed</div>
                             <div className="text-2xl font-mono text-green-400">{formatVersion(currentVersion)}</div>
                         </div>
-                        <div className="text-center text-2xl">â</div>
+                        <div className="text-center text-2xl">↓</div>
                         <div className="text-center mt-3">
                             <div className="text-sm text-slate-400">Trying to Deploy</div>
                             <div className="text-2xl font-mono text-red-400">{formatVersion(newVersion)}</div>
@@ -2706,7 +2744,7 @@
                             Rolling back to <span className="text-amber-400 font-mono">{formatVersion(deployment.version)}</span>
                         </div>
                         <div className="text-xs text-slate-500 mt-1">
-                            Commit: {deployment.commitSha?.substring(0, 7)} â¢ {formatDate(deployment.completedAt)}
+                            Commit: {deployment.commitSha?.substring(0, 7)} • {formatDate(deployment.completedAt)}
                         </div>
                     </div>
                     
@@ -2734,7 +2772,7 @@
         return (
             <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
                 <div className="bg-slate-800 rounded-xl border border-slate-700 p-6 max-w-lg w-full fade-in">
-                    <h2 className="text-xl font-bold mb-4">â¡ Promote to Production</h2>
+                    <h2 className="text-xl font-bold mb-4">⚡ Promote to Production</h2>
                     
                     <div className="flex items-center justify-center gap-4 mb-4">
                         <div className="p-3 bg-blue-900/30 border border-blue-700 rounded text-center">
@@ -2742,7 +2780,7 @@
                             <div className="font-mono">{app.testRepo?.split('/')[1]}</div>
                             <div className="text-sm text-slate-400">{formatVersion(app.currentTestVersion)}</div>
                         </div>
-                        <div className="text-2xl">â</div>
+                        <div className="text-2xl">→</div>
                         <div className="p-3 bg-green-900/30 border border-green-700 rounded text-center">
                             <div className="text-xs text-green-400">PROD</div>
                             <div className="font-mono">{app.prodRepo?.split('/')[1]}</div>
@@ -2762,7 +2800,7 @@
                     <div className="flex gap-3">
                         <button onClick={onCancel} className="flex-1 p-2 bg-slate-700 rounded">Cancel</button>
                         <button onClick={onConfirm} className="flex-1 p-2 bg-green-600 rounded">
-                            ð Promote {formatVersion(app.currentTestVersion)}
+                            🚀 Promote {formatVersion(app.currentTestVersion)}
                         </button>
                     </div>
                 </div>
@@ -2831,8 +2869,8 @@
         
         // Determine icon and colors based on message content
         const isError = message?.toLowerCase().includes('error') || message?.toLowerCase().includes('failed');
-        const isWarning = message?.toLowerCase().includes('warning') || message?.toLowerCase().includes('â ');
-        const isSuccess = message?.toLowerCase().includes('â') || message?.toLowerCase().includes('success');
+        const isWarning = message?.toLowerCase().includes('warning') || message?.toLowerCase().includes('⚠');
+        const isSuccess = message?.toLowerCase().includes('✓') || message?.toLowerCase().includes('success');
         
         const borderColor = isError ? 'border-red-700' : isWarning ? 'border-amber-700' : isSuccess ? 'border-green-700' : 'border-slate-600';
         const iconColor = isError ? 'text-red-400' : isWarning ? 'text-amber-400' : isSuccess ? 'text-green-400' : 'text-indigo-400';
@@ -2842,7 +2880,7 @@
                 <div className={`bg-slate-800 rounded-xl border ${borderColor} p-6 max-w-md w-full fade-in shadow-2xl`}>
                     {title && (
                         <h2 className={`text-lg font-bold mb-3 flex items-center gap-2 ${iconColor}`}>
-                            {isError ? <Icons.AlertTriangle /> : isWarning ? 'â ï¸' : isSuccess ? 'â' : 'â¹ï¸'}
+                            {isError ? <Icons.AlertTriangle /> : isWarning ? '⚠️' : isSuccess ? '✓' : 'ℹ️'}
                             {title}
                         </h2>
                     )}
@@ -2903,7 +2941,7 @@
                 const detected = filesWithDetection[filesWithDetection.length - 1].suggestedApp;
                 if (detected && apps[detected]) {
                     setDeployTarget(prev => ({ ...prev, appId: detected }));
-                    console.log('ð¯ Auto-selected app:', detected);
+                    console.log('🎯 Auto-selected app:', detected);
                 }
             }
         }, [stagedFiles.length]); // Only when file count changes (new file added)
@@ -3006,16 +3044,16 @@
                     })
                 });
                 
-                // Update ref
+                // Update ref (force: true handles non-fast-forward cases)
                 await github.request(`/repos/${owner}/${repoName}/git/refs/heads/main`, {
                     method: 'PATCH',
-                    body: JSON.stringify({ sha: newCommit.sha })
+                    body: JSON.stringify({ sha: newCommit.sha, force: true })
                 });
                 
                 if (!silent) {
                     await showAlert(
                         `GitHub Pages should update in 30-90 seconds.`,
-                        `â Rebuild Triggered for ${target.toUpperCase()}`
+                        `✓ Rebuild Triggered for ${target.toUpperCase()}`
                     );
                 }
                 
@@ -3038,7 +3076,7 @@
         
         // Format relative time
         const formatRelativeTime = (dateStr) => {
-            if (!dateStr) return 'â';
+            if (!dateStr) return '—';
             const date = new Date(dateStr);
             const now = new Date();
             const diffMs = now - date;
@@ -3092,10 +3130,10 @@
                             className="border-2 border-dashed border-slate-600 rounded-lg p-8 text-center hover:border-indigo-500 cursor-pointer">
                             <input type="file" multiple accept=".html,.js,.css,.json,.zip" onChange={onFileDrop} className="hidden" id="upload" />
                             <label htmlFor="upload" className="cursor-pointer">
-                                <div className="text-4xl mb-3">ð</div>
+                                <div className="text-4xl mb-3">📁</div>
                                 <div>Drop files here (HTML, JS, CSS, images...)</div>
                                 <div className="text-xs text-slate-500 mt-2">
-                                    Multi-file deploy supported â¢ Version from <code>&lt;meta name="version"&gt;</code>
+                                    Multi-file deploy supported • Version from <code>&lt;meta name="version"&gt;</code>
                                 </div>
                             </label>
                         </div>
@@ -3134,7 +3172,7 @@
                                                     {f.version && (
                                                         <span className="px-1.5 py-0.5 bg-slate-600 rounded">
                                                             {formatVersion(f.version)}
-                                                            {f.versionSource === 'html' && <span className="text-green-400 ml-1">â</span>}
+                                                            {f.versionSource === 'html' && <span className="text-green-400 ml-1">✓</span>}
                                                         </span>
                                                     )}
                                                     {/* App detection badge */}
@@ -3156,7 +3194,7 @@
                                                             <span>{apps[f.suggestedApp].name}</span>
                                                             {f.appDetection && (
                                                                 <span className="text-xs opacity-75">
-                                                                    {f.appDetection.method === 'gs-app-id' ? 'â' : f.appDetection.confidence === 'high' ? 'ð¯' : 'â'}
+                                                                    {f.appDetection.method === 'gs-app-id' ? '✓' : f.appDetection.confidence === 'high' ? '🎯' : '❓'}
                                                                 </span>
                                                             )}
                                                         </span>
@@ -3186,18 +3224,18 @@
                                                                         ? 'bg-green-700 text-green-100' 
                                                                         : 'bg-slate-600 text-slate-300 hover:bg-slate-500'
                                                                 }`}>
-                                                                {f.targetPath === 'index.html' ? 'â Replace index.html' : 'Use index.html'}
+                                                                {f.targetPath === 'index.html' ? '✓ Replace index.html' : 'Use index.html'}
                                                             </button>
                                                         )}
                                                     </div>
                                                     {willRename && (
                                                         <div className="mt-1.5 text-xs text-green-400 flex items-center gap-1">
-                                                            <span>ð</span> Will replace existing index.html
+                                                            <span>📝</span> Will replace existing index.html
                                                         </div>
                                                     )}
                                                     {isHtml && f.targetPath !== 'index.html' && f.name !== 'index.html' && (
                                                         <div className="mt-1.5 text-xs text-amber-400 flex items-center gap-1">
-                                                            <span>â ï¸</span> Will create new file (won't replace index.html)
+                                                            <span>⚠️</span> Will create new file (won't replace index.html)
                                                         </div>
                                                     )}
                                                     
@@ -3206,7 +3244,7 @@
                                                         <div className="mt-2 p-2 bg-red-900/30 border border-red-700 rounded">
                                                             <div className="flex items-center justify-between mb-2">
                                                                 <div className="text-xs font-medium text-red-300 flex items-center gap-1">
-                                                                    ð´ Version Issues Detected
+                                                                    🔴 Version Issues Detected
                                                                 </div>
                                                                 <button 
                                                                     onClick={async (e) => {
@@ -3230,7 +3268,7 @@
                                                                         }
                                                                     }}
                                                                     className="px-2 py-1 bg-green-700 hover:bg-green-600 text-xs rounded flex items-center gap-1">
-                                                                    ð§ Fix to v{f.version || '?'}
+                                                                    🔧 Fix to v{f.version || '?'}
                                                                 </button>
                                                             </div>
                                                             
@@ -3249,7 +3287,7 @@
                                                             <div className="text-xs text-slate-400 space-y-0.5 max-h-24 overflow-auto">
                                                                 {f.versionValidation.allVersions.map((v, i) => (
                                                                     <div key={i} className={v.value === f.versionValidation.primary ? 'text-green-400' : 'text-red-300'}>
-                                                                        {v.value} â {v.source} (line {v.line})
+                                                                        {v.value} ← {v.source} (line {v.line})
                                                                     </div>
                                                                 ))}
                                                             </div>
@@ -3258,7 +3296,7 @@
                                                     
                                                     {f.versionValidation && f.versionValidation.isValid && (
                                                         <div className="mt-2 text-xs text-green-400 flex items-center gap-1">
-                                                            â All {f.versionValidation.allVersions.length} version strings match (v{f.versionValidation.primary})
+                                                            ✓ All {f.versionValidation.allVersions.length} version strings match (v{f.versionValidation.primary})
                                                         </div>
                                                     )}
                                                 </div>
@@ -3304,7 +3342,7 @@
                                             hasMismatch ? 'bg-amber-900/50 border border-amber-600' : 'bg-green-900/50 border border-green-600'
                                         }`}>
                                             <span className="flex items-center gap-2">
-                                                {hasMismatch ? 'â ï¸' : 'ð¯'} Detected: <strong className="flex items-center gap-1"><AppIcon icon={apps[primaryDetected]?.icon} size={18} /> {apps[primaryDetected]?.name}</strong>
+                                                {hasMismatch ? '⚠️' : '🎯'} Detected: <strong className="flex items-center gap-1"><AppIcon icon={apps[primaryDetected]?.icon} size={18} /> {apps[primaryDetected]?.name}</strong>
                                             </span>
                                             {hasMismatch && (
                                                 <button 
@@ -3319,7 +3357,7 @@
                                     {/* Conflict warning */}
                                     {hasConflict && (
                                         <div className="mb-3 p-2 bg-red-900/50 border border-red-600 rounded text-sm">
-                                            â ï¸ Multiple apps detected in selection: {uniqueDetected.map(a => apps[a]?.name).join(', ')}
+                                            ⚠️ Multiple apps detected in selection: {uniqueDetected.map(a => apps[a]?.name).join(', ')}
                                         </div>
                                     )}
                                     
@@ -3334,15 +3372,15 @@
                                         </select>
                                         <select value={deployTarget.target} onChange={e => setDeployTarget(p => ({ ...p, target: e.target.value }))}
                                             className="p-2 bg-slate-700 border border-slate-600 rounded text-sm">
-                                            <option value="test">ð§ª TEST</option>
-                                            <option value="prod">ð PROD</option>
+                                            <option value="test">🧪 TEST</option>
+                                            <option value="prod">🚀 PROD</option>
                                         </select>
                                     </div>
                                     
                                     {/* Mismatch warning on deploy button */}
                                     {hasMismatch && (
                                         <div className="mb-2 text-xs text-amber-400">
-                                            â ï¸ You're deploying to {apps[deployTarget.appId]?.name} but file appears to be {apps[primaryDetected]?.name}
+                                            ⚠️ You're deploying to {apps[deployTarget.appId]?.name} but file appears to be {apps[primaryDetected]?.name}
                                         </div>
                                     )}
                                     
@@ -3385,7 +3423,7 @@
                                             </>
                                         ) : (
                                             <>
-                                                {hasMismatch && 'â ï¸ '}{selectedFiles.length === 1 ? 'Deploy File' : `Batch Deploy ${selectedFiles.length} Files`}
+                                                {hasMismatch && '⚠️ '}{selectedFiles.length === 1 ? 'Deploy File' : `Batch Deploy ${selectedFiles.length} Files`}
                                             </>
                                         )}
                                     </button>
@@ -3405,9 +3443,9 @@
                                 {activeDeployment.status === 'running' ? (
                                     <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
                                 ) : activeDeployment.status === 'success' ? (
-                                    <span className="text-green-400">â</span>
+                                    <span className="text-green-400">✓</span>
                                 ) : (
-                                    <span className="text-red-400">â</span>
+                                    <span className="text-red-400">✗</span>
                                 )}
                                 {activeDeployment.status === 'running' 
                                     ? (activeDeployment.isRollback ? 'Rolling back' : activeDeployment.isPromotion ? 'Promoting' : 'Deploying') + '...'
@@ -3429,7 +3467,7 @@
                                             s.status === 'running' ? 'bg-indigo-500' :
                                             s.status === 'error' ? 'bg-red-500' : 'bg-amber-500'
                                         }`}>
-                                            {s.status === 'complete' ? 'â' : s.status === 'running' ? 'â¢' : '!'}
+                                            {s.status === 'complete' ? '✓' : s.status === 'running' ? '•' : '!'}
                                         </div>
                                         <span className={s.status === 'error' ? 'text-red-400' : ''}>{s.name}</span>
                                         {s.details && <span className="text-slate-500 text-sm">({s.details})</span>}
@@ -3471,7 +3509,7 @@
                                             onClick={() => toggleAppExpanded(app.id)}
                                         >
                                             <div className="flex items-center gap-2 mb-2">
-                                                <span className={`transform transition-transform ${isExpanded ? 'rotate-90' : ''}`}>â¶</span>
+                                                <span className={`transform transition-transform ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
                                                 <AppIcon icon={app.icon} size={20} />
                                                 <span className="font-medium flex-1">{app.name}</span>
                                                 {canPromote && (
@@ -3483,7 +3521,7 @@
                                             </div>
                                             {/* Show mapped repos */}
                                             <div className="text-xs text-slate-500 mb-2 font-mono ml-6">
-                                                {app.testRepo ? app.testRepo.split('/')[1] : '(no test repo)'} â {app.prodRepo ? app.prodRepo.split('/')[1] : '(no prod repo)'}
+                                                {app.testRepo ? app.testRepo.split('/')[1] : '(no test repo)'} → {app.prodRepo ? app.prodRepo.split('/')[1] : '(no prod repo)'}
                                             </div>
                                             <div className="flex items-center gap-2 text-xs ml-6">
                                                 <div className="flex items-center gap-1">
@@ -3530,11 +3568,11 @@
                                                         {app.testRepo && (
                                                             <div className="p-2 bg-blue-900/20 rounded border border-blue-800/50">
                                                                 <div className="flex items-center justify-between mb-2">
-                                                                    <span className="text-sm font-medium text-blue-300">ð§ª TEST Environment</span>
+                                                                    <span className="text-sm font-medium text-blue-300">🧪 TEST Environment</span>
                                                                     <button 
                                                                         onClick={() => forceRebuild(app.testRepo, 'test')}
                                                                         className="px-2 py-1 bg-blue-700 hover:bg-blue-600 text-xs rounded">
-                                                                        ð Force Rebuild
+                                                                        🔄 Force Rebuild
                                                                     </button>
                                                                 </div>
                                                                 {info?.test ? (
@@ -3545,10 +3583,10 @@
                                                                         </div>
                                                                         <div className="flex justify-between">
                                                                             <span className="text-slate-400">Last commit:</span>
-                                                                            <span className="font-mono">{info.test.lastCommit?.sha?.substring(0, 7) || 'â'}</span>
+                                                                            <span className="font-mono">{info.test.lastCommit?.sha?.substring(0, 7) || '—'}</span>
                                                                         </div>
                                                                         <div className="text-slate-500 truncate" title={info.test.lastCommit?.commit?.message}>
-                                                                            "{info.test.lastCommit?.commit?.message?.substring(0, 40) || 'â'}"
+                                                                            "{info.test.lastCommit?.commit?.message?.substring(0, 40) || '—'}"
                                                                         </div>
                                                                         {info.test.recentCommits?.length > 1 && (
                                                                             <details className="mt-2">
@@ -3576,11 +3614,11 @@
                                                         {app.prodRepo && (
                                                             <div className="p-2 bg-green-900/20 rounded border border-green-800/50">
                                                                 <div className="flex items-center justify-between mb-2">
-                                                                    <span className="text-sm font-medium text-green-300">ð PROD Environment</span>
+                                                                    <span className="text-sm font-medium text-green-300">🚀 PROD Environment</span>
                                                                     <button 
                                                                         onClick={() => forceRebuild(app.prodRepo, 'prod')}
                                                                         className="px-2 py-1 bg-green-700 hover:bg-green-600 text-xs rounded">
-                                                                        ð Force Rebuild
+                                                                        🔄 Force Rebuild
                                                                     </button>
                                                                 </div>
                                                                 {info?.prod ? (
@@ -3591,10 +3629,10 @@
                                                                         </div>
                                                                         <div className="flex justify-between">
                                                                             <span className="text-slate-400">Last commit:</span>
-                                                                            <span className="font-mono">{info.prod.lastCommit?.sha?.substring(0, 7) || 'â'}</span>
+                                                                            <span className="font-mono">{info.prod.lastCommit?.sha?.substring(0, 7) || '—'}</span>
                                                                         </div>
                                                                         <div className="text-slate-500 truncate" title={info.prod.lastCommit?.commit?.message}>
-                                                                            "{info.prod.lastCommit?.commit?.message?.substring(0, 40) || 'â'}"
+                                                                            "{info.prod.lastCommit?.commit?.message?.substring(0, 40) || '—'}"
                                                                         </div>
                                                                         {info.prod.recentCommits?.length > 1 && (
                                                                             <details className="mt-2">
@@ -3623,9 +3661,9 @@
                                                             {/* Rollback Status Header */}
                                                             {(rollbackSnapshots?.[`${app.id}:test`] || rollbackSnapshots?.[`${app.id}:prod`]) && (
                                                                 <div className="w-full text-xs text-slate-400 mb-1 flex items-center gap-2">
-                                                                    ð¸ Snapshots available:
+                                                                    📸 Snapshots available:
                                                                     {rollbackSnapshots?.[`${app.id}:test`] && <span className="text-blue-400">TEST v{rollbackSnapshots[`${app.id}:test`].version}</span>}
-                                                                    {rollbackSnapshots?.[`${app.id}:test`] && rollbackSnapshots?.[`${app.id}:prod`] && <span>â¢</span>}
+                                                                    {rollbackSnapshots?.[`${app.id}:test`] && rollbackSnapshots?.[`${app.id}:prod`] && <span>•</span>}
                                                                     {rollbackSnapshots?.[`${app.id}:prod`] && <span className="text-green-400">PROD v{rollbackSnapshots[`${app.id}:prod`].version}</span>}
                                                                 </div>
                                                             )}
@@ -3636,7 +3674,7 @@
                                                                     onClick={() => onQuickRollback(app.id, 'test')}
                                                                     className="px-2 py-1 bg-red-700 hover:bg-red-600 text-xs rounded flex items-center gap-1"
                                                                     title={`Rollback to v${rollbackSnapshots[`${app.id}:test`].version} (saved ${new Date(rollbackSnapshots[`${app.id}:test`].savedAt).toLocaleTimeString()})`}>
-                                                                    âª Rollback TEST to v{rollbackSnapshots[`${app.id}:test`].version}
+                                                                    ⏪ Rollback TEST to v{rollbackSnapshots[`${app.id}:test`].version}
                                                                 </button>
                                                             )}
                                                             
@@ -3646,16 +3684,16 @@
                                                                     onClick={() => onQuickRollback(app.id, 'prod')}
                                                                     className="px-2 py-1 bg-red-700 hover:bg-red-600 text-xs rounded flex items-center gap-1"
                                                                     title={`Rollback to v${rollbackSnapshots[`${app.id}:prod`].version} (saved ${new Date(rollbackSnapshots[`${app.id}:prod`].savedAt).toLocaleTimeString()})`}>
-                                                                    âª Rollback PROD to v{rollbackSnapshots[`${app.id}:prod`].version}
+                                                                    ⏪ Rollback PROD to v{rollbackSnapshots[`${app.id}:prod`].version}
                                                                 </button>
                                                             )}
                                                             
-                                                            {/* Force Propagate TEST â PROD */}
+                                                            {/* Force Propagate TEST → PROD */}
                                                             {app.testRepo && app.prodRepo && (
                                                                 <button 
                                                                     onClick={() => onPromote(app.id)}
                                                                     className="px-2 py-1 bg-amber-600 hover:bg-amber-500 text-xs rounded flex items-center gap-1">
-                                                                    <Icons.Zap className="w-3 h-3" /> Force Propagate TEST â PROD
+                                                                    <Icons.Zap className="w-3 h-3" /> Force Propagate TEST → PROD
                                                                 </button>
                                                             )}
                                                             
@@ -3674,11 +3712,11 @@
                                                                         
                                                                         await showAlert(
                                                                             `GitHub Pages should update in 30-90 seconds.`,
-                                                                            `â Rebuild Triggered for ${app.name}`
+                                                                            `✓ Rebuild Triggered for ${app.name}`
                                                                         );
                                                                     }}
                                                                     className="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-xs rounded flex items-center gap-1">
-                                                                    ð Rebuild All
+                                                                    🔄 Rebuild All
                                                                 </button>
                                                             )}
                                                             
@@ -3719,7 +3757,7 @@
                                 <button 
                                     onClick={() => setView('issues')}
                                     className="ml-auto text-xs text-indigo-400 hover:text-indigo-300">
-                                    View All â
+                                    View All →
                                 </button>
                             </h3>
                             <div className="grid grid-cols-4 gap-2 text-center mb-3">
@@ -3802,7 +3840,8 @@
             try {
                 const file = await github.getFile(selectedRepo, 'index.html');
                 if (file) {
-                    const content = atob(file.content);
+                    // Proper UTF-8 decode from base64
+                    const content = decodeURIComponent(escape(atob(file.content)));
                     const versions = findAllVersionStrings(content);
                     const primary = extractVersionFromHTML(content);
                     
@@ -3856,7 +3895,7 @@
                             </a>
                             <button onClick={handleVersionAudit}
                                 className="px-3 py-1.5 bg-amber-700 rounded text-sm flex items-center gap-1">
-                                ð Version Audit
+                                🔍 Version Audit
                             </button>
                         </div>
                     )}
@@ -3872,9 +3911,9 @@
                                             Scanning...
                                         </>
                                     ) : versionAudit.hasMismatch ? (
-                                        <><span className="text-red-400">â ï¸ Version Mismatch Found!</span></>
+                                        <><span className="text-red-400">⚠️ Version Mismatch Found!</span></>
                                     ) : (
-                                        <><span className="text-green-400">â Versions Consistent</span></>
+                                        <><span className="text-green-400">✓ Versions Consistent</span></>
                                     )}
                                 </h3>
                                 <button onClick={() => setVersionAudit(null)} className="text-slate-400 hover:text-white">
@@ -3907,7 +3946,7 @@
                                                     <span className={`font-mono ${v.value === versionAudit.primary ? 'text-green-400' : 'text-red-400'}`}>
                                                         {v.value}
                                                     </span>
-                                                    <span className="text-slate-500">â {v.source}</span>
+                                                    <span className="text-slate-500">← {v.source}</span>
                                                 </div>
                                                 <div className="text-slate-500 font-mono truncate mt-1">{v.context}</div>
                                             </div>
@@ -4245,7 +4284,7 @@
                                     <div className="flex items-center gap-2">
                                         {isObject && (
                                             <button onClick={() => toggleExpand(childPath)} className="text-slate-400 hover:text-white">
-                                                {expandedPaths.has(childPath) ? 'â¼' : 'â¶'}
+                                                {expandedPaths.has(childPath) ? '▼' : '▶'}
                                             </button>
                                         )}
                                         <span className={`${isArray ? 'text-slate-500' : 'text-indigo-400'} font-mono text-sm`}>
@@ -4287,7 +4326,7 @@
                 {isFileProtocol && (
                     <div className="bg-amber-900/30 border border-amber-700 rounded-xl p-4">
                         <div className="flex items-start gap-3">
-                            <span className="text-2xl">â ï¸</span>
+                            <span className="text-2xl">⚠️</span>
                             <div>
                                 <div className="font-semibold text-amber-400">Running from local file</div>
                                 <p className="text-sm text-slate-300 mt-1">
@@ -4408,7 +4447,7 @@
                             className={`px-4 py-2 rounded flex items-center gap-2 ${realtimeEnabled ? 'bg-green-600' : 'bg-slate-700'}`}
                             title={realtimeEnabled ? 'Disable realtime updates' : 'Enable realtime updates'}
                         >
-                            {realtimeEnabled ? 'ð´ Live' : 'âª Live'}
+                            {realtimeEnabled ? '🔴 Live' : '⚪ Live'}
                         </button>
                     </div>
                     
@@ -4425,7 +4464,7 @@
                         <div className="flex items-center justify-between mb-4">
                             <h3 className="font-semibold">
                                 Data at <span className="font-mono text-indigo-400">/{dbPath || ''}</span>
-                                {realtimeEnabled && <span className="ml-2 text-green-400 text-sm">â Live</span>}
+                                {realtimeEnabled && <span className="ml-2 text-green-400 text-sm">● Live</span>}
                             </h3>
                             <div className="flex gap-2">
                                 <button onClick={() => copyToClipboard(dbData)} className="px-3 py-1 bg-slate-700 rounded text-sm flex items-center gap-1">
@@ -4463,7 +4502,7 @@
                             </div>
                             <div className="space-y-2">
                                 <div>
-                                    <label className="text-xs text-blue-400">ð§ª TEST</label>
+                                    <label className="text-xs text-blue-400">🧪 TEST</label>
                                     <select value={app.testRepo || ''} onChange={e => onUpdate(app.id, { testRepo: e.target.value })}
                                         className="w-full p-1.5 bg-slate-700 border border-slate-600 rounded text-sm">
                                         <option value="">Select...</option>
@@ -4471,7 +4510,7 @@
                                     </select>
                                 </div>
                                 <div>
-                                    <label className="text-xs text-green-400">ð PROD</label>
+                                    <label className="text-xs text-green-400">🚀 PROD</label>
                                     <select value={app.prodRepo || ''} onChange={e => onUpdate(app.id, { prodRepo: e.target.value })}
                                         className="w-full p-1.5 bg-slate-700 border border-slate-600 rounded text-sm">
                                         <option value="">Select...</option>
@@ -4518,8 +4557,8 @@
                                     <span className={`text-xs px-1.5 rounded ${d.target === 'prod' ? 'bg-green-900 text-green-300' : 'bg-blue-900 text-blue-300'}`}>
                                         {d.target?.toUpperCase()}
                                     </span>
-                                    {d.isPromotion && <span className="text-xs text-amber-400">â promoted</span>}
-                                    {d.isRollback && <span className="text-xs text-amber-400">â© rollback</span>}
+                                    {d.isPromotion && <span className="text-xs text-amber-400">↑ promoted</span>}
+                                    {d.isRollback && <span className="text-xs text-amber-400">↩ rollback</span>}
                                     <span className="flex-1" />
                                     {d.status === 'success' && d.commitSha && !d.fileCount && (
                                         <button onClick={() => onRollback(d)}
@@ -4530,11 +4569,11 @@
                                 </div>
                                 <div className="text-xs text-slate-500 mt-1 flex items-center gap-2">
                                     {formatDate(d.completedAt || d.startedAt)}
-                                    {d.commitSha && <span className="font-mono">â¢ {d.commitSha.substring(0, 7)}</span>}
-                                    {d.previousVersion && <span>â¢ was {formatVersion(d.previousVersion)}</span>}
+                                    {d.commitSha && <span className="font-mono">• {d.commitSha.substring(0, 7)}</span>}
+                                    {d.previousVersion && <span>• was {formatVersion(d.previousVersion)}</span>}
                                 </div>
                                 {d.url && d.status === 'success' && (
-                                    <a href={d.url} target="_blank" className="text-xs text-indigo-400 hover:underline">View â</a>
+                                    <a href={d.url} target="_blank" className="text-xs text-indigo-400 hover:underline">View ↗</a>
                                 )}
                             </div>
                         ))}
@@ -4829,7 +4868,7 @@
             };
             
             onFileDrop([file]);
-            await logEntry(`Quick deploy: ${apps[appId]?.name} v${detectedFile.version} â ${target.toUpperCase()}`, 'deploy');
+            await logEntry(`Quick deploy: ${apps[appId]?.name} v${detectedFile.version} → ${target.toUpperCase()}`, 'deploy');
             
             setQuickDeployCode('');
             setDetectedFile(null);
@@ -4845,7 +4884,7 @@
                 `|-----|------|------|`,
             ];
             configuredApps.forEach(app => {
-                lines.push(`| ${app.name} | ${app.currentTestVersion || 'â'} | ${app.currentProdVersion || 'â'} |`);
+                lines.push(`| ${app.name} | ${app.currentTestVersion || '—'} | ${app.currentProdVersion || '—'} |`);
             });
             return lines.join('\n');
         };
@@ -4892,7 +4931,7 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
                 {pendingDeploys.length > 0 && (
                     <div className="bg-green-900/30 border border-green-600 rounded-xl p-6 animate-pulse-slow">
                         <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 text-green-300">
-                            ð Incoming from Claude ({pendingDeploys.length})
+                            🚀 Incoming from Claude ({pendingDeploys.length})
                         </h2>
                         <div className="space-y-3">
                             {pendingDeploys.map(deploy => (
@@ -4900,8 +4939,8 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
                                     <div>
                                         <div className="font-medium">{deploy.appName || deploy.appId}</div>
                                         <div className="text-sm text-slate-400">
-                                            v{deploy.version} â {deploy.target?.toUpperCase()} â¢ 
-                                            {(deploy.code?.length / 1024).toFixed(1)}KB â¢
+                                            v{deploy.version} → {deploy.target?.toUpperCase()} • 
+                                            {(deploy.code?.length / 1024).toFixed(1)}KB •
                                             {new Date(deploy.createdAt).toLocaleTimeString()}
                                         </div>
                                     </div>
@@ -4909,12 +4948,12 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
                                         <button
                                             onClick={() => rejectPendingDeploy(deploy.id)}
                                             className="px-3 py-1.5 bg-red-600 hover:bg-red-500 rounded text-sm">
-                                            â Reject
+                                            ✕ Reject
                                         </button>
                                         <button
                                             onClick={() => acceptPendingDeploy(deploy)}
                                             className="px-3 py-1.5 bg-green-600 hover:bg-green-500 rounded text-sm">
-                                            â Deploy
+                                            ✓ Deploy
                                         </button>
                                     </div>
                                 </div>
@@ -4926,12 +4965,12 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
                 {/* Project File (gs-active.zip) */}
                 <div className="bg-indigo-900/30 border border-indigo-700 rounded-xl p-6">
                     <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 text-indigo-300">
-                        ð¦ Project File (gs-active.zip)
+                        📦 Project File (gs-active.zip)
                     </h2>
                     
                     {!firebaseUser ? (
                         <div className="text-amber-400 text-sm p-3 bg-amber-900/30 rounded-lg">
-                            â ï¸ Sign in via the Firebase tab to sync your project file
+                            ⚠️ Sign in via the Firebase tab to sync your project file
                         </div>
                     ) : (
                         <div className="space-y-4">
@@ -4940,7 +4979,7 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
                                     <div>
                                         <div className="font-medium">{projectFile.name}</div>
                                         <div className="text-sm text-slate-400">
-                                            {(projectFile.size / 1024).toFixed(1)} KB â¢ 
+                                            {(projectFile.size / 1024).toFixed(1)} KB • 
                                             Updated: {new Date(projectFile.lastModified).toLocaleString()}
                                         </div>
                                     </div>
@@ -4948,7 +4987,7 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
                                         onClick={downloadProjectFile}
                                         disabled={downloading}
                                         className="px-4 py-2 bg-green-600 hover:bg-green-500 rounded-lg flex items-center gap-2 disabled:opacity-50">
-                                        {downloading ? 'â³' : 'â¬ï¸'} Download
+                                        {downloading ? '⏳' : '⬇️'} Download
                                     </button>
                                 </div>
                             ) : (
@@ -4970,10 +5009,10 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
                                 />
                                 <label htmlFor="project-file-input" className="cursor-pointer">
                                     {uploading ? (
-                                        <span className="text-indigo-400">â³ Uploading...</span>
+                                        <span className="text-indigo-400">⏳ Uploading...</span>
                                     ) : (
                                         <span className="text-slate-400">
-                                            ð¤ Drop gs-active.zip or <span className="text-indigo-400 underline">browse</span>
+                                            📤 Drop gs-active.zip or <span className="text-indigo-400 underline">browse</span>
                                         </span>
                                     )}
                                 </label>
@@ -4986,7 +5025,7 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
                 {firebaseUser && (
                     <div className="bg-purple-900/30 border border-purple-700 rounded-xl p-6">
                         <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 text-purple-300">
-                            ð¤ Claude Direct Deploy
+                            🤖 Claude Direct Deploy
                         </h2>
                         <p className="text-sm text-slate-400 mb-4">
                             If Claude has network access, it can push code directly here for one-click deployment.
@@ -5001,7 +5040,7 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
                             <button
                                 onClick={copyClaudeInstructions}
                                 className="w-full px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-sm">
-                                ð Copy Instructions for Claude
+                                📋 Copy Instructions for Claude
                             </button>
                         </div>
                     </div>
@@ -5010,7 +5049,7 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
                 {/* Quick Deploy */}
                 <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
                     <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                        â¡ Quick Deploy (Paste Code)
+                        ⚡ Quick Deploy (Paste Code)
                     </h2>
                     <textarea
                         value={quickDeployCode}
@@ -5025,12 +5064,12 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
                                 <div>
                                     <div className="font-medium">{detectedFile.title}</div>
                                     <div className="text-sm text-slate-400">
-                                        v{detectedFile.version} â¢ {(detectedFile.size / 1024).toFixed(1)}KB
+                                        v{detectedFile.version} • {(detectedFile.size / 1024).toFixed(1)}KB
                                     </div>
                                 </div>
                                 {detectedFile.detectedApp && (
                                     <span className="px-2 py-1 bg-green-900/50 text-green-400 rounded text-sm">
-                                        â {detectedFile.detectedApp.name}
+                                        ✓ {detectedFile.detectedApp.name}
                                     </span>
                                 )}
                             </div>
@@ -5045,7 +5084,7 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
                                                 ? 'bg-blue-600 hover:bg-blue-500' 
                                                 : 'bg-slate-600 hover:bg-slate-500'
                                         }`}>
-                                        <AppIcon icon={app.icon} size={16} /> {app.name} â TEST
+                                        <AppIcon icon={app.icon} size={16} /> {app.name} → TEST
                                     </button>
                                 ))}
                             </div>
@@ -5056,9 +5095,9 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
                 {/* Activity Log */}
                 <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
                     <div className="flex items-center justify-between mb-4">
-                        <h2 className="text-lg font-semibold">ð Activity Log</h2>
+                        <h2 className="text-lg font-semibold">📋 Activity Log</h2>
                         <button onClick={copyContext} className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 rounded text-sm">
-                            ð Copy Context
+                            📋 Copy Context
                         </button>
                     </div>
                     
@@ -5096,7 +5135,7 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
                 
                 {/* Current Versions */}
                 <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
-                    <h2 className="text-lg font-semibold mb-4">ð Current Versions</h2>
+                    <h2 className="text-lg font-semibold mb-4">📊 Current Versions</h2>
                     <table className="w-full text-sm">
                         <thead>
                             <tr className="border-b border-slate-700">
@@ -5110,12 +5149,12 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
                             {configuredApps.map(app => (
                                 <tr key={app.id} className="border-b border-slate-700/50">
                                     <td className="p-2"><span className="inline-flex items-center gap-1"><AppIcon icon={app.icon} size={16} /> {app.name}</span></td>
-                                    <td className="p-2 text-center font-mono text-blue-400">{app.currentTestVersion || 'â'}</td>
-                                    <td className="p-2 text-center font-mono text-green-400">{app.currentProdVersion || 'â'}</td>
+                                    <td className="p-2 text-center font-mono text-blue-400">{app.currentTestVersion || '—'}</td>
+                                    <td className="p-2 text-center font-mono text-green-400">{app.currentProdVersion || '—'}</td>
                                     <td className="p-2 text-center">
                                         {app.currentTestVersion === app.currentProdVersion 
-                                            ? <span className="text-green-400">â</span>
-                                            : <span className="text-amber-400">â ï¸</span>
+                                            ? <span className="text-green-400">✓</span>
+                                            : <span className="text-amber-400">⚠️</span>
                                         }
                                     </td>
                                 </tr>
@@ -5126,42 +5165,42 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
                 
                 {/* Testing & Issues */}
                 <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
-                    <h2 className="text-lg font-semibold mb-4">ð§ª Testing & Issues</h2>
+                    <h2 className="text-lg font-semibold mb-4">🧪 Testing & Issues</h2>
                     
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
                         <a href="https://stewartdavidp-ship-it.github.io/gameshelf-testplan/" 
                            target="_blank"
                            className="p-3 bg-indigo-900/30 border border-indigo-700 rounded-lg text-center hover:bg-indigo-900/50 transition-colors">
-                            <div className="text-2xl mb-1">ð</div>
+                            <div className="text-2xl mb-1">📋</div>
                             <div className="text-sm">Test Plan</div>
                         </a>
                         <a href="https://stewartdavidp-ship-it.github.io/gameshelf-testplan/issue-tracker.html" 
                            target="_blank"
                            className="p-3 bg-red-900/30 border border-red-700 rounded-lg text-center hover:bg-red-900/50 transition-colors">
-                            <div className="text-2xl mb-1">ð</div>
+                            <div className="text-2xl mb-1">🐛</div>
                             <div className="text-sm">Issue Tracker</div>
                         </a>
                         <a href="https://stewartdavidp-ship-it.github.io/gameshelftest/" 
                            target="_blank"
                            className="p-3 bg-blue-900/30 border border-blue-700 rounded-lg text-center hover:bg-blue-900/50 transition-colors">
-                            <div className="text-2xl mb-1">ð§ª</div>
+                            <div className="text-2xl mb-1">🧪</div>
                             <div className="text-sm">TEST Site</div>
                         </a>
                         <a href="https://stewartdavidp-ship-it.github.io/gameshelf/" 
                            target="_blank"
                            className="p-3 bg-green-900/30 border border-green-700 rounded-lg text-center hover:bg-green-900/50 transition-colors">
-                            <div className="text-2xl mb-1">ð</div>
+                            <div className="text-2xl mb-1">🚀</div>
                             <div className="text-sm">PROD Site</div>
                         </a>
                     </div>
                     
                     <div className="text-xs text-slate-500 bg-slate-900/50 rounded-lg p-3">
-                        <div className="font-medium text-slate-400 mb-2">Test â Fix Workflow:</div>
+                        <div className="font-medium text-slate-400 mb-2">Test → Fix Workflow:</div>
                         <ol className="list-decimal list-inside space-y-1">
-                            <li>Run tests in Test Plan â Issues logged to tracker</li>
-                            <li>Click issue â Copy details for Claude</li>
-                            <li>Claude fixes â Quick Deploy to TEST</li>
-                            <li>Re-test â Promote to PROD when passing</li>
+                            <li>Run tests in Test Plan → Issues logged to tracker</li>
+                            <li>Click issue → Copy details for Claude</li>
+                            <li>Claude fixes → Quick Deploy to TEST</li>
+                            <li>Re-test → Promote to PROD when passing</li>
                         </ol>
                     </div>
                 </div>
@@ -5501,14 +5540,14 @@ Released: ${new Date().toLocaleDateString()}
                 medium: 'text-yellow-400',
                 low: 'text-slate-400'
             };
-            const icons = { critical: 'ð´', high: 'ð ', medium: 'ð¡', low: 'âª' };
+            const icons = { critical: '🔴', high: '🟠', medium: '🟡', low: '⚪' };
             return <span className={colors[severity]}>{icons[severity]} {severity}</span>;
         };
         
         if (!firebaseUser) {
             return (
                 <div className="bg-amber-900/30 border border-amber-700 rounded-xl p-6 text-center">
-                    <div className="text-amber-400 mb-2">â ï¸ Sign in Required</div>
+                    <div className="text-amber-400 mb-2">⚠️ Sign in Required</div>
                     <div className="text-sm text-slate-400">Go to the Firebase tab to sign in and enable issue tracking.</div>
                 </div>
             );
@@ -5519,13 +5558,13 @@ Released: ${new Date().toLocaleDateString()}
                 {/* Header & Stats */}
                 <div className="flex items-center justify-between">
                     <div>
-                        <h2 className="text-xl font-bold">ð Issue Tracker</h2>
+                        <h2 className="text-xl font-bold">🐛 Issue Tracker</h2>
                         <div className="text-sm text-slate-400">
-                            {issues.filter(i => i.status === 'open').length} open â¢ 
-                            {issues.filter(i => i.status === 'fixed').length} fixed â¢ 
+                            {issues.filter(i => i.status === 'open').length} open • 
+                            {issues.filter(i => i.status === 'fixed').length} fixed • 
                             {issues.filter(i => i.status === 'verified').length} verified
                             {activeUserReports.length > 0 && (
-                                <span className="text-orange-400"> â¢ {activeUserReports.length} user reports</span>
+                                <span className="text-orange-400"> • {activeUserReports.length} user reports</span>
                             )}
                         </div>
                     </div>
@@ -5565,7 +5604,7 @@ Released: ${new Date().toLocaleDateString()}
                             className="w-full p-4 flex items-center justify-between hover:bg-orange-900/20 transition-colors"
                         >
                             <div className="flex items-center gap-3">
-                                <span className="text-2xl">ð¬</span>
+                                <span className="text-2xl">📬</span>
                                 <div className="text-left">
                                     <div className="font-semibold text-orange-300">
                                         {activeUserReports.length} User Report{activeUserReports.length !== 1 ? 's' : ''} Pending
@@ -5575,7 +5614,7 @@ Released: ${new Date().toLocaleDateString()}
                                     </div>
                                 </div>
                             </div>
-                            <span className="text-xl">{userReportsExpanded ? 'â¼' : 'â¶'}</span>
+                            <span className="text-xl">{userReportsExpanded ? '▼' : '▶'}</span>
                         </button>
                         
                         {userReportsExpanded && (
@@ -5591,15 +5630,15 @@ Released: ${new Date().toLocaleDateString()}
                                                         report.type === 'ux' ? 'bg-purple-900/50 text-purple-300' :
                                                         'bg-slate-700 text-slate-300'
                                                     }`}>
-                                                        {report.type === 'bug' && 'ð'}
-                                                        {report.type === 'feature' && 'ð¡'}
-                                                        {report.type === 'ux' && 'ð¨'}
-                                                        {report.type === 'other' && 'ð'}
+                                                        {report.type === 'bug' && '🐛'}
+                                                        {report.type === 'feature' && '💡'}
+                                                        {report.type === 'ux' && '🎨'}
+                                                        {report.type === 'other' && '📝'}
                                                         {' '}{report.type || 'report'}
                                                     </span>
                                                     {report.section && (
                                                         <span className="px-2 py-0.5 rounded text-xs bg-slate-700 text-slate-300">
-                                                            ð {report.section}
+                                                            📍 {report.section}
                                                         </span>
                                                     )}
                                                     {report.severity && (
@@ -5627,7 +5666,7 @@ Released: ${new Date().toLocaleDateString()}
                                                     </div>
                                                 )}
                                                 <div className="text-xs text-slate-500 mt-2">
-                                                    ð {new Date(report.timestamp || report.createdAt).toLocaleString()}
+                                                    📅 {new Date(report.timestamp || report.createdAt).toLocaleString()}
                                                 </div>
                                             </div>
                                             <div className="flex flex-col gap-1">
@@ -5635,19 +5674,19 @@ Released: ${new Date().toLocaleDateString()}
                                                     onClick={() => setSelectedUserReport(report)}
                                                     className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs whitespace-nowrap"
                                                 >
-                                                    ðï¸ View
+                                                    👁️ View
                                                 </button>
                                                 <button
                                                     onClick={() => convertToTrackedIssue(report)}
                                                     className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded text-xs whitespace-nowrap"
                                                 >
-                                                    â Track
+                                                    ➕ Track
                                                 </button>
                                                 <button
                                                     onClick={() => dismissUserReport(report)}
                                                     className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded text-xs text-slate-400 whitespace-nowrap"
                                                 >
-                                                    â Dismiss
+                                                    ✕ Dismiss
                                                 </button>
                                             </div>
                                         </div>
@@ -5678,8 +5717,8 @@ Released: ${new Date().toLocaleDateString()}
                     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setSelectedUserReport(null)}>
                         <div className="bg-slate-800 rounded-xl border border-slate-600 w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
                             <div className="p-6 border-b border-slate-700 flex items-center justify-between">
-                                <h3 className="text-lg font-semibold">ð¬ User Report</h3>
-                                <button onClick={() => setSelectedUserReport(null)} className="text-slate-400 hover:text-white">â</button>
+                                <h3 className="text-lg font-semibold">📬 User Report</h3>
+                                <button onClick={() => setSelectedUserReport(null)} className="text-slate-400 hover:text-white">✕</button>
                             </div>
                             <div className="p-6 space-y-4">
                                 <div className="flex flex-wrap gap-2">
@@ -5691,7 +5730,7 @@ Released: ${new Date().toLocaleDateString()}
                                         {selectedUserReport.type || 'report'}
                                     </span>
                                     {selectedUserReport.section && (
-                                        <span className="px-3 py-1 rounded bg-slate-700">ð {selectedUserReport.section}</span>
+                                        <span className="px-3 py-1 rounded bg-slate-700">📍 {selectedUserReport.section}</span>
                                     )}
                                     {selectedUserReport.severity && (
                                         <span className="px-3 py-1 rounded bg-slate-700">{selectedUserReport.severity}</span>
@@ -5749,7 +5788,7 @@ Released: ${new Date().toLocaleDateString()}
                                     onClick={() => convertToTrackedIssue(selectedUserReport)}
                                     className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg"
                                 >
-                                    â Convert to Tracked Issue
+                                    ➕ Convert to Tracked Issue
                                 </button>
                                 <button
                                     onClick={() => { dismissUserReport(selectedUserReport); setSelectedUserReport(null); }}
@@ -5761,7 +5800,7 @@ Released: ${new Date().toLocaleDateString()}
                                     onClick={() => { deleteUserReport(selectedUserReport); setSelectedUserReport(null); }}
                                     className="px-4 py-2 bg-red-900 hover:bg-red-800 rounded-lg"
                                 >
-                                    ðï¸
+                                    🗑️
                                 </button>
                             </div>
                         </div>
@@ -5786,12 +5825,12 @@ Released: ${new Date().toLocaleDateString()}
                                 <button
                                     onClick={() => navigator.clipboard.writeText(generateReleaseNotes(app.id))}
                                     className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-sm">
-                                    ð Copy Notes
+                                    📋 Copy Notes
                                 </button>
                                 <button
                                     onClick={() => markReleasedToProd(app.id)}
                                     className="px-3 py-1.5 bg-green-600 hover:bg-green-500 rounded text-sm">
-                                    ð Mark Released
+                                    🚀 Mark Released
                                 </button>
                             </div>
                         </div>
@@ -5818,9 +5857,9 @@ Released: ${new Date().toLocaleDateString()}
                                         </div>
                                         <div className="font-medium">{issue.title}</div>
                                         <div className="text-sm text-slate-400 mt-1">
-                                            {issue.app && <span className="mr-3">ð± {configuredApps.find(a => a.id === issue.app)?.name || issue.app}</span>}
-                                            <span>ð {new Date(issue.createdAt).toLocaleDateString()}</span>
-                                            {issue.fixedInVersion && <span className="ml-3 text-blue-400">ð§ Fixed in v{issue.fixedInVersion}</span>}
+                                            {issue.app && <span className="mr-3">📱 {configuredApps.find(a => a.id === issue.app)?.name || issue.app}</span>}
+                                            <span>📅 {new Date(issue.createdAt).toLocaleDateString()}</span>
+                                            {issue.fixedInVersion && <span className="ml-3 text-blue-400">🔧 Fixed in v{issue.fixedInVersion}</span>}
                                         </div>
                                     </div>
                                     <div className="flex gap-1">
@@ -5828,7 +5867,7 @@ Released: ${new Date().toLocaleDateString()}
                                             onClick={() => copyForClaude(issue)}
                                             className="px-2 py-1 bg-purple-600 hover:bg-purple-500 rounded text-xs"
                                             title="Copy for Claude">
-                                            ð¤
+                                            🤖
                                         </button>
                                         <button
                                             onClick={() => setSelectedIssue(issue)}
@@ -5861,7 +5900,7 @@ Released: ${new Date().toLocaleDateString()}
                                         <button
                                             onClick={() => updateIssueStatus(issue.id, 'verified')}
                                             className="px-2 py-1 bg-green-700 hover:bg-green-600 rounded text-xs">
-                                            â Verify Fixed
+                                            ✓ Verify Fixed
                                         </button>
                                     )}
                                 </div>
@@ -5873,17 +5912,17 @@ Released: ${new Date().toLocaleDateString()}
                 {/* Recent Releases */}
                 {releases.length > 0 && (
                     <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
-                        <h3 className="text-lg font-semibold mb-4">ð¦ Recent Releases</h3>
+                        <h3 className="text-lg font-semibold mb-4">📦 Recent Releases</h3>
                         <div className="space-y-2">
                             {releases.slice(0, 5).map(rel => (
                                 <div key={rel.id} className="flex items-center justify-between p-3 bg-slate-700/50 rounded-lg">
                                     <div>
                                         <span className="font-medium">{configuredApps.find(a => a.id === rel.app)?.name || rel.app}</span>
                                         <span className="ml-2 font-mono text-green-400">v{rel.version}</span>
-                                        <span className="ml-2 text-xs text-slate-400">â {rel.environment?.toUpperCase()}</span>
+                                        <span className="ml-2 text-xs text-slate-400">→ {rel.environment?.toUpperCase()}</span>
                                     </div>
                                     <div className="text-sm text-slate-400">
-                                        {rel.issues?.length || 0} issues â¢ {new Date(rel.deployedAt).toLocaleDateString()}
+                                        {rel.issues?.length || 0} issues • {new Date(rel.deployedAt).toLocaleDateString()}
                                     </div>
                                 </div>
                             ))}
@@ -5895,7 +5934,7 @@ Released: ${new Date().toLocaleDateString()}
                 {firebaseUser && (
                     <div className="bg-purple-900/30 border border-purple-700 rounded-xl p-6">
                         <h3 className="text-lg font-semibold mb-4 flex items-center gap-2 text-purple-300">
-                            ð§ª Test Plan Integration
+                            🧪 Test Plan Integration
                         </h3>
                         <p className="text-sm text-slate-400 mb-4">
                             The Test Plan app can automatically push issues here when tests fail.
@@ -5911,7 +5950,7 @@ Released: ${new Date().toLocaleDateString()}
                             
                             <details className="bg-slate-800 rounded-lg">
                                 <summary className="p-3 cursor-pointer text-sm font-medium">
-                                    ð Test Plan Integration Code
+                                    📋 Test Plan Integration Code
                                 </summary>
                                 <pre className="p-3 text-xs overflow-auto border-t border-slate-700 bg-slate-900">
 {`// Add to Test Plan - Push issue when test fails
@@ -5943,12 +5982,12 @@ const pushIssueToCommandCenter = async (testResult) => {
                                 <a href="https://stewartdavidp-ship-it.github.io/gameshelf-testplan/"
                                    target="_blank"
                                    className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-center text-sm">
-                                    ð Open Test Plan
+                                    📋 Open Test Plan
                                 </a>
                                 <a href="https://stewartdavidp-ship-it.github.io/gameshelf-testplan/issue-tracker.html"
                                    target="_blank"
                                    className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-center text-sm">
-                                    ð Legacy Tracker
+                                    🐛 Legacy Tracker
                                 </a>
                             </div>
                         </div>
@@ -6037,10 +6076,10 @@ const pushIssueToCommandCenter = async (testResult) => {
                                     value={severity}
                                     onChange={e => setSeverity(e.target.value)}
                                     className="w-full p-2 bg-slate-900 border border-slate-600 rounded">
-                                    <option value="critical">ð´ Critical</option>
-                                    <option value="high">ð  High</option>
-                                    <option value="medium">ð¡ Medium</option>
-                                    <option value="low">âª Low</option>
+                                    <option value="critical">🔴 Critical</option>
+                                    <option value="high">🟠 High</option>
+                                    <option value="medium">🟡 Medium</option>
+                                    <option value="low">⚪ Low</option>
                                 </select>
                             </div>
                         </div>
@@ -6150,10 +6189,10 @@ const pushIssueToCommandCenter = async (testResult) => {
                                     value={severity}
                                     onChange={e => setSeverity(e.target.value)}
                                     className="w-full p-2 bg-slate-900 border border-slate-600 rounded">
-                                    <option value="critical">ð´ Critical</option>
-                                    <option value="high">ð  High</option>
-                                    <option value="medium">ð¡ Medium</option>
-                                    <option value="low">âª Low</option>
+                                    <option value="critical">🔴 Critical</option>
+                                    <option value="high">🟠 High</option>
+                                    <option value="medium">🟡 Medium</option>
+                                    <option value="low">⚪ Low</option>
                                 </select>
                             </div>
                         </div>
@@ -6336,7 +6375,7 @@ const pushIssueToCommandCenter = async (testResult) => {
                     `Repository created successfully!\n\n` +
                     `${result.fullName}\n` +
                     `${result.pagesUrl}`,
-                    'â Repository Created'
+                    '✅ Repository Created'
                 );
                 
             } catch (error) {
@@ -6370,7 +6409,7 @@ const pushIssueToCommandCenter = async (testResult) => {
             <div className="space-y-6">
                 <div className="flex items-center justify-between">
                     <h2 className="text-xl font-bold flex items-center gap-2">
-                        âï¸ Configuration
+                        ⚙️ Configuration
                     </h2>
                     <div className="text-xs text-slate-500">Config v{config.version}</div>
                 </div>
@@ -6378,10 +6417,10 @@ const pushIssueToCommandCenter = async (testResult) => {
                 {/* Tab Navigation */}
                 <div className="flex gap-2 border-b border-slate-700 pb-2">
                     {[
-                        { id: 'environments', label: 'ð Environments' },
-                        { id: 'repos', label: 'ðï¸ Repositories' },
-                        { id: 'apps', label: 'ð¦ Apps' },
-                        { id: 'detection', label: 'ð Detection' }
+                        { id: 'environments', label: '🌍 Environments' },
+                        { id: 'repos', label: '🗄️ Repositories' },
+                        { id: 'apps', label: '📦 Apps' },
+                        { id: 'detection', label: '🔍 Detection' }
                     ].map(tab => (
                         <button
                             key={tab.id}
@@ -6425,7 +6464,7 @@ const pushIssueToCommandCenter = async (testResult) => {
                                             </div>
                                             <div className="font-bold uppercase">{config.environments.labels[env]}</div>
                                             <div className="text-xs mt-1 opacity-75">
-                                                {isActive ? 'â Active' : 'Disabled'}
+                                                {isActive ? '✓ Active' : 'Disabled'}
                                             </div>
                                         </button>
                                     );
@@ -6441,7 +6480,7 @@ const pushIssueToCommandCenter = async (testResult) => {
                                                 {config.environments.labels[env]}
                                             </span>
                                             {idx < activeEnvs.length - 1 && (
-                                                <span className="text-slate-500">â</span>
+                                                <span className="text-slate-500">→</span>
                                             )}
                                         </React.Fragment>
                                     ))}
@@ -6475,7 +6514,7 @@ const pushIssueToCommandCenter = async (testResult) => {
                             
                             {!github && (
                                 <div className="bg-amber-900/30 border border-amber-700 rounded-lg p-4 mb-4">
-                                    <div className="text-amber-300 font-medium">â ï¸ GitHub Token Required</div>
+                                    <div className="text-amber-300 font-medium">⚠️ GitHub Token Required</div>
                                     <div className="text-sm text-slate-300 mt-1">
                                         Configure your GitHub token in Settings to create repositories.
                                     </div>
@@ -6518,14 +6557,14 @@ const pushIssueToCommandCenter = async (testResult) => {
                                                         {repo ? (
                                                             <div>
                                                                 <div className="text-xs font-mono text-green-400 truncate" title={repo}>
-                                                                    â {repo.split('/')[1]}
+                                                                    ✓ {repo.split('/')[1]}
                                                                 </div>
                                                                 <a 
                                                                     href={`https://github.com/${repo}`}
                                                                     target="_blank"
                                                                     className="text-xs text-slate-400 hover:text-white"
                                                                 >
-                                                                    View â
+                                                                    View →
                                                                 </a>
                                                             </div>
                                                         ) : isActive ? (
@@ -6541,7 +6580,7 @@ const pushIssueToCommandCenter = async (testResult) => {
                                                                 }`}
                                                             >
                                                                 {isCreating ? (
-                                                                    status === 'enabling-pages' ? 'â³ Enabling Pages...' : 'â³ Creating...'
+                                                                    status === 'enabling-pages' ? '⏳ Enabling Pages...' : '⏳ Creating...'
                                                                 ) : (
                                                                     <>+ Create Repo</>
                                                                 )}
@@ -6584,7 +6623,7 @@ const pushIssueToCommandCenter = async (testResult) => {
                                                         </span>
                                                     ) : (
                                                         <span key={env} className="text-xs px-2 py-1 bg-slate-800 rounded text-slate-500">
-                                                            {env.toUpperCase()}: â
+                                                            {env.toUpperCase()}: —
                                                         </span>
                                                     );
                                                 })}
@@ -6604,7 +6643,7 @@ const pushIssueToCommandCenter = async (testResult) => {
                                 {Object.keys(config.apps).length} apps configured
                             </div>
                             <button 
-                                onClick={() => setNewAppForm({ name: '', icon: 'ð¦', targetPath: 'index.html' })}
+                                onClick={() => setNewAppForm({ name: '', icon: '📦', targetPath: 'index.html' })}
                                 className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg"
                             >
                                 <Icons.Plus /> Add App
@@ -6621,7 +6660,7 @@ const pushIssueToCommandCenter = async (testResult) => {
                                             <div>
                                                 <div className="font-semibold">{app.name}</div>
                                                 <div className="text-xs text-slate-400">
-                                                    {app.targetPath} {app.hasServiceWorker && 'â¢ PWA'}
+                                                    {app.targetPath} {app.hasServiceWorker && '• PWA'}
                                                 </div>
                                             </div>
                                         </div>
@@ -6760,7 +6799,7 @@ const pushIssueToCommandCenter = async (testResult) => {
         const [form, setForm] = React.useState({
             id: app.id || '',
             name: app.name || '',
-            icon: app.icon || 'ð¦',
+            icon: app.icon || '📦',
             targetPath: app.targetPath || 'index.html',
             swPath: app.swPath || '',
             hasServiceWorker: app.hasServiceWorker || false,
@@ -6812,7 +6851,7 @@ const pushIssueToCommandCenter = async (testResult) => {
                                     value={form.icon}
                                     onChange={e => setForm({ ...form, icon: e.target.value })}
                                     className="w-full p-2 bg-slate-900 border border-slate-600 rounded"
-                                    placeholder="ð¦"
+                                    placeholder="📦"
                                 />
                             </div>
                         </div>
@@ -6922,7 +6961,7 @@ const pushIssueToCommandCenter = async (testResult) => {
                     <div className="flex gap-2 mb-2">
                         <input type={show ? 'text' : 'password'} value={token} onChange={e => setToken(e.target.value)}
                             placeholder="ghp_xxxx" className="flex-1 p-2 bg-slate-700 border border-slate-600 rounded font-mono text-sm" />
-                        <button onClick={() => setShow(!show)} className="px-3 bg-slate-700 border border-slate-600 rounded">{show ? 'ð' : 'ðï¸'}</button>
+                        <button onClick={() => setShow(!show)} className="px-3 bg-slate-700 border border-slate-600 rounded">{show ? '🙈' : '👁️'}</button>
                         <button onClick={async () => {
                             setTesting(true);
                             try { const gh = new GitHubAPI(token); const r = await gh.listRepos(); setResult({ ok: true, count: r.length }); }
@@ -6930,9 +6969,9 @@ const pushIssueToCommandCenter = async (testResult) => {
                             setTesting(false);
                         }} disabled={testing} className="px-4 bg-indigo-600 rounded">{testing ? '...' : 'Test'}</button>
                     </div>
-                    <a href="https://github.com/settings/tokens/new?scopes=repo" target="_blank" className="text-xs text-indigo-400">Create token â</a>
+                    <a href="https://github.com/settings/tokens/new?scopes=repo" target="_blank" className="text-xs text-indigo-400">Create token →</a>
                     {result && <div className={`mt-2 text-sm ${result.ok ? 'text-green-400' : 'text-red-400'}`}>
-                        {result.ok ? `â Found ${result.count} repos` : `â ${result.error}`}
+                        {result.ok ? `✓ Found ${result.count} repos` : `✗ ${result.error}`}
                     </div>}
                 </div>
                 
@@ -6959,7 +6998,7 @@ const pushIssueToCommandCenter = async (testResult) => {
                             Clear All Data
                         </button>
                         <p className="text-xs text-slate-500 mt-2">
-                            "Reset App Mappings" keeps your token but resets all appârepo mappings to defaults and re-runs auto-detection.
+                            "Reset App Mappings" keeps your token but resets all app→repo mappings to defaults and re-runs auto-detection.
                         </p>
                     </div>
                 </div>
