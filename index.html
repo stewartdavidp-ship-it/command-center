@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Game Shelf Command Center</title>
-    <meta name="version" content="8.3.8">
+    <meta name="version" content="8.4.0">
     <meta name="gs-app-id" content="management">
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -27,7 +27,7 @@
     <div id="root"><div style="display:flex;align-items:center;justify-content:center;min-height:100vh;"><div style="text-align:center;"><div style="margin-bottom:20px;"><svg viewBox="0 0 100 100" width="64" height="64" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="gsLoadGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#667eea"/><stop offset="100%" style="stop-color:#764ba2"/></linearGradient></defs><rect x="5" y="5" width="90" height="90" rx="20" fill="url(#gsLoadGrad)"/><g transform="rotate(-12, 35, 50)"><rect x="15" y="28" width="28" height="36" rx="4" fill="white"/><circle cx="43" cy="46" r="6" fill="white"/><text x="29" y="54" font-family="Arial" font-size="20" font-weight="bold" fill="#667eea" text-anchor="middle">G</text></g><g transform="rotate(12, 65, 50)"><rect x="57" y="28" width="28" height="36" rx="4" fill="rgba(255,255,255,0.9)"/><circle cx="57" cy="46" r="6" fill="url(#gsLoadGrad)"/><text x="71" y="54" font-family="Arial" font-size="20" font-weight="bold" fill="#764ba2" text-anchor="middle">S</text></g></svg></div>Loading...</div></div></div>
 
     <script type="text/babel">
-    console.log('Command Center v8.3.8 starting...');
+    console.log('Command Center v8.4.0 starting...');
     
     // =========================================================================
     // FIREBASE CONFIG
@@ -312,7 +312,7 @@
             id: 'gameshelf', name: 'Game Shelf', icon: 'gs-logo',
             appType: 'public',
             targetPath: 'index.html', swPath: 'sw.js', hasServiceWorker: true,
-            subPath: '',
+            subPath: 'app',
             repos: { test: '', prod: '' },
             versions: { test: '', prod: '' },
             repoPatterns: {
@@ -386,19 +386,9 @@
             },
             detectionPatterns: ['<title>word\\s*boxing', 'word-boxing', 'boxing-ring']
         },
-        landing: {
-            id: 'landing', name: 'Landing Page', icon: '📣',
-            appType: 'public',
-            targetPath: 'index.html', swPath: '', hasServiceWorker: false,
-            subPath: '',
-            repos: { test: '', prod: '' },
-            versions: { test: '', prod: '' },
-            repoPatterns: {
-                test: ['game-shelf-landing-test'],
-                prod: ['game-shelf-landing']
-            },
-            detectionPatterns: ['<title>game\\s*shelf.*track', 'game-shelf-landing', 'track.*every.*daily.*puzzle']
-        },
+        // NOTE: Landing page removed as separate app (v8.4.0)
+        // Landing page now lives at root of gameshelf repo (/) 
+        // Deploy landing page manually to gameshelf repo root
         
         // ===== INTERNAL TOOLS (Prod only) =====
         testplan: {
@@ -1643,7 +1633,7 @@
         const pendingAutoClose = React.useRef(new Set());
         
         // Auto-close successful deployments after delay
-        // v8.3.8: Fixed - check both step status AND ensure deployment is truly done
+        // v8.4.0: Fixed - check both step status AND ensure deployment is truly done
         React.useEffect(() => {
             activeDeployments.forEach(deployment => {
                 // Check if deployment is truly complete:
@@ -2761,7 +2751,7 @@
             setActiveDeployment(deployment);
             setDeployments(prev => [deployment, ...prev]);
             
-            // v8.3.8: Set deploying indicator using appId:target key to avoid shared repo conflicts
+            // v8.4.0: Set deploying indicator using appId:target key to avoid shared repo conflicts
             const deployKey = `${appId}:${target}`;
             setDeployingRepos(prev => ({ ...prev, [deployKey]: { version: newVersion, startTime: Date.now(), repo } }));
             
@@ -2904,7 +2894,7 @@
                 // Refresh will happen on next manual refresh or page load
                 // setTimeout(() => refreshAllVersions(), 500); // DISABLED - causes version revert due to GitHub caching
                 
-                // v8.3.8: For GitHub Actions deploys (Firebase Functions), monitor workflow instead of live site
+                // v8.4.0: For GitHub Actions deploys (Firebase Functions), monitor workflow instead of live site
                 if (app.deployType === 'github-actions') {
                     addStep('GitHub Actions', 'running', 'Finding workflow...');
                     // Use preCommitTime captured before the commit, with extra buffer
@@ -3366,7 +3356,7 @@
                                 <Icons.GameShelfLogo size={32} />
                                 <div>
                                     <h1 className="text-lg font-bold">Command Center</h1>
-                                    <div className="text-xs text-slate-400">v8.3.8 • GitHub Actions workflow monitoring</div>
+                                    <div className="text-xs text-slate-400">v8.4.0 • GitHub Actions workflow monitoring</div>
                                 </div>
                             </div>
                             <div className="flex items-center gap-1">
@@ -6380,6 +6370,7 @@
                 folders: ['icons']
             },
             gameshelf: {
+                // v8.4.0: PWA now in /app/, landing at root
                 required: ['index.html', 'sw.js', 'manifest.json', 'manifest-test.json'],
                 optional: ['RELEASE_NOTES.txt', 'CNAME'],
                 folders: ['icons', 'icons-test', 'quotle', 'slate', 'rungs', 'wordboxing', 'beta']
@@ -6393,8 +6384,9 @@
         
         // Define which repos are consolidated (should contain subfolders)
         const CONSOLIDATED_REPOS = {
-            'gameshelf': ['quotle', 'slate', 'rungs', 'wordboxing', 'beta'],
-            'gameshelftest': ['quotle', 'slate', 'rungs', 'wordboxing']
+            // v8.4.0: Added 'app' for PWA location
+            'gameshelf': ['app', 'quotle', 'slate', 'rungs', 'wordboxing', 'beta'],
+            'gameshelftest': ['app', 'quotle', 'slate', 'rungs', 'wordboxing']
         };
         
         // Define legacy repos that may no longer be needed
@@ -6405,6 +6397,8 @@
             /^rungs$/i, /^rungstest$/i,
             /^wordboxing$/i, /^wordboxingtest$/i,
             /^word-boxing$/i,
+            // Landing page repos (now at gameshelf root) - v8.4.0
+            /^game-shelf-landing$/i, /^game-shelf-landing-test$/i,
             // Old naming patterns
             /^gameshelf-dev$/i, /^gameshelf-beta$/i,
             // Typos or experiments
@@ -7793,7 +7787,7 @@
         'rungs': 'rungs',
         'wordboxing': 'wordboxing',
         'beta': 'beta',
-        'landing': 'landing',
+        // 'landing' removed - now at gameshelf repo root (v8.4.0)
         'command-center': 'management',
         'testplan': 'testplan',
         'firebase-functions': 'firebase-functions'
