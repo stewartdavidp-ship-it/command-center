@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Game Shelf Command Center</title>
-    <meta name="version" content="8.3.2">
+    <meta name="version" content="8.3.5">
     <meta name="gs-app-id" content="management">
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -27,7 +27,7 @@
     <div id="root"><div style="display:flex;align-items:center;justify-content:center;min-height:100vh;"><div style="text-align:center;"><div style="margin-bottom:20px;"><svg viewBox="0 0 100 100" width="64" height="64" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="gsLoadGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#667eea"/><stop offset="100%" style="stop-color:#764ba2"/></linearGradient></defs><rect x="5" y="5" width="90" height="90" rx="20" fill="url(#gsLoadGrad)"/><g transform="rotate(-12, 35, 50)"><rect x="15" y="28" width="28" height="36" rx="4" fill="white"/><circle cx="43" cy="46" r="6" fill="white"/><text x="29" y="54" font-family="Arial" font-size="20" font-weight="bold" fill="#667eea" text-anchor="middle">G</text></g><g transform="rotate(12, 65, 50)"><rect x="57" y="28" width="28" height="36" rx="4" fill="rgba(255,255,255,0.9)"/><circle cx="57" cy="46" r="6" fill="url(#gsLoadGrad)"/><text x="71" y="54" font-family="Arial" font-size="20" font-weight="bold" fill="#764ba2" text-anchor="middle">S</text></g></svg></div>Loading...</div></div></div>
 
     <script type="text/babel">
-    console.log('Command Center v8.3.2 starting...');
+    console.log('Command Center v8.3.4 starting...');
     
     // =========================================================================
     // FIREBASE CONFIG
@@ -232,7 +232,7 @@
             );
         }
         
-        // Fix const VERSION = 'x.x.x' (but not GAMESHELF_VERSION)
+        // Fix const VERSION = '8.3.5' (but not GAMESHELF_VERSION)
         fixed = fixed.replace(
             /(const\s+VERSION\s*=\s*['"])[^'"]*(['"])/g,
             `$1${targetVersion}$2`
@@ -298,7 +298,7 @@
         icons: { dev: '🛠️', test: '🧪', prod: '🚀', beta: '🔬' }
     };
     
-    // App type categories (v8.3.2)
+    // App type categories (v8.3.3)
     const APP_TYPES = {
         public: { label: 'Public Apps', description: 'User-facing apps with Test → Prod workflow', collapsed: false },
         internal: { label: 'Internal Tools', description: 'Prod only - no test environment', collapsed: false },
@@ -629,14 +629,14 @@
                     id: app.id,
                     name: app.name,
                     icon: app.icon,
-                    appType: app.appType || 'public',  // v8.3.2: App category
+                    appType: app.appType || 'public',  // v8.3.3: App category
                     targetPath: app.targetPath,
                     subPath: app.subPath || '',
                     swPath: app.swPath,
                     hasServiceWorker: app.hasServiceWorker,
                     repoPatterns: app.repoPatterns,
                     detectionPatterns: app.detectionPatterns,
-                    deployType: app.deployType || null,  // v8.3.2: For GitHub Actions deploys
+                    deployType: app.deployType || null,  // v8.3.3: For GitHub Actions deploys
                     // Legacy format fields
                     testRepo: app.repos?.test || '',
                     prodRepo: app.repos?.prod || '',
@@ -1482,14 +1482,14 @@
             try { return localStorage.getItem('cc_token') || ''; } catch { return ''; }
         });
         
-        // Token expiration tracking (v8.3.2)
+        // Token expiration tracking (v8.3.3)
         const tokenExpires = React.useMemo(() => {
             try { return localStorage.getItem('cc_token_expires') || ''; } catch { return ''; }
         }, [githubToken]);
         const daysUntilExpiry = tokenExpires ? Math.ceil((new Date(tokenExpires) - new Date()) / (1000 * 60 * 60 * 24)) : null;
         const tokenExpiryWarning = githubToken && daysUntilExpiry !== null && daysUntilExpiry <= 14;
         
-        // v8.3.2: File protocol detection for local file warning
+        // v8.3.3: File protocol detection for local file warning
         const isFileProtocol = window.location.protocol === 'file:';
         const [fileProtocolBannerDismissed, setFileProtocolBannerDismissed] = React.useState(() => {
             try { return sessionStorage.getItem('cc_file_banner_dismissed') === 'true'; } catch { return false; }
@@ -1543,19 +1543,37 @@
             setActiveDeployments(prev => prev.filter(d => d.id !== deploymentId));
         };
         
+        // Track deployments that need auto-close
+        const pendingAutoClose = React.useRef(new Set());
+        
         // Auto-close successful deployments after delay
-        const scheduleAutoClose = (deploymentId, delayMs = 4000) => {
-            setTimeout(() => {
-                setActiveDeployments(prev => {
-                    const deployment = prev.find(d => d.id === deploymentId);
-                    // Only auto-close if still success (not changed to error)
-                    if (deployment && deployment.status === 'success') {
-                        return prev.filter(d => d.id !== deploymentId);
-                    }
-                    return prev;
-                });
-            }, delayMs);
-        };
+        // v8.3.5: Fixed - check both step status AND ensure deployment is truly done
+        React.useEffect(() => {
+            activeDeployments.forEach(deployment => {
+                // Check if deployment is truly complete:
+                // 1. Status is 'success' or 'error' or 'failed'
+                // 2. No steps are still 'running'
+                // 3. All steps are either 'complete', 'error', or 'warning'
+                const hasRunningSteps = deployment.steps?.some(s => s.status === 'running');
+                const allStepsDone = deployment.steps?.every(s => 
+                    s.status === 'complete' || s.status === 'error' || s.status === 'warning'
+                );
+                const deploymentDone = deployment.status === 'success' || deployment.status === 'error' || deployment.status === 'failed';
+                const isFullyComplete = deploymentDone && !hasRunningSteps && (allStepsDone || !deployment.steps?.length);
+                
+                console.log(`[AutoClose] ${deployment.id}: status=${deployment.status}, hasRunning=${hasRunningSteps}, allDone=${allStepsDone}, fullyComplete=${isFullyComplete}`);
+                
+                if (isFullyComplete && !pendingAutoClose.current.has(deployment.id)) {
+                    console.log(`[AutoClose] Scheduling auto-close for ${deployment.id} in 4s`);
+                    pendingAutoClose.current.add(deployment.id);
+                    setTimeout(() => {
+                        console.log(`[AutoClose] Removing ${deployment.id}`);
+                        setActiveDeployments(prev => prev.filter(d => d.id !== deployment.id));
+                        pendingAutoClose.current.delete(deployment.id);
+                    }, 4000);
+                }
+            });
+        }, [activeDeployments]);
         
         // Compatibility: Create setActiveDeployment that updates/adds to array
         // This allows existing code to work while supporting multiple deployments
@@ -1569,14 +1587,7 @@
                 const existing = prev.find(d => d.id === deploymentOrNull.id);
                 if (existing) {
                     // Update existing
-                    const updated = prev.map(d => d.id === deploymentOrNull.id ? deploymentOrNull : d);
-                    
-                    // Schedule auto-close if just became success
-                    if (deploymentOrNull.status === 'success' && existing.status !== 'success') {
-                        scheduleAutoClose(deploymentOrNull.id);
-                    }
-                    
-                    return updated;
+                    return prev.map(d => d.id === deploymentOrNull.id ? deploymentOrNull : d);
                 } else {
                     // Add new
                     return [deploymentOrNull, ...prev];
@@ -1882,7 +1893,7 @@
                             console.log(`=== DEPLOYMENT COMPLETE! Version ${liveVersion} is live ===`);
                             onUpdate('complete', `v${liveVersion} is LIVE! (${elapsed}s)`);
                             
-                            // v8.3.2: Ensure indicator shows for at least 2 seconds
+                            // v8.3.3: Ensure indicator shows for at least 2 seconds
                             const minDisplayMs = 2000;
                             const elapsedMs = Date.now() - startTime;
                             const remainingMs = Math.max(0, minDisplayMs - elapsedMs);
@@ -2557,7 +2568,7 @@
             setActiveDeployment(deployment);
             setDeployments(prev => [deployment, ...prev]);
             
-            // v8.3.2: Set deploying indicator immediately when deploy starts
+            // v8.3.3: Set deploying indicator immediately when deploy starts
             setDeployingRepos(prev => ({ ...prev, [repo]: { version: newVersion, startTime: Date.now() } }));
             
             const addStep = (name, status, details = null) => {
@@ -2706,7 +2717,7 @@
                 addStep('Error', 'error', error.message);
                 console.error('Batch deployment failed:', error);
                 
-                // v8.3.2: Clear deploying indicator on failure
+                // v8.3.3: Clear deploying indicator on failure
                 setDeployingRepos(prev => {
                     const next = { ...prev };
                     delete next[repo];
@@ -3108,7 +3119,7 @@
                                 <Icons.GameShelfLogo size={32} />
                                 <div>
                                     <h1 className="text-lg font-bold">Command Center</h1>
-                                    <div className="text-xs text-slate-400">v8.3.2 • Local file warning banner</div>
+                                    <div className="text-xs text-slate-400">v8.3.5 • Local file warning banner</div>
                                 </div>
                             </div>
                             <div className="flex items-center gap-1">
@@ -3248,7 +3259,7 @@
                         </div>
                     )}
                     
-                    {/* v8.3.2: Local file protocol warning */}
+                    {/* v8.3.3: Local file protocol warning */}
                     {isFileProtocol && !fileProtocolBannerDismissed && (
                         <div className="mb-6 p-4 rounded-lg border bg-blue-900/30 border-blue-700 text-blue-200">
                             <div className="flex items-start justify-between gap-4">
@@ -4069,12 +4080,12 @@
         const [isDeploying, setIsDeploying] = React.useState(false);
         const [deployCompleted, setDeployCompleted] = React.useState(false);
         const [lastCompletedDeployId, setLastCompletedDeployId] = React.useState(null);
-        const [otherCollapsed, setOtherCollapsed] = React.useState(true); // v8.3.2: Collapse "Other" by default
+        const [otherCollapsed, setOtherCollapsed] = React.useState(true); // v8.3.3: Collapse "Other" by default
         
         // Compatibility: get first deployment for legacy code
         const activeDeployment = activeDeployments?.[0] || null;
         
-        // v8.3.2: Group apps by type
+        // v8.3.3: Group apps by type
         const configuredApps = Object.values(apps).filter(a => a.testRepo || a.prodRepo);
         const publicApps = configuredApps.filter(a => a.appType === 'public' || !a.appType);
         const internalApps = configuredApps.filter(a => a.appType === 'internal');
@@ -4130,7 +4141,7 @@
                 } else if (activeDeployment.status === 'success' || activeDeployment.status === 'failed' || activeDeployment.status === 'error') {
                     // Only stop spinner when deployment finishes (success or failure)
                     setIsDeploying(false);
-                    // v8.3.2: Only set deployCompleted if this is a NEW completed deployment
+                    // v8.3.3: Only set deployCompleted if this is a NEW completed deployment
                     if (activeDeployment.status === 'success' && activeDeployment.id !== lastCompletedDeployId) {
                         setDeployCompleted(true);
                         setLastCompletedDeployId(activeDeployment.id);
@@ -11202,7 +11213,7 @@ const pushIssueToCommandCenter = async (testResult) => {
         const [testing, setTesting] = React.useState(false);
         const [result, setResult] = React.useState(null);
         
-        // Token expiration tracking (v8.3.2)
+        // Token expiration tracking (v8.3.3)
         const [tokenExpires, setTokenExpires] = React.useState(() => {
             try { return localStorage.getItem('cc_token_expires') || ''; } catch { return ''; }
         });
