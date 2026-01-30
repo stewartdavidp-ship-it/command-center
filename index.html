@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Game Shelf Command Center</title>
-    <meta name="version" content="8.3.5">
+    <meta name="version" content="8.3.6">
     <meta name="gs-app-id" content="management">
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -232,7 +232,7 @@
             );
         }
         
-        // Fix const VERSION = '8.3.5' (but not GAMESHELF_VERSION)
+        // Fix const VERSION = '8.3.6' (but not GAMESHELF_VERSION)
         fixed = fixed.replace(
             /(const\s+VERSION\s*=\s*['"])[^'"]*(['"])/g,
             `$1${targetVersion}$2`
@@ -1547,7 +1547,7 @@
         const pendingAutoClose = React.useRef(new Set());
         
         // Auto-close successful deployments after delay
-        // v8.3.5: Fixed - check both step status AND ensure deployment is truly done
+        // v8.3.6: Fixed - check both step status AND ensure deployment is truly done
         React.useEffect(() => {
             activeDeployments.forEach(deployment => {
                 // Check if deployment is truly complete:
@@ -2119,6 +2119,51 @@
                             allPaths.filter(p => !p.endsWith('/')).every(p => p.includes('/'));
                         const rootFolder = hasRootFolder ? allPaths.find(p => !p.endsWith('/'))?.split('/')[0] + '/' : '';
                         
+                        // === PWA PACKAGE VALIDATION ===
+                        // Detect if this is a PWA deployment package (has -latest folder pattern)
+                        const latestFolderPattern = /^([a-z]+-latest)\//i;
+                        const expectedLatestFolders = ['gameshelf-latest', 'quotle-latest', 'slate-latest', 'rungs-latest', 'wordboxing-latest'];
+                        
+                        // Check for nested folder issue (extra parent folder wrapping the -latest folder)
+                        const pathsAfterRoot = allPaths.map(p => rootFolder && p.startsWith(rootFolder) ? p.substring(rootFolder.length) : p);
+                        const hasLatestFolder = pathsAfterRoot.some(p => expectedLatestFolders.some(f => p.startsWith(f + '/')));
+                        const hasNestedLatest = allPaths.some(p => {
+                            const parts = p.split('/').filter(Boolean);
+                            // Check if there's a -latest folder that's NOT at the root level after stripping rootFolder
+                            return parts.length >= 3 && expectedLatestFolders.includes(parts[1]);
+                        });
+                        
+                        // Find index.html to check structure
+                        const indexPath = allPaths.find(p => p.endsWith('index.html'));
+                        const indexDepth = indexPath ? indexPath.split('/').filter(Boolean).length : 0;
+                        
+                        // Validate PWA package structure
+                        if (hasLatestFolder || hasNestedLatest || (rootFolder && indexDepth > 2)) {
+                            // This looks like a PWA package - validate structure
+                            const expectedPaths = pathsAfterRoot.filter(p => !p.endsWith('/'));
+                            const hasIndexAtRoot = expectedPaths.some(p => p === 'index.html' || p.match(/^[a-z]+-latest\/index\.html$/i));
+                            const hasNestedIndex = expectedPaths.some(p => {
+                                const parts = p.split('/').filter(Boolean);
+                                return parts.length > 2 && parts[parts.length - 1] === 'index.html';
+                            });
+                            
+                            if (hasNestedIndex && !hasIndexAtRoot) {
+                                // Structure is wrong - extra parent folder
+                                const actualPath = indexPath;
+                                const expectedPath = actualPath.split('/').slice(-2).join('/'); // e.g., gameshelf-latest/index.html
+                                
+                                await showAlert(
+                                    `⚠️ ZIP has incorrect folder structure!\n\n` +
+                                    `Found: ${actualPath}\n` +
+                                    `Expected: ${expectedPath}\n\n` +
+                                    `The ZIP has an extra parent folder wrapping the content.\n\n` +
+                                    `To fix: Re-create the ZIP so the -latest folder is at the root level, not inside another folder.`,
+                                    '📦 Invalid Package Structure'
+                                );
+                                return;
+                            }
+                        }
+                        
                         const extractPromises = [];
                         zip.forEach((relativePath, zipEntry) => {
                             if (zipEntry.dir || relativePath.startsWith('.') || relativePath.includes('__MACOSX')) return;
@@ -2194,6 +2239,54 @@
                         await Promise.all(extractPromises);
                         console.log('=== ZIP EXTRACTED ===');
                         console.log('Primary app:', primaryApp, 'v' + primaryVersion);
+                        
+                        // === POST-EXTRACTION VALIDATION FOR PWA PACKAGES ===
+                        // Check for version mismatches between index.html and sw.js
+                        setStagedFiles(currentFiles => {
+                            const htmlFiles = currentFiles.filter(f => f.name === 'index.html' && f.version);
+                            const swFiles = currentFiles.filter(f => f.name === 'sw.js' && f.version);
+                            
+                            if (htmlFiles.length > 0 && swFiles.length > 0) {
+                                const htmlVersion = htmlFiles[0].version;
+                                const swVersion = swFiles[0].version;
+                                
+                                if (htmlVersion !== swVersion) {
+                                    // Don't block, but show warning
+                                    showAlert(
+                                        `⚠️ Version mismatch detected!\n\n` +
+                                        `index.html: v${htmlVersion}\n` +
+                                        `sw.js: v${swVersion}\n\n` +
+                                        `These should match for PWA apps. Users may get cached old versions.`,
+                                        '🔄 Version Mismatch'
+                                    );
+                                }
+                            }
+                            
+                            // Check if we got the expected files for a PWA package
+                            if (primaryApp && (primaryApp === 'gameshelf' || htmlFiles.length > 0)) {
+                                const hasIndex = currentFiles.some(f => f.name === 'index.html');
+                                const hasSw = currentFiles.some(f => f.name === 'sw.js');
+                                const hasManifest = currentFiles.some(f => f.name === 'manifest.json');
+                                const hasIcons = currentFiles.some(f => f.targetPath?.startsWith('icons/'));
+                                
+                                const missing = [];
+                                if (!hasIndex) missing.push('index.html');
+                                if (!hasSw) missing.push('sw.js');
+                                if (!hasManifest) missing.push('manifest.json');
+                                if (!hasIcons) missing.push('icons/');
+                                
+                                if (missing.length > 0) {
+                                    showAlert(
+                                        `⚠️ PWA package may be incomplete!\n\n` +
+                                        `Missing: ${missing.join(', ')}\n\n` +
+                                        `PWA apps need all these files to update correctly on user devices.`,
+                                        '📦 Incomplete Package'
+                                    );
+                                }
+                            }
+                            
+                            return currentFiles; // Don't modify, just validate
+                        });
                         
                     } catch (err) {
                         console.error('ZIP extraction failed:', err);
@@ -3119,7 +3212,7 @@
                                 <Icons.GameShelfLogo size={32} />
                                 <div>
                                     <h1 className="text-lg font-bold">Command Center</h1>
-                                    <div className="text-xs text-slate-400">v8.3.5 • Local file warning banner</div>
+                                    <div className="text-xs text-slate-400">v8.3.6 • Local file warning banner</div>
                                 </div>
                             </div>
                             <div className="flex items-center gap-1">
