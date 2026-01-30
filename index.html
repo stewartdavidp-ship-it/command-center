@@ -319,7 +319,7 @@
                 test: ['gameshelftest', 'gameshelf-test'],
                 prod: ['gameshelf']
             },
-            detectionPatterns: ['<title>game\\s*shelf', 'gameshelfdata', 'game.shelf.pwa', '#setup-welcome']
+            detectionPatterns: ['gameshelfdata', 'game.shelf.pwa', '#setup-welcome', 'APP_VERSION']
         },
         beta: {
             id: 'beta', name: 'Beta Hub', icon: '🚀',
@@ -386,9 +386,19 @@
             },
             detectionPatterns: ['<title>word\\s*boxing', 'word-boxing', 'boxing-ring']
         },
-        // NOTE: Landing page removed as separate app (v8.4.0)
-        // Landing page now lives at root of gameshelf repo (/) 
-        // Deploy landing page manually to gameshelf repo root
+        landing: {
+            id: 'landing', name: 'Landing Page', icon: '📣',
+            appType: 'public',
+            targetPath: 'index.html', swPath: '', hasServiceWorker: false,
+            subPath: '',  // Root of gameshelf repo
+            repos: { test: '', prod: '' },
+            versions: { test: '', prod: '' },
+            repoPatterns: {
+                test: ['gameshelftest'],
+                prod: ['gameshelf']
+            },
+            detectionPatterns: ['Track Every Daily Puzzle', 'track.*every.*daily.*puzzle', 'Join the Beta', 'cta-button']
+        },
         
         // ===== INTERNAL TOOLS (Prod only) =====
         testplan: {
@@ -816,12 +826,21 @@
                 ]
             },
             {
+                id: 'landing',
+                patterns: [
+                    /track\s*every\s*daily\s*puzzle/i,
+                    /join\s*the\s*beta/i,
+                    /cta-button/i,
+                    /<h1[^>]*>GAME\s*SHELF<\/h1>/i
+                ]
+            },
+            {
                 id: 'gameshelf',
                 patterns: [
-                    /<title>game\s*shelf/i,
                     /gameshelfdata/i,
                     /game\.shelf\.pwa/i,
-                    /#setup-welcome/i
+                    /#setup-welcome/i,
+                    /APP_VERSION\s*=/i
                 ]
             },
             {
@@ -2353,7 +2372,11 @@
                             }
                             
                             // Check if we got the expected files for a PWA package
-                            if (primaryApp && (primaryApp === 'gameshelf' || htmlFiles.length > 0)) {
+                            // Only check for PWA files if the app actually has a service worker
+                            const appConfig = primaryApp ? DEFAULT_APP_DEFINITIONS[primaryApp] : null;
+                            const isPWA = appConfig?.hasServiceWorker === true;
+                            
+                            if (isPWA && primaryApp && htmlFiles.length > 0) {
                                 const hasIndex = currentFiles.some(f => f.name === 'index.html');
                                 const hasSw = currentFiles.some(f => f.name === 'sw.js');
                                 const hasManifest = currentFiles.some(f => f.name === 'manifest.json');
@@ -7787,7 +7810,7 @@
         'rungs': 'rungs',
         'wordboxing': 'wordboxing',
         'beta': 'beta',
-        // 'landing' removed - now at gameshelf repo root (v8.4.0)
+        'landing': 'landing',
         'command-center': 'management',
         'testplan': 'testplan',
         'firebase-functions': 'firebase-functions'
