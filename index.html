@@ -2706,7 +2706,14 @@
             if (files.length === 0) return;
             
             const app = apps[appId];
-            const repo = target === 'prod' ? app.prodRepo : app.testRepo;
+            // Ensure subPath is set from defaults (localStorage may have empty string from old config)
+            // Use || instead of ?? to treat empty string as falsy and fall back to default
+            const appWithDefaults = {
+                ...DEFAULT_APP_DEFINITIONS[appId],
+                ...app,
+                subPath: app.subPath || DEFAULT_APP_DEFINITIONS[appId]?.subPath || ''
+            };
+            const repo = target === 'prod' ? appWithDefaults.prodRepo : appWithDefaults.testRepo;
             if (!repo) {
                 await showAlert(`Configure ${target} repo first`, 'Configuration Required');
                 return;
@@ -2758,14 +2765,15 @@
                 validationOk: f.versionValidation?.isValid,
                 contentLength: f.content?.length
             })));
+            console.log('App subPath:', appWithDefaults.subPath);
             
             // 📸 Save rollback snapshot BEFORE deploying
-            const fullTargetPath = getRepoFilePath(app, app.targetPath);
+            const fullTargetPath = getRepoFilePath(appWithDefaults, appWithDefaults.targetPath);
             await saveRollbackSnapshot(appId, target, repo, fullTargetPath);
             
             const deployment = {
                 id: Date.now(), status: 'running', steps: [],
-                appId, appName: app.name, repo, target,
+                appId, appName: appWithDefaults.name, repo, target,
                 version: newVersion,
                 startedAt: new Date().toISOString(),
                 fileCount: files.length
@@ -2795,10 +2803,11 @@
                 addStep('Creating commit', 'running');
                 // Prepend subPath to all file paths if needed
                 const filesToCommit = files.map(f => ({
-                    path: getRepoFilePath(app, f.targetPath || f.name),
+                    path: getRepoFilePath(appWithDefaults, f.targetPath || f.name),
                     content: f.content,
                     encoding: f.encoding
                 }));
+                console.log('Files to commit with paths:', filesToCommit.map(f => f.path));
                 
                 let result;
                 // Use simple Contents API for single files (more reliable than Git Data API)
@@ -2837,7 +2846,7 @@
                         repo,
                         file.path,
                         contentToSend,
-                        `Deploy ${app.name} ${formatVersion(newVersion)} (${files.length} files)`,
+                        `Deploy ${appWithDefaults.name} ${formatVersion(newVersion)} (${files.length} files)`,
                         existingSha
                     );
                     result.sha = result.commit.sha;
@@ -2849,14 +2858,14 @@
                     result = await github.batchCommit(
                         repo,
                         filesToCommit,
-                        `Deploy ${app.name} ${formatVersion(newVersion)} (${files.length} files)`
+                        `Deploy ${appWithDefaults.name} ${formatVersion(newVersion)} (${files.length} files)`
                     );
                 }
                 deployment.commitSha = result.sha;
                 addStep('Creating commit', 'complete', result.sha.substring(0, 7));
                 
                 // Skip GitHub Pages for GitHub Actions deploys (Firebase Functions doesn't use Pages)
-                if (app.deployType !== 'github-actions') {
+                if (appWithDefaults.deployType !== 'github-actions') {
                     addStep('GitHub Pages', 'running');
                     try {
                         await github.enablePages(repo);
@@ -2878,10 +2887,10 @@
                 }
                 
                 // For GitHub Actions deploys, don't set success yet - wait for workflow
-                if (app.deployType !== 'github-actions') {
+                if (appWithDefaults.deployType !== 'github-actions') {
                     deployment.status = 'success';
                 }
-                deployment.url = getGitHubPagesUrl(repo, app.subPath);
+                deployment.url = getGitHubPagesUrl(repo, appWithDefaults.subPath);
                 
                 // Verify the deployment by fetching back from repo
                 console.log('=== VERIFYING DEPLOYMENT ===');
@@ -3619,7 +3628,7 @@
                         />
                     )}
                     
-                    {view === 'apps' && <AppsView apps={apps} repos={availableRepos} onUpdate={updateApp} />}
+                    {view === 'apps' && <AppsView apps={apps} repos={availableRepos} onUpdate={updateApp} github={github} />}
                     
                     {view === 'history' && (
                         <HistoryView 
@@ -7704,7 +7713,43 @@
     // APPS VIEW
     // =========================================================================
     
-    function AppsView({ apps, repos, onUpdate }) {
+    function AppsView({ apps, repos, onUpdate, github }) {
+        const [repoDirectories, setRepoDirectories] = React.useState({});
+        const [loadingDirs, setLoadingDirs] = React.useState({});
+        
+        // Fetch directories for a repo
+        const fetchDirectories = async (repoFullName) => {
+            if (!github || !repoFullName || repoDirectories[repoFullName]) return;
+            
+            setLoadingDirs(prev => ({ ...prev, [repoFullName]: true }));
+            try {
+                const contents = await github.listRepoContents(repoFullName, '');
+                const dirs = contents
+                    .filter(item => item.type === 'dir')
+                    .map(item => item.name)
+                    .sort();
+                setRepoDirectories(prev => ({ ...prev, [repoFullName]: dirs }));
+            } catch (e) {
+                console.error('Failed to fetch directories for', repoFullName, e);
+                setRepoDirectories(prev => ({ ...prev, [repoFullName]: [] }));
+            }
+            setLoadingDirs(prev => ({ ...prev, [repoFullName]: false }));
+        };
+        
+        // Fetch directories when prod repo changes
+        React.useEffect(() => {
+            Object.values(apps).forEach(app => {
+                if (app.prodRepo && !repoDirectories[app.prodRepo]) {
+                    fetchDirectories(app.prodRepo);
+                }
+            });
+        }, [apps, github]);
+        
+        // Get directories for a given app's prod repo
+        const getDirsForApp = (app) => {
+            return repoDirectories[app.prodRepo] || [];
+        };
+        
         return (
             <div className="space-y-6">
                 <h2 className="text-xl font-bold">App Configuration</h2>
@@ -7726,10 +7771,24 @@
                                 </div>
                                 <div>
                                     <label className="text-xs text-green-400">🚀 PROD</label>
-                                    <select value={app.prodRepo || ''} onChange={e => onUpdate(app.id, { prodRepo: e.target.value })}
+                                    <select value={app.prodRepo || ''} onChange={e => {
+                                        onUpdate(app.id, { prodRepo: e.target.value });
+                                        if (e.target.value) fetchDirectories(e.target.value);
+                                    }}
                                         className="w-full p-1.5 bg-slate-700 border border-slate-600 rounded text-sm">
                                         <option value="">Select...</option>
                                         {repos.map(r => <option key={r.fullName} value={r.fullName}>{r.name}</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-xs text-slate-400">Sub Path</label>
+                                    <select value={app.subPath || ''} onChange={e => onUpdate(app.id, { subPath: e.target.value })}
+                                        className="w-full p-1.5 bg-slate-700 border border-slate-600 rounded text-sm font-mono">
+                                        <option value="">(root)</option>
+                                        {loadingDirs[app.prodRepo] && <option disabled>Loading...</option>}
+                                        {getDirsForApp(app).map(dir => (
+                                            <option key={dir} value={dir}>{dir}/</option>
+                                        ))}
                                     </select>
                                 </div>
                                 <div>
