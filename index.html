@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Game Shelf Command Center</title>
-    <meta name="version" content="8.7.3">
+    <meta name="version" content="8.7.4">
     <meta name="gs-app-id" content="management">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -28,7 +28,7 @@
     <div id="root"><div style="display:flex;align-items:center;justify-content:center;min-height:100vh;"><div style="text-align:center;"><div style="margin-bottom:20px;"><svg viewBox="0 0 100 100" width="64" height="64" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="gsLoadGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#667eea"/><stop offset="100%" style="stop-color:#764ba2"/></linearGradient></defs><rect x="5" y="5" width="90" height="90" rx="20" fill="url(#gsLoadGrad)"/><g transform="rotate(-12, 35, 50)"><rect x="15" y="28" width="28" height="36" rx="4" fill="white"/><circle cx="43" cy="46" r="6" fill="white"/><text x="29" y="54" font-family="Arial" font-size="20" font-weight="bold" fill="#667eea" text-anchor="middle">G</text></g><g transform="rotate(12, 65, 50)"><rect x="57" y="28" width="28" height="36" rx="4" fill="rgba(255,255,255,0.9)"/><circle cx="57" cy="46" r="6" fill="url(#gsLoadGrad)"/><text x="71" y="54" font-family="Arial" font-size="20" font-weight="bold" fill="#764ba2" text-anchor="middle">S</text></g></svg></div>Loading...</div></div></div>
 
     <script type="text/babel">
-    console.log('Command Center v8.7.3 starting...');
+    console.log('Command Center v8.7.4 starting...');
     
     // =========================================================================
     // FIREBASE CONFIG
@@ -261,6 +261,18 @@
         // Fix const VERSION = 'x.x.x' (but not GAMESHELF_VERSION)
         fixed = fixed.replace(
             /(const\s+VERSION\s*=\s*['"])[^'"]*(['"])/g,
+            `$1${targetVersion}$2`
+        );
+        
+        // Fix CACHE_VERSION = 'vx.x.x' in service workers (with or without 'v' prefix)
+        fixed = fixed.replace(
+            /(CACHE_VERSION\s*=\s*['"])v?[^'"]*(['"])/g,
+            `$1v${targetVersion}$2`
+        );
+        
+        // Fix console.log version strings like "App v1.0.0 starting" or "Command Center v8.7.4"
+        fixed = fixed.replace(
+            /(console\.log\(['"][^'"]*\s+v)\d+\.\d+\.\d+(\s+[^'"]*['"])/g,
             `$1${targetVersion}$2`
         );
         
@@ -3625,7 +3637,7 @@
                                 <Icons.GameShelfLogo size={32} />
                                 <div>
                                     <h1 className="text-lg font-bold">Command Center</h1>
-                                    <div className="text-xs text-slate-400">v8.7.3 • Deploy & manage apps</div>
+                                    <div className="text-xs text-slate-400">v8.7.4 • Deploy & manage apps</div>
                                 </div>
                             </div>
                             <div className="flex items-center gap-1">
@@ -5658,7 +5670,9 @@
             setDownloadingPackage(true);
             try {
                 // Get app info for naming and subPath
-                const app = configuredApps.find(a => a.testRepo === selectedRepo || a.prodRepo === selectedRepo);
+                // v8.7.4: When multiple apps share a repo, prefer ones with subPath (more specific)
+                const matchingApps = configuredApps.filter(a => a.testRepo === selectedRepo || a.prodRepo === selectedRepo);
+                const app = matchingApps.find(a => a.subPath) || matchingApps[0];
                 const repoName = selectedRepo.split('/')[1];
                 const subPath = app?.subPath || '';
                 
@@ -5681,7 +5695,7 @@
                 ];
                 
                 // Check if a file should be included in deploy package
-                // v8.7.3: Handle subPath - strip it from path before checking
+                // v8.7.4: Handle subPath - strip it from path before checking
                 const shouldInclude = (fullPath) => {
                     // Remove subPath prefix if present to get relative path
                     let path = fullPath;
@@ -5696,7 +5710,7 @@
                     return false;
                 };
                 
-                // Fetch repo contents - v8.7.3: Start from subPath if set
+                // Fetch repo contents - v8.7.4: Start from subPath if set
                 const fetchAllFiles = async (path = subPath) => {
                     const contents = await github.listRepoContents(selectedRepo, path);
                     let files = [];
@@ -5786,8 +5800,10 @@
             setVersionAudit({ loading: true });
             
             try {
-                // v8.7.3: Get app's subPath to find correct index.html
-                const app = configuredApps.find(a => a.testRepo === selectedRepo || a.prodRepo === selectedRepo);
+                // v8.7.4: Get app's subPath to find correct index.html
+                // When multiple apps share a repo, prefer ones with subPath (more specific)
+                const matchingApps = configuredApps.filter(a => a.testRepo === selectedRepo || a.prodRepo === selectedRepo);
+                const app = matchingApps.find(a => a.subPath) || matchingApps[0];
                 const indexPath = app?.subPath ? `${app.subPath}/index.html` : 'index.html';
                 
                 const fileData = await github.getFileContent(selectedRepo, indexPath);
@@ -11673,14 +11689,17 @@ const pushIssueToCommandCenter = async (testResult) => {
         const [briefingText, setBriefingText] = React.useState('');
         
         // Get deployed versions for all apps
-        // v8.7.3: Use subPath to find correct index.html location
+        // v8.7.4: Use subPath to find correct index.html location
+        // v8.7.4: Added fallback to DEFAULT_APP_DEFINITIONS if localStorage subPath is empty
         const getDeployedVersions = async () => {
             if (!github) return {};
             const versions = {};
             
             for (const [appId, app] of Object.entries(apps)) {
                 versions[appId] = { test: null, prod: null };
-                const indexPath = app.subPath ? `${app.subPath}/index.html` : 'index.html';
+                // Use effectiveSubPath with fallback to defaults (localStorage may have empty string)
+                const effectiveSubPath = app.subPath || DEFAULT_APP_DEFINITIONS[appId]?.subPath || '';
+                const indexPath = effectiveSubPath ? `${effectiveSubPath}/index.html` : 'index.html';
                 
                 if (app.testRepo) {
                     try {
