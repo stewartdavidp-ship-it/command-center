@@ -62,20 +62,50 @@ Single-file React application (~15,200 lines) that manages web app deployments v
        │                     │                     │
        ▼                     ▼                     ▼
 ┌──────────────────────────────────────────────────────────────┐
-│            CommandCenter (root)                               │
+│            App (root)                                        │
 │  - githubToken, github (API instance)                        │
-│  - apps, config, view                                        │
+│  - apps, config, view, syncStatus                            │
 │  - stagedFiles, deployments                                  │
 │  - showAlert, showConfirm, showPrompt                        │
 └──────────────────┬───────────────────────────────────────────┘
-                   │ props
-        ┌──────────┼──────────┐
-        ▼          ▼          ▼
-   Dashboard   Projects   Settings
-        │          │          │
-        ▼          ▼          ▼
-   GitHub API  GitHub API  FirebaseAdmin
-   (deploy)    (repos)     (SA token mgmt)
+                   │ props           ▲ dual-write
+        ┌──────────┼──────────┐      │
+        ▼          ▼          ▼      ▼
+   Dashboard   Projects   Settings  FirebaseConfigSync
+        │          │          │      │
+        ▼          ▼          ▼      ▼
+   GitHub API  GitHub API  FirebaseAdmin  Firebase RTDB
+   (deploy)    (repos)     (SA token)     (command-center/)
+```
+
+### Firebase Config Sync Flow (v8.17.0)
+
+```
+┌─ Startup ──────────────────────────────────────────┐
+│  1. Load localStorage (instant, synchronous)        │
+│  2. Render UI immediately with local data           │
+│  3. Async: FirebaseConfigSync.pullAll()             │
+│     ├── Firebase has newer data → overlay into state │
+│     ├── Firebase is empty → seed with local data     │
+│     └── Firebase unreachable → stay offline          │
+│  4. Set syncStatus: synced | offline | error        │
+└────────────────────────────────────────────────────┘
+
+┌─ On Every Save ────────────────────────────────────┐
+│  1. Write to localStorage (synchronous, immediate)  │
+│  2. Fire-and-forget: push to Firebase RTDB          │
+│     └── Failure logged but doesn't block UI         │
+└────────────────────────────────────────────────────┘
+
+┌─ Data Classification ──────────────────────────────┐
+│  SYNCED (Firebase + localStorage):                  │
+│    config, deploy-history, rules-history,           │
+│    session-log, deletion-history, rollback-snapshots│
+│                                                     │
+│  LOCAL ONLY (sensitive/device-specific):            │
+│    cc_token, cc_firebase_sa, cc_api_key,            │
+│    cc_firebase_uid, cc_collapsedProjects            │
+└────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -105,6 +135,24 @@ Line numbers are approximate and shift with edits. Use search patterns to locate
 | `getLogs()` | Cloud Logging v2 entries:list API |
 | `testConnection()` | 3-point validation |
 | `const firebaseAdmin` | Global singleton instance |
+
+### Firebase Config Sync (~lines 380–660) — v8.17.0, enhanced v8.18.0
+| Pattern | Purpose |
+|---------|---------|
+| `FirebaseConfigSync` | Sync object — manages RTDB read/write for CC config |
+| `push(dataKey, data)` | Write a data set to Firebase (immediate) |
+| `pushDebounced(dataKey, data)` | Write with 2-second debounce (v8.18.0) |
+| `pushSmart(dataKey, data)` | Auto-route: debounce for rapid-fire keys, immediate for others (v8.18.0) |
+| `pull(dataKey)` | Read a data set from Firebase (one-time) |
+| `pullAll()` | Fetch all synced data sets for startup overlay |
+| `pushAll(data)` | Write all data sets (initial seed or manual sync) |
+| `clearAll()` | Remove all CC data from Firebase (v8.18.0) |
+| `getDataSize()` | Measure approximate data size per key (v8.18.0) |
+| `isNewer(firebaseData, localTs)` | Compare timestamps for overlay decision |
+| `onStatusChange(callback)` | Subscribe to sync status changes |
+| `DATA_KEYS` | Mapping: Firebase path key → localStorage key |
+| `DEBOUNCE_KEYS` | Set of keys that get debounced writes (v8.18.0) |
+| `BASE_PATH` | Firebase root: `'command-center'` |
 
 #### API Response Shapes (for Phase 2-3 consumers)
 
