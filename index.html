@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Command Center</title>
-    <meta name="version" content="8.15.6">
+    <meta name="version" content="8.16.7">
     <meta name="gs-app-id" content="command-center">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -28,7 +28,7 @@
     <div id="root"><div style="display:flex;align-items:center;justify-content:center;min-height:100vh;"><div style="text-align:center;"><div style="margin-bottom:20px;"><svg viewBox="0 0 100 100" width="64" height="64" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="gsLoadGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#667eea"/><stop offset="100%" style="stop-color:#764ba2"/></linearGradient></defs><rect x="5" y="5" width="90" height="90" rx="20" fill="url(#gsLoadGrad)"/><g transform="rotate(-12, 35, 50)"><rect x="15" y="28" width="28" height="36" rx="4" fill="white"/><circle cx="43" cy="46" r="6" fill="white"/><text x="29" y="54" font-family="Arial" font-size="20" font-weight="bold" fill="#667eea" text-anchor="middle">G</text></g><g transform="rotate(12, 65, 50)"><rect x="57" y="28" width="28" height="36" rx="4" fill="rgba(255,255,255,0.9)"/><circle cx="57" cy="46" r="6" fill="url(#gsLoadGrad)"/><text x="71" y="54" font-family="Arial" font-size="20" font-weight="bold" fill="#764ba2" text-anchor="middle">S</text></g></svg></div>Loading...</div></div></div>
 
     <script type="text/babel">
-    console.log('Command Center v8.15.0 starting...');
+    console.log('Command Center v8.16.0 starting...');
     
     // =========================================================================
     // FIREBASE CONFIG
@@ -2265,6 +2265,7 @@
     
     function App() {
         const [view, setView] = React.useState('dashboard');
+        const [cleanupInitialTab, setCleanupInitialTab] = React.useState(null);
         const [pendingGsActiveFile, setPendingGsActiveFile] = React.useState(null); // For passing gs-active zip to Smart Deploy
         const [githubToken, setGithubToken] = React.useState(() => {
             try { return localStorage.getItem('cc_token') || ''; } catch { return ''; }
@@ -2315,6 +2316,7 @@
         });
         const [activeDeployments, setActiveDeployments] = React.useState([]);
         const [availableRepos, setAvailableRepos] = React.useState([]);
+        const [repoHealthAlert, setRepoHealthAlert] = React.useState(null); // { issues: [{app, repo, target, unexpectedFiles}] }
         
         // Helper functions for managing multiple deployments
         const addActiveDeployment = (deployment) => {
@@ -2593,12 +2595,14 @@
         // Global issues state (synced with Firebase)
         const [globalIssues, setGlobalIssues] = React.useState([]);
         const [firebaseUid, setFirebaseUid] = React.useState(null);
+        const [firebaseUser, setFirebaseUser] = React.useState(null);
         
         // Listen for Firebase auth and load issues
         React.useEffect(() => {
             if (!firebaseAuth) return;
             
             const unsubscribe = firebaseAuth.onAuthStateChanged((u) => {
+                setFirebaseUser(u);
                 if (u) {
                     setFirebaseUid(u.uid);
                     // Listen for issues changes
@@ -2844,6 +2848,98 @@
             
             setRefreshing(false);
             console.log('=== REFRESH COMPLETE ===');
+            
+            // Run daily repo health check
+            runRepoHealthCheck();
+        };
+        
+        // Lightweight repo health check — runs once per day
+        const runRepoHealthCheck = async () => {
+            if (!github) return;
+            
+            // Check last run time
+            const HEALTH_CHECK_KEY = 'cc_repo_health_last';
+            const lastRun = localStorage.getItem(HEALTH_CHECK_KEY);
+            const now = new Date();
+            if (lastRun) {
+                const lastDate = new Date(lastRun);
+                const hoursSince = (now - lastDate) / (1000 * 60 * 60);
+                if (hoursSince < 24) {
+                    console.log(`[HealthCheck] Skipping — last ran ${hoursSince.toFixed(1)}h ago`);
+                    return;
+                }
+            }
+            
+            console.log('[HealthCheck] Running daily repo health check...');
+            localStorage.setItem(HEALTH_CHECK_KEY, now.toISOString());
+            
+            const currentApps = appsRef.current;
+            const issues = [];
+            
+            // Only check apps deployed in the last 30 days
+            const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            let currentDeployments;
+            try { currentDeployments = JSON.parse(localStorage.getItem('cc_history_v2') || '[]'); } catch { currentDeployments = []; }
+            const recentlyDeployed = new Set(
+                currentDeployments
+                    .filter(d => d.status === 'success' && new Date(d.completedAt || d.startedAt) > thirtyDaysAgo)
+                    .map(d => d.appId)
+            );
+            
+            console.log(`[HealthCheck] Checking ${recentlyDeployed.size} recently deployed apps:`, Array.from(recentlyDeployed).join(', '));
+            
+            for (const [appId, app] of Object.entries(currentApps)) {
+                // Skip apps not deployed in last 30 days
+                if (!recentlyDeployed.has(appId)) continue;
+                
+                // Check both test and prod repos
+                const repos = [];
+                const testRepo = app.testRepo || app.repos?.test;
+                const prodRepo = app.prodRepo || app.repos?.prod;
+                if (testRepo) repos.push({ repo: testRepo, target: 'test' });
+                if (prodRepo) repos.push({ repo: prodRepo, target: 'prod' });
+                
+                for (const { repo, target } of repos) {
+                    try {
+                        const contents = await github.listRepoContents(repo, '');
+                        const subPath = app.subPath || '';
+                        
+                        // Build expected set
+                        const expected = new Set();
+                        const addExp = (f) => expected.add(subPath ? `${subPath}/${f}` : f);
+                        addExp(app.targetPath || 'index.html');
+                        if (app.hasServiceWorker) {
+                            addExp(app.swPath || 'sw.js');
+                            addExp('manifest.json');
+                        }
+                        // Standard files
+                        ['README.md', 'LICENSE', '.gitignore', 'CNAME', 'icons'].forEach(f => expected.add(f));
+                        // Doc files (root level)
+                        ['CONTEXT.md', 'PROJECT_PLAN.md', 'CHANGELOG.md', 'RELEASE_NOTES.txt', 'ARCHITECTURE.md', 'CLAUDE-PREP-STANDARD.md', 'DATA_MODEL.md'].forEach(f => expected.add(f));
+                        // .github dir
+                        expected.add('.github');
+                        
+                        const unexpected = contents.filter(item => !expected.has(item.name));
+                        
+                        if (unexpected.length > 0) {
+                            issues.push({
+                                appId, appName: app.name, appIcon: app.icon,
+                                repo, target,
+                                unexpectedFiles: unexpected.map(f => ({ name: f.name, type: f.type }))
+                            });
+                        }
+                    } catch (e) {
+                        // Skip repos we can't access
+                    }
+                }
+            }
+            
+            if (issues.length > 0) {
+                console.log(`[HealthCheck] Found ${issues.length} repos with unexpected files`);
+                setRepoHealthAlert({ issues });
+            } else {
+                console.log('[HealthCheck] All repos clean');
+            }
         };
         
         // Load repo files
@@ -4380,6 +4476,36 @@
                                 <span className="text-slate-500">
                                     {availableRepos.length} repos
                                 </span>
+                                
+                                {/* Google Auth */}
+                                {firebaseAuth && (
+                                    firebaseUser ? (
+                                        <button onClick={async () => { try { await firebaseAuth.signOut(); } catch {} }}
+                                            className="flex items-center gap-1.5 text-green-400 hover:text-green-300 transition-colors"
+                                            title={`Signed in as ${firebaseUser.email}\nClick to sign out`}>
+                                            <img src={firebaseUser.photoURL || ''} className="w-5 h-5 rounded-full" 
+                                                onError={(e) => { e.target.style.display = 'none'; }}
+                                            />
+                                            <span className="max-w-[100px] truncate">{firebaseUser.displayName?.split(' ')[0] || firebaseUser.email?.split('@')[0]}</span>
+                                        </button>
+                                    ) : (
+                                        <button onClick={async () => {
+                                                if (isFileProtocol) return;
+                                                try {
+                                                    const provider = new firebase.auth.GoogleAuthProvider();
+                                                    await firebaseAuth.signInWithPopup(provider);
+                                                } catch (e) {
+                                                    console.error('Sign in error:', e);
+                                                }
+                                            }}
+                                            disabled={isFileProtocol}
+                                            className={`flex items-center gap-1 ${isFileProtocol ? 'text-slate-600 cursor-not-allowed' : 'text-slate-400 hover:text-white'} transition-colors`}
+                                            title={isFileProtocol ? 'Google Sign-in requires HTTPS' : 'Sign in with Google'}>
+                                            <span className="w-2 h-2 rounded-full bg-slate-500"></span>
+                                            Sign In
+                                        </button>
+                                    )
+                                )}
                             </div>
                         </div>
                     </div>
@@ -4422,7 +4548,15 @@
                                     <p className="text-sm text-blue-300">
                                         Some features require HTTPS (Google Auth, Firebase sync). 
                                         For full functionality, use the deployed version at{' '}
-                                        <a href="https://stewartdavidp-ship-it.github.io/managementprod/" 
+                                        <a href={(() => {
+                                                const ccApp = apps['command-center'];
+                                                const prodRepo = ccApp?.prodRepo || ccApp?.repos?.prod || '';
+                                                if (prodRepo) {
+                                                    const [owner, repo] = prodRepo.split('/');
+                                                    return `https://${owner}.github.io/${repo}/`;
+                                                }
+                                                return '#';
+                                            })()}
                                             target="_blank" 
                                             className="underline text-blue-200 hover:text-white">
                                             Command Center on GitHub Pages
@@ -4439,6 +4573,38 @@
                     )}
                     
                     {view === 'dashboard' && (
+                        <>
+                        {/* Repo Health Alert */}
+                        {repoHealthAlert && (
+                            <div className="mb-4 p-4 bg-amber-900/20 rounded-xl border border-amber-700/50">
+                                <div className="flex items-center justify-between mb-2">
+                                    <div className="text-sm font-medium text-amber-300 flex items-center gap-2">
+                                        ⚠️ Repo Health Check — {repoHealthAlert.issues.length} repo{repoHealthAlert.issues.length > 1 ? 's' : ''} with unexpected files
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => { setCleanupInitialTab('reset'); setView('cleanup'); setRepoHealthAlert(null); }}
+                                            className="px-3 py-1 text-xs bg-amber-700 hover:bg-amber-600 text-amber-100 rounded font-medium">
+                                            🔄 Open Repo Reset
+                                        </button>
+                                        <button onClick={() => setRepoHealthAlert(null)}
+                                            className="px-2 py-1 text-xs text-slate-400 hover:text-white">
+                                            ✕ Dismiss
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="space-y-1 text-xs">
+                                    {repoHealthAlert.issues.map((issue, i) => (
+                                        <div key={i} className="flex items-center gap-2 text-amber-400/80">
+                                            <span>{issue.appIcon === 'gs-logo' ? '🎮' : issue.appIcon}</span>
+                                            <span className="font-medium">{issue.appName}</span>
+                                            <span className="text-amber-600">({issue.target})</span>
+                                            <span className="text-slate-500">—</span>
+                                            <span>{issue.unexpectedFiles.length} unexpected: {issue.unexpectedFiles.slice(0, 3).map(f => f.name).join(', ')}{issue.unexpectedFiles.length > 3 ? ` +${issue.unexpectedFiles.length - 3} more` : ''}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                         <DashboardView
                             apps={apps} config={config} stagedFiles={stagedFiles} setStagedFiles={setStagedFiles} github={github}
                             onFileDrop={handleFileDrop} onRemove={removeStaged}
@@ -4464,6 +4630,7 @@
                             rollbackSnapshots={rollbackSnapshots}
                             onQuickRollback={quickRollback}
                         />
+                        </>
                     )}
                     
                     {view === 'archive' && (
@@ -4514,7 +4681,9 @@
                             apps={apps}
                             availableRepos={availableRepos}
                             showAlert={showAlert} 
-                            showConfirm={showConfirm} 
+                            showConfirm={showConfirm}
+                            initialTab={cleanupInitialTab}
+                            onTabConsumed={() => setCleanupInitialTab(null)}
                         />
                     )}
                     
@@ -8184,8 +8353,326 @@
     // CLEANUP VIEW (v7.4.3) - Repo and File Cleanup Management with Rollback
     // =========================================================================
     
-    function CleanupView({ github, config, apps, availableRepos, showAlert, showConfirm }) {
-        const [activeTab, setActiveTab] = React.useState('files');
+    function RepoResetPanel({ apps, github, showAlert, showConfirm }) {
+        const [scanning, setScanning] = React.useState(false);
+        const [scanProgress, setScanProgress] = React.useState('');
+        const [results, setResults] = React.useState(null); // [{ appId, appName, appIcon, repo, target, expectedFiles, unexpectedFiles }]
+        const [selected, setSelected] = React.useState(new Set()); // "repo:path" keys
+        const [deleting, setDeleting] = React.useState(false);
+        const [deleteLog, setDeleteLog] = React.useState([]);
+        
+        const scanAll = async () => {
+            if (!github) return;
+            setScanning(true);
+            setResults(null);
+            setSelected(new Set());
+            setDeleteLog([]);
+            
+            const allResults = [];
+            
+            // Get recently deployed apps (last 30 days)
+            let recentApps = new Set();
+            try {
+                const history = JSON.parse(localStorage.getItem('cc_history_v2') || '[]');
+                const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+                recentApps = new Set(
+                    history.filter(d => d.status === 'success' && new Date(d.completedAt || d.startedAt) > thirtyDaysAgo).map(d => d.appId)
+                );
+            } catch {}
+            
+            // Fall back to all apps with repos if no recent deploys
+            const appsToScan = Object.entries(apps).filter(([id, app]) => {
+                if (recentApps.size > 0 && !recentApps.has(id)) return false;
+                return (app.testRepo || app.repos?.test || app.prodRepo || app.repos?.prod);
+            });
+            
+            for (let i = 0; i < appsToScan.length; i++) {
+                const [appId, app] = appsToScan[i];
+                const repos = [];
+                const testRepo = app.testRepo || app.repos?.test;
+                const prodRepo = app.prodRepo || app.repos?.prod;
+                if (testRepo) repos.push({ repo: testRepo, target: 'test' });
+                if (prodRepo) repos.push({ repo: prodRepo, target: 'prod' });
+                
+                for (const { repo, target } of repos) {
+                    setScanProgress(`Scanning ${app.name} (${target})... ${i + 1}/${appsToScan.length}`);
+                    
+                    try {
+                        const subPath = app.subPath || '';
+                        const expected = new Set();
+                        const addExp = (f) => expected.add(subPath ? `${subPath}/${f}` : f);
+                        
+                        addExp(app.targetPath || 'index.html');
+                        if (app.hasServiceWorker) {
+                            addExp(app.swPath || 'sw.js');
+                            addExp('manifest.json');
+                        }
+                        
+                        // Doc files for prod repos
+                        if (target === 'prod') {
+                            const docPath = subPath ? `${subPath}/docs` : '';
+                            ['CONTEXT.md', 'PROJECT_PLAN.md', 'CHANGELOG.md', 'RELEASE_NOTES.txt', 'ARCHITECTURE.md', 'CLAUDE-PREP-STANDARD.md', 'DATA_MODEL.md'].forEach(doc => {
+                                expected.add(docPath ? `${docPath}/${doc}` : doc);
+                            });
+                        }
+                        
+                        // Standard files
+                        ['README.md', 'LICENSE', '.gitignore', 'CNAME'].forEach(f => expected.add(f));
+                        // Expected directories
+                        const iconsPrefix = subPath ? `${subPath}/icons` : 'icons';
+                        expected.add(iconsPrefix);
+                        expected.add('.github');
+                        
+                        // Fetch root contents only (lightweight)
+                        const rootContents = await github.listRepoContents(repo, subPath || '');
+                        
+                        const expectedFiles = [];
+                        const unexpectedFiles = [];
+                        
+                        for (const item of rootContents) {
+                            const fullPath = subPath ? `${subPath}/${item.name}` : item.name;
+                            const isExpected = expected.has(fullPath) || expected.has(item.name) ||
+                                item.name.startsWith('.github') ||
+                                (item.type === 'dir' && (item.name === 'icons' || item.name === '.github'));
+                            
+                            if (isExpected) {
+                                expectedFiles.push({ path: fullPath, name: item.name, type: item.type, sha: item.sha, size: item.size });
+                            } else {
+                                unexpectedFiles.push({ path: fullPath, name: item.name, type: item.type, sha: item.sha, size: item.size });
+                            }
+                        }
+                        
+                        if (unexpectedFiles.length > 0) {
+                            allResults.push({
+                                appId, appName: app.name, appIcon: app.icon,
+                                repo, target, expectedFiles, unexpectedFiles
+                            });
+                        }
+                    } catch (e) {
+                        // Skip repos we can't access
+                        console.warn(`[RepoReset] Could not scan ${repo}:`, e.message);
+                    }
+                }
+            }
+            
+            setResults(allResults);
+            setScanProgress('');
+            setScanning(false);
+        };
+        
+        const deleteSelected = async () => {
+            if (selected.size === 0 || !github) return;
+            
+            const confirmed = await showConfirm(
+                `Delete ${selected.size} file${selected.size > 1 ? 's' : ''} across repos? This cannot be undone.`,
+                '⚠️ Confirm Deletion'
+            );
+            if (!confirmed) return;
+            
+            setDeleting(true);
+            setDeleteLog([]);
+            
+            // Group by repo for efficient deletion
+            const byRepo = {};
+            for (const key of selected) {
+                const [repo, ...pathParts] = key.split('::');
+                const path = pathParts.join('::');
+                if (!byRepo[repo]) byRepo[repo] = [];
+                byRepo[repo].push(path);
+            }
+            
+            for (const [repo, paths] of Object.entries(byRepo)) {
+                for (const path of paths) {
+                    try {
+                        const file = await github.getFile(repo, path);
+                        if (file) {
+                            // For directories, need to delete all files inside recursively
+                            if (!file.content && !file.sha && Array.isArray(file)) {
+                                // It's a directory listing
+                                for (const item of file) {
+                                    if (item.type === 'file') {
+                                        await github.deleteFile(repo, item.path, `Cleanup: remove ${item.path} via CC Repo Reset`, item.sha);
+                                        setDeleteLog(prev => [...prev, { msg: `✅ ${repo}: ${item.path}`, type: 'success' }]);
+                                    }
+                                }
+                            } else {
+                                await github.deleteFile(repo, path, `Cleanup: remove ${path} via CC Repo Reset`, file.sha);
+                                setDeleteLog(prev => [...prev, { msg: `✅ ${repo}: ${path}`, type: 'success' }]);
+                            }
+                        }
+                    } catch (e) {
+                        // If it's a directory, try listing and deleting contents
+                        try {
+                            const contents = await github.listRepoContents(repo, path);
+                            if (Array.isArray(contents)) {
+                                for (const item of contents) {
+                                    const itemPath = `${path}/${item.name}`;
+                                    try {
+                                        if (item.type === 'file') {
+                                            await github.deleteFile(repo, itemPath, `Cleanup: remove ${itemPath} via CC Repo Reset`, item.sha);
+                                            setDeleteLog(prev => [...prev, { msg: `✅ ${repo}: ${itemPath}`, type: 'success' }]);
+                                        } else if (item.type === 'dir') {
+                                            // Recurse one level deeper
+                                            const subContents = await github.listRepoContents(repo, itemPath);
+                                            for (const sub of subContents) {
+                                                if (sub.type === 'file') {
+                                                    await github.deleteFile(repo, `${itemPath}/${sub.name}`, `Cleanup: remove ${itemPath}/${sub.name} via CC Repo Reset`, sub.sha);
+                                                    setDeleteLog(prev => [...prev, { msg: `✅ ${repo}: ${itemPath}/${sub.name}`, type: 'success' }]);
+                                                }
+                                            }
+                                        }
+                                    } catch (e2) {
+                                        setDeleteLog(prev => [...prev, { msg: `❌ ${repo}: ${itemPath} — ${e2.message}`, type: 'error' }]);
+                                    }
+                                }
+                            }
+                        } catch (e2) {
+                            setDeleteLog(prev => [...prev, { msg: `❌ ${repo}: ${path} — ${e.message}`, type: 'error' }]);
+                        }
+                    }
+                }
+            }
+            
+            setDeleteLog(prev => [...prev, { msg: `🎉 Done!`, type: 'success' }]);
+            setDeleting(false);
+            
+            // Re-scan after cleanup
+            setTimeout(() => scanAll(), 1500);
+        };
+        
+        const totalUnexpected = results ? results.reduce((sum, r) => sum + r.unexpectedFiles.length, 0) : 0;
+        
+        const selectAll = () => {
+            if (!results) return;
+            const allKeys = new Set();
+            results.forEach(r => r.unexpectedFiles.forEach(f => allKeys.add(`${r.repo}::${f.path}`)));
+            setSelected(allKeys);
+        };
+        
+        return (
+            <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                    <p className="text-sm text-slate-400">
+                        Scans recently deployed app repos for unexpected files and directories.
+                    </p>
+                    <button onClick={scanAll} disabled={scanning || !github}
+                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 disabled:text-slate-500 rounded text-sm font-medium whitespace-nowrap">
+                        {scanning ? `⏳ ${scanProgress || 'Scanning...'}` : '🔍 Scan All Repos'}
+                    </button>
+                </div>
+                
+                {results && (
+                    <div className="space-y-4">
+                        {/* Summary */}
+                        <div className="grid grid-cols-3 gap-3">
+                            <div className="bg-slate-900 rounded-lg p-3 border border-slate-700">
+                                <div className="text-2xl font-bold text-indigo-400">{results.length}</div>
+                                <div className="text-xs text-slate-500">Repos with issues</div>
+                            </div>
+                            <div className="bg-slate-900 rounded-lg p-3 border border-slate-700">
+                                <div className={`text-2xl font-bold ${totalUnexpected > 0 ? 'text-amber-400' : 'text-green-400'}`}>
+                                    {totalUnexpected}
+                                </div>
+                                <div className="text-xs text-slate-500">Unexpected items</div>
+                            </div>
+                            <div className="bg-slate-900 rounded-lg p-3 border border-slate-700">
+                                <div className="text-2xl font-bold text-slate-400">{selected.size}</div>
+                                <div className="text-xs text-slate-500">Selected for deletion</div>
+                            </div>
+                        </div>
+                        
+                        {totalUnexpected === 0 ? (
+                            <div className="bg-green-900/20 border border-green-700/50 rounded-lg p-4 text-center">
+                                <div className="text-green-400 font-medium">✅ All repos are clean</div>
+                            </div>
+                        ) : (
+                            <>
+                                {/* Bulk actions */}
+                                <div className="flex gap-2">
+                                    <button onClick={selectAll}
+                                        className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 rounded font-medium">
+                                        Select All ({totalUnexpected})
+                                    </button>
+                                    <button onClick={() => setSelected(new Set())}
+                                        className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 rounded font-medium">
+                                        Deselect All
+                                    </button>
+                                    {selected.size > 0 && (
+                                        <button onClick={deleteSelected} disabled={deleting}
+                                            className="px-4 py-1.5 text-xs bg-red-600 hover:bg-red-500 disabled:bg-slate-700 rounded font-medium ml-auto">
+                                            {deleting ? '⏳ Deleting...' : `🗑️ Delete ${selected.size} item${selected.size > 1 ? 's' : ''}`}
+                                        </button>
+                                    )}
+                                </div>
+                                
+                                {/* Per-repo results */}
+                                {results.map((result, ri) => (
+                                    <div key={ri} className="bg-slate-900/50 rounded-lg border border-slate-700">
+                                        <div className="flex items-center justify-between p-3 border-b border-slate-700">
+                                            <div className="flex items-center gap-2 text-sm font-medium">
+                                                <span>{result.appIcon === 'gs-logo' ? '🎮' : result.appIcon}</span>
+                                                <span>{result.appName}</span>
+                                                <span className={`px-1.5 py-0.5 text-xs rounded ${result.target === 'test' ? 'bg-yellow-900/50 text-yellow-400' : 'bg-green-900/50 text-green-400'}`}>
+                                                    {result.target.toUpperCase()}
+                                                </span>
+                                                <span className="text-xs text-slate-500 font-normal">{result.repo}</span>
+                                            </div>
+                                            <span className="text-xs text-amber-400">{result.unexpectedFiles.length} unexpected</span>
+                                        </div>
+                                        <div className="p-2 space-y-1">
+                                            {result.unexpectedFiles.map(f => {
+                                                const key = `${result.repo}::${f.path}`;
+                                                return (
+                                                    <label key={f.path} className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer hover:bg-slate-800/50 ${
+                                                        selected.has(key) ? 'bg-red-900/20' : ''
+                                                    }`}>
+                                                        <input type="checkbox" 
+                                                            checked={selected.has(key)}
+                                                            onChange={() => setSelected(prev => {
+                                                                const next = new Set(prev);
+                                                                next.has(key) ? next.delete(key) : next.add(key);
+                                                                return next;
+                                                            })}
+                                                        />
+                                                        <span className={`text-xs font-mono flex-1 ${f.type === 'dir' ? 'text-amber-400' : 'text-amber-400/70'}`}>
+                                                            {f.type === 'dir' ? '📁 ' : ''}{f.path}
+                                                        </span>
+                                                        <span className="text-xs text-slate-500">
+                                                            {f.type === 'dir' ? 'dir' : f.size ? `${(f.size / 1024).toFixed(1)}KB` : ''}
+                                                        </span>
+                                                    </label>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                ))}
+                            </>
+                        )}
+                        
+                        {/* Delete log */}
+                        {deleteLog.length > 0 && (
+                            <div className="bg-slate-900 rounded-lg p-3 space-y-1 font-mono text-xs max-h-48 overflow-y-auto border border-slate-700">
+                                {deleteLog.map((entry, i) => (
+                                    <div key={i} className={entry.type === 'success' ? 'text-green-400' : 'text-red-400'}>{entry.msg}</div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+        );
+    }
+    
+    function CleanupView({ github, config, apps, availableRepos, showAlert, showConfirm, initialTab, onTabConsumed }) {
+        const [activeTab, setActiveTab] = React.useState(initialTab || 'files');
+        
+        // Handle initialTab from parent (e.g. health check alert)
+        React.useEffect(() => {
+            if (initialTab) {
+                setActiveTab(initialTab);
+                if (onTabConsumed) onTabConsumed();
+            }
+        }, [initialTab]);
         const [scanning, setScanning] = React.useState(false);
         const [scanResults, setScanResults] = React.useState(null);
         const [selectedFiles, setSelectedFiles] = React.useState(new Set());
@@ -8680,17 +9167,19 @@
                     <h2 className="text-xl font-bold flex items-center gap-2">
                         <Icons.Trash /> Repository Cleanup
                     </h2>
-                    <button
-                        onClick={scanForStaleFiles}
-                        disabled={scanning || !github}
-                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
-                    >
-                        {scanning ? (
-                            <><Icons.Refresh className="animate-spin" /> Scanning...</>
-                        ) : (
-                            <><Icons.Search /> Scan Repositories</>
-                        )}
-                    </button>
+                    {activeTab !== 'reset' && (
+                        <button
+                            onClick={scanForStaleFiles}
+                            disabled={scanning || !github}
+                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
+                        >
+                            {scanning ? (
+                                <><Icons.Refresh className="animate-spin" /> Scanning...</>
+                            ) : (
+                                <><Icons.Search /> Scan Repositories</>
+                            )}
+                        </button>
+                    )}
                 </div>
                 
                 {!github && (
@@ -8704,6 +9193,7 @@
                     {[
                         { id: 'files', label: `📄 Stale Files ${scanResults ? `(${scanResults.staleFiles.length})` : ''}` },
                         { id: 'repos', label: `📦 Legacy Repos ${scanResults ? `(${scanResults.legacyRepos.length})` : ''}` },
+                        { id: 'reset', label: '🔄 Repo Reset' },
                         { id: 'history', label: `⏪ History ${deletionHistory.length > 0 ? `(${deletionHistory.length})` : ''}` }
                     ].map(tab => (
                         <button
@@ -8981,6 +9471,12 @@
                         )}
                     </div>
                 )}
+                
+                {/* Repo Reset Tab */}
+                {activeTab === 'reset' && (
+                    <RepoResetPanel apps={apps} github={github} showAlert={showAlert} showConfirm={showConfirm} />
+                )}
+                    
                 
                 {/* History Tab - Restore deleted files */}
                 {activeTab === 'history' && (
