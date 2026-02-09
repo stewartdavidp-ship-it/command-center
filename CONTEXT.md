@@ -4,7 +4,7 @@
 
 ## Current Version
 
-**v8.15.5** — Released 2026-02-09
+**v8.15.6** — Released 2026-02-09
 
 ## What Command Center Is
 
@@ -146,6 +146,11 @@ Configure
 | `ConfigManager` | Config load/save/migrate with backward compatibility |
 
 ## Recent Changes (This Session)
+
+### v8.15.6 — Fix: HTML Deploy Path from Zip
+- **Root cause:** When extracting a zip like `cc-project-v8/command-center/index.html`, the root folder `cc-project-v8/` is stripped, leaving `command-center/index.html` as `cleanPath`. Since this contained `/`, the old logic preserved it as-is for the deploy `targetPath`. This caused the file to deploy at `command-center/index.html` in the test repo instead of at root `index.html`.
+- **Impact on promote:** Promote fetches `index.html` from test repo root — but the actual deployed file was at `command-center/index.html`. It found the old v1.0.0 placeholder at root and promoted that instead.
+- **Fix:** HTML files now always use their filename as `targetPath` regardless of zip directory structure. Non-HTML files (icons, sw.js, manifest.json) still preserve their subdirectory paths as before.
 
 ### v8.15.5 — Fix: setStagedFiles Scoping Error
 - **Root cause:** `setStagedFiles` was defined in `App()` but used in `DashboardView` (a child component) without being passed as a prop. The batch deploy controls' `executeBatchAction` called `setStagedFiles` to clear pushed docs, but it was undefined in DashboardView's scope.
