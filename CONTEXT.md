@@ -4,7 +4,7 @@
 
 ## Current Version
 
-**v8.15.3** — Released 2026-02-09
+**v8.15.5** — Released 2026-02-09
 
 ## What Command Center Is
 
@@ -146,6 +146,16 @@ Configure
 | `ConfigManager` | Config load/save/migrate with backward compatibility |
 
 ## Recent Changes (This Session)
+
+### v8.15.5 — Fix: setStagedFiles Scoping Error
+- **Root cause:** `setStagedFiles` was defined in `App()` but used in `DashboardView` (a child component) without being passed as a prop. The batch deploy controls' `executeBatchAction` called `setStagedFiles` to clear pushed docs, but it was undefined in DashboardView's scope.
+- **Fix:** Added `setStagedFiles` as a prop to `DashboardView` and passed it from the `App` render.
+- This was the cause of the "Push 6 Docs" button reappearing after deploy — docs pushed successfully but the staged files list never updated.
+
+### v8.15.4 — Drift Banner Auto-Collapse
+- **Collapsible drift banner** — uses `<details>` element. Auto-opens (`open` attribute) only when errors or warnings are present. Info-only drift (config-only apps) renders as a collapsed one-liner showing count.
+- **Subdued info-only styling** — when only info items exist, banner uses `bg-slate-800/50 border-slate-700/50` and `text-slate-400` instead of blue, making it unobtrusive.
+- **Copy Fix Prompt button** — only shown in the summary row when there are critical issues (errors/warnings). Uses `e.preventDefault()` to avoid toggling the `<details>`.
 
 ### v8.15.3 — Doc Push Bug Fixes
 - **Fixed doc files not clearing after push** — both batch deploy controls and Deploy All modal now remove successfully pushed docs from staged files, preventing the "push again" loop.
