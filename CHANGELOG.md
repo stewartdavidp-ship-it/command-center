@@ -6,6 +6,41 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [8.18.0] — 2026-02-09
+
+### Added
+- **Firebase Sync Settings UI** — new "Firebase Config Sync" section in Settings with sync status, data size breakdown, last sync time, and manual Push/Pull/Clear buttons
+- **Push All to Firebase** — force-overwrite all local data to Firebase from Settings
+- **Pull All from Firebase** — force-overlay Firebase data onto local state from Settings
+- **Clear Firebase Data** — remove all `command-center/` data from Firebase (with confirmation dialog)
+- **Data size inspector** — shows total Firebase data size and per-key breakdown (config, deploy-history, etc.)
+- **`FirebaseConfigSync.clearAll()`** — removes all CC data from Firebase RTDB
+- **`FirebaseConfigSync.getDataSize()`** — measures approximate data size per key in Firebase
+- **Debounced Firebase writes** — deploy history, session log, and deletion history use 2-second debounce to prevent rapid-fire writes during batch operations
+
+### Changed
+- **`FirebaseConfigSync.pushSmart()`** — new routing method that auto-debounces rapid-fire keys while keeping config/rules immediate
+- **`pushDeployHistory()`** / **`pushSessionLog()`** / **`pushDeletionHistory()`** — now route through debounced push
+- **SettingsView** — receives `syncStatus` and `onForceSync` props for sync UI integration
+
+## [8.17.0] — 2026-02-09
+
+### Added
+- **Firebase Config Sync** — new `FirebaseConfigSync` class syncs non-sensitive CC data to Firebase RTDB at `command-center/` path
+- **Dual-write pattern** — every config/history save writes to localStorage (instant) then fire-and-forget to Firebase
+- **Startup overlay** — loads localStorage immediately, pulls Firebase async, overlays if newer; seeds Firebase on first run
+- **Sync status indicator** — header shows ☁️ synced | 🔄 syncing | ⚡ offline | ⚠️ error
+- **`_updatedAt` / `_updatedBy` timestamps** — added to config saves for conflict detection
+- **`FirebaseConfigSync.pullAll()` / `pushAll()`** — bulk read/write for startup and manual sync
+
+### Changed
+- **`ConfigManager.save()`** — now dual-writes to localStorage + Firebase
+- **Deploy history persistence** — dual-writes to Firebase
+- **Session log persistence** — dual-writes to Firebase
+- **Rules history saves** — dual-writes to Firebase (both snapshot add and delete)
+- **Deletion history saves** — dual-writes to Firebase
+- **Rollback snapshot persistence** — dual-writes to Firebase
+
 ## [8.16.7] — 2026-02-09
 
 ### Added
