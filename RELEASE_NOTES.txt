@@ -1,6 +1,32 @@
 Command Center — Release Notes
 ================================
 
+v8.18.6 — 2026-02-09
+--------------------
+Fix: Firebase overlay deleting local-only apps.
+
+Overlay replaced entire apps object with Firebase data, wiping
+apps that only existed locally (Quotle-info, SB Squares).
+
+Overlay now merges local apps INTO Firebase data:
+- Local-only apps preserved and pushed back to Firebase
+- Local repos always authoritative
+- Local versions preserved when Firebase has empty values
+- Local-only projects preserved
+
+v8.18.5 — 2026-02-09
+--------------------
+Fix: Firebase overlay overwriting correct local repo names.
+
+"Always overlay" from v8.18.4 caused Firebase's stale repo
+names (managementprod) to overwrite local correct repos
+(command-center). Overlay now preserves local repos as
+authoritative — local is source of truth for repo assignments,
+Firebase is downstream.
+
+Reverted migration timestamp hack — restored ConfigManager.save()
+in migration. Overlay repo preservation handles the conflict.
+
 v8.18.4 — 2026-02-09
 --------------------
 Fix: Firebase overlay blocked by migration timestamp bump.
