@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Command Center</title>
-    <meta name="version" content="8.18.6">
+    <meta name="version" content="8.21.0">
     <meta name="gs-app-id" content="command-center">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -28,7 +28,7 @@
     <div id="root"><div style="display:flex;align-items:center;justify-content:center;min-height:100vh;"><div style="text-align:center;"><div style="margin-bottom:20px;"><svg viewBox="0 0 100 100" width="64" height="64" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="gsLoadGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#667eea"/><stop offset="100%" style="stop-color:#764ba2"/></linearGradient></defs><rect x="5" y="5" width="90" height="90" rx="20" fill="url(#gsLoadGrad)"/><g transform="rotate(-12, 35, 50)"><rect x="15" y="28" width="28" height="36" rx="4" fill="white"/><circle cx="43" cy="46" r="6" fill="white"/><text x="29" y="54" font-family="Arial" font-size="20" font-weight="bold" fill="#667eea" text-anchor="middle">G</text></g><g transform="rotate(12, 65, 50)"><rect x="57" y="28" width="28" height="36" rx="4" fill="rgba(255,255,255,0.9)"/><circle cx="57" cy="46" r="6" fill="url(#gsLoadGrad)"/><text x="71" y="54" font-family="Arial" font-size="20" font-weight="bold" fill="#764ba2" text-anchor="middle">S</text></g></svg></div>Loading...</div></div></div>
 
     <script type="text/babel">
-    console.log('Command Center v8.18.6 starting...');
+    console.log('Command Center v8.19.0 starting...');
     
     // =========================================================================
     // FIREBASE CONFIG
@@ -657,6 +657,1033 @@
     
     // Initialize ConfigSync with the database reference
     FirebaseConfigSync.init(firebaseDb);
+    
+    // =========================================================================
+    // DATA SERVICE LAYER (v8.19.0)
+    // Namespaced service objects that encapsulate CRUD for each entity type.
+    // Pattern: localStorage (immediate) + Firebase (async, fire-and-forget).
+    // These services wrap existing data access patterns into clean APIs.
+    // Views continue to use React state for rendering; services handle persistence.
+    // =========================================================================
+    
+    /**
+     * DeployService — Deploy history CRUD
+     * Wraps: localStorage 'cc_history_v2' + FirebaseConfigSync deploy-history
+     * Used by: App() deployments state, HistoryView, DashboardView
+     */
+    const DeployService = {
+        STORAGE_KEY: 'cc_history_v2',
+        MAX_HISTORY: 100,
+        
+        // Load deploy history from localStorage
+        load() {
+            try {
+                const s = localStorage.getItem(this.STORAGE_KEY);
+                return s ? JSON.parse(s) : [];
+            } catch {
+                return [];
+            }
+        },
+        
+        // Save full deploy history (localStorage + Firebase)
+        save(deployments) {
+            try {
+                const history = deployments.slice(0, this.MAX_HISTORY);
+                localStorage.setItem(this.STORAGE_KEY, JSON.stringify(history));
+                if (FirebaseConfigSync.initialized) {
+                    FirebaseConfigSync.pushDeployHistory(history).catch(() => {});
+                }
+                return true;
+            } catch (e) {
+                console.error('[DeployService] Save failed:', e);
+                return false;
+            }
+        },
+        
+        // Add a deployment record to the front of the list
+        add(deployment, currentList) {
+            const updated = [deployment, ...currentList].slice(0, this.MAX_HISTORY);
+            this.save(updated);
+            return updated;
+        },
+        
+        // Update a specific deployment record by id
+        update(deploymentId, updates, currentList) {
+            const updated = currentList.map(d =>
+                d.id === deploymentId ? { ...d, ...updates } : d
+            );
+            this.save(updated);
+            return updated;
+        },
+        
+        // Get deployments for a specific app
+        getForApp(appId, currentList) {
+            return currentList.filter(d => d.appId === appId);
+        },
+        
+        // Get recent deployments (last N)
+        getRecent(n, currentList) {
+            return currentList.slice(0, n);
+        },
+        
+        // Overlay from Firebase (used during startup sync)
+        overlay(remoteData) {
+            if (!remoteData) return null;
+            const { _updatedAt, _updatedBy, ...clean } = remoteData;
+            try {
+                localStorage.setItem(this.STORAGE_KEY, JSON.stringify(clean));
+            } catch {}
+            return Array.isArray(clean) ? clean : Object.values(clean);
+        }
+    };
+    
+    /**
+     * SessionLogService — Session log CRUD
+     * Wraps: localStorage 'cc_session_log' + FirebaseConfigSync session-log
+     * Used by: App() sessionLog state, SessionLogView, generateSessionBrief
+     */
+    const SessionLogService = {
+        STORAGE_KEY: 'cc_session_log',
+        
+        DEFAULT_STATE: {
+            currentSession: null,
+            sessions: [],
+            issues: [],
+            notes: '',
+            recentEntries: []
+        },
+        
+        // Load session log from localStorage
+        load() {
+            try {
+                const s = localStorage.getItem(this.STORAGE_KEY);
+                return s ? JSON.parse(s) : { ...this.DEFAULT_STATE };
+            } catch {
+                return { ...this.DEFAULT_STATE };
+            }
+        },
+        
+        // Save full session log (localStorage + Firebase)
+        save(sessionLog) {
+            try {
+                localStorage.setItem(this.STORAGE_KEY, JSON.stringify(sessionLog));
+                if (FirebaseConfigSync.initialized) {
+                    FirebaseConfigSync.pushSessionLog(sessionLog).catch(() => {});
+                }
+                return true;
+            } catch (e) {
+                console.error('[SessionLogService] Save failed:', e);
+                return false;
+            }
+        },
+        
+        // Add a recent entry to the session log
+        addRecentEntry(entry, currentLog) {
+            const updated = {
+                ...currentLog,
+                recentEntries: [...(currentLog.recentEntries || []), entry].slice(-20)
+            };
+            this.save(updated);
+            return updated;
+        },
+        
+        // Update session notes
+        updateNotes(notes, currentLog) {
+            const updated = { ...currentLog, notes };
+            this.save(updated);
+            return updated;
+        },
+        
+        // Set current session
+        setCurrentSession(session, currentLog) {
+            const updated = { ...currentLog, currentSession: session };
+            this.save(updated);
+            return updated;
+        },
+        
+        // Overlay from Firebase (used during startup sync)
+        overlay(remoteData) {
+            if (!remoteData || !remoteData._updatedAt) return null;
+            const { _updatedAt, _updatedBy, ...clean } = remoteData;
+            try {
+                localStorage.setItem(this.STORAGE_KEY, JSON.stringify(clean));
+            } catch {}
+            return clean;
+        }
+    };
+    
+    /**
+     * IssueService — Issues CRUD via Firebase (per-user path)
+     * Wraps: Firebase RTDB `command-center/{uid}/issues` path
+     * Used by: IssuesView, App() globalIssues state, deploy issue-linking
+     * Note: Issues are stored in Firebase under the user's UID, not in localStorage.
+     */
+    const IssueService = {
+        BASE_PATH: 'command-center',
+        
+        // Get the Firebase ref for issues (requires uid)
+        _ref(uid) {
+            if (!firebaseDb || !uid) return null;
+            return firebaseDb.ref(`${this.BASE_PATH}/${uid}/issues`);
+        },
+        
+        // Listen for all issues (returns unsubscribe function)
+        listen(uid, callback) {
+            const ref = this._ref(uid);
+            if (!ref) return () => {};
+            
+            ref.on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                    const list = Object.entries(data).map(([id, issue]) => ({ id, ...issue }));
+                    callback(list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+                } else {
+                    callback([]);
+                }
+            });
+            
+            return () => ref.off();
+        },
+        
+        // Create a new issue
+        async create(uid, issueData) {
+            const ref = this._ref(uid);
+            if (!ref) return null;
+            
+            const issue = {
+                ...issueData,
+                status: 'open',
+                createdAt: new Date().toISOString(),
+                createdBy: issueData.createdBy || 'manual',
+                notes: issueData.notes || []
+            };
+            
+            await ref.child(issueData.id).set(issue);
+            return issue;
+        },
+        
+        // Update an issue (partial update)
+        async update(uid, issueId, updates) {
+            const ref = this._ref(uid);
+            if (!ref) return;
+            await ref.child(issueId).update(updates);
+        },
+        
+        // Update issue status with timestamp
+        async updateStatus(uid, issueId, newStatus, extraData = {}) {
+            const updates = {
+                status: newStatus,
+                [`${newStatus}At`]: new Date().toISOString(),
+                ...extraData
+            };
+            await this.update(uid, issueId, updates);
+        },
+        
+        // Link issues to a deployed version
+        async linkToVersion(uid, issueIds, version, appId) {
+            if (!issueIds || !issueIds.length) return;
+            
+            for (const issueId of issueIds) {
+                await this.update(uid, issueId, {
+                    status: 'fixed',
+                    fixedAt: new Date().toISOString(),
+                    fixedInVersion: version,
+                    fixedInApp: appId
+                });
+            }
+        },
+        
+        // Mark issues as released to prod
+        async markReleasedToProd(uid, issueIds, version) {
+            for (const issueId of issueIds) {
+                await this.update(uid, issueId, {
+                    status: 'closed',
+                    closedAt: new Date().toISOString(),
+                    releasedToProd: true,
+                    releasedInVersion: version
+                });
+            }
+        },
+        
+        // Get next issue ID from existing list
+        getNextId(currentIssues) {
+            const existing = currentIssues.map(i => parseInt(i.id?.replace('ISS-', '') || 0));
+            const max = Math.max(0, ...existing);
+            return `ISS-${String(max + 1).padStart(3, '0')}`;
+        }
+    };
+    
+    /**
+     * ReleaseService — Release records via Firebase (per-user path)
+     * Wraps: Firebase RTDB `command-center/{uid}/releases` path
+     * Used by: IssuesView for release tracking
+     */
+    const ReleaseService = {
+        BASE_PATH: 'command-center',
+        
+        _ref(uid) {
+            if (!firebaseDb || !uid) return null;
+            return firebaseDb.ref(`${this.BASE_PATH}/${uid}/releases`);
+        },
+        
+        // Listen for all releases
+        listen(uid, callback) {
+            const ref = this._ref(uid);
+            if (!ref) return () => {};
+            
+            ref.on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                    const list = Object.entries(data).map(([id, rel]) => ({ id, ...rel }));
+                    callback(list.sort((a, b) => new Date(b.deployedAt) - new Date(a.deployedAt)));
+                } else {
+                    callback([]);
+                }
+            });
+            
+            return () => ref.off();
+        },
+        
+        // Create a release record
+        async create(uid, releaseData) {
+            const ref = this._ref(uid);
+            if (!ref) return;
+            
+            const releaseId = `${releaseData.app}-${releaseData.version}-${Date.now()}`;
+            await ref.child(releaseId).set({
+                ...releaseData,
+                deployedAt: releaseData.deployedAt || new Date().toISOString()
+            });
+            return releaseId;
+        }
+    };
+    
+    /**
+     * UserReportService — User-submitted bug reports via Firebase (public path)
+     * Wraps: Firebase RTDB `reported-issues` path
+     * Used by: IssuesView for user report inbox
+     */
+    const UserReportService = {
+        _ref() {
+            if (!firebaseDb) return null;
+            return firebaseDb.ref('reported-issues');
+        },
+        
+        // Listen for all user reports
+        listen(callback) {
+            const ref = this._ref();
+            if (!ref) return () => {};
+            
+            ref.on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                    const list = Object.entries(data).map(([id, report]) => ({
+                        firebaseKey: id,
+                        ...report
+                    }));
+                    callback(list.sort((a, b) =>
+                        new Date(b.timestamp || b.createdAt || 0) - new Date(a.timestamp || a.createdAt || 0)
+                    ));
+                } else {
+                    callback([]);
+                }
+            });
+            
+            return () => ref.off();
+        }
+    };
+    
+    /**
+     * RollbackService — Rollback snapshot CRUD
+     * Wraps: localStorage 'cc_rollback_snapshots' + FirebaseConfigSync rollback-snapshots
+     * Used by: App() rollbackSnapshots state, DashboardView quick rollback
+     */
+    const RollbackService = {
+        STORAGE_KEY: 'cc_rollback_snapshots',
+        
+        // Load from localStorage
+        load() {
+            try {
+                const s = localStorage.getItem(this.STORAGE_KEY);
+                return s ? JSON.parse(s) : {};
+            } catch {
+                return {};
+            }
+        },
+        
+        // Save (localStorage + Firebase)
+        save(snapshots) {
+            try {
+                localStorage.setItem(this.STORAGE_KEY, JSON.stringify(snapshots));
+                if (FirebaseConfigSync.initialized) {
+                    FirebaseConfigSync.pushRollbackSnapshots(snapshots).catch(() => {});
+                }
+                return true;
+            } catch (e) {
+                console.error('[RollbackService] Save failed:', e);
+                return false;
+            }
+        },
+        
+        // Get snapshot for an app/target
+        get(appId, target, currentSnapshots) {
+            return currentSnapshots[`${appId}:${target}`] || null;
+        },
+        
+        // Save a snapshot
+        set(appId, target, snapshot, currentSnapshots) {
+            const key = `${appId}:${target}`;
+            const updated = { ...currentSnapshots, [key]: snapshot };
+            this.save(updated);
+            return updated;
+        },
+        
+        // Clear a snapshot
+        clear(appId, target, currentSnapshots) {
+            const key = `${appId}:${target}`;
+            const updated = { ...currentSnapshots };
+            delete updated[key];
+            this.save(updated);
+            return updated;
+        }
+    };
+    
+    // =========================================================================
+    // PHASE 0.2 DATA SERVICES — Orchestrator entity services
+    // =========================================================================
+    
+    /**
+     * WorkItemService — Work item (backlog) CRUD via Firebase
+     * Wraps: Firebase RTDB `command-center/{uid}/backlog` path
+     * Used by: Future BacklogView, Claude Prep targeting, deploy close-the-loop
+     * 
+     * Work items are the building blocks of project planning:
+     *   id: 'WI-NNN' (auto-generated)
+     *   appId: which app this belongs to
+     *   title, description: what to build
+     *   type: feature | bugfix | enhancement | chore | research
+     *   priority: core | nice-to-have | out-of-scope
+     *   milestone: prototype | alpha | beta | production
+     *   status: idea → ready → in-progress → done → deferred
+     *   effort: quick | session | multi-session | epic
+     *   criteria: acceptance criteria array
+     *   context: { filesAffected, sections, dependencies, notes, relatedItems }
+     *   tags: string array for filtering
+     *   Timestamps: createdAt, startedAt, completedAt, completedInVersion, sessionId
+     */
+    const WorkItemService = {
+        BASE_PATH: 'command-center',
+        
+        _ref(uid) {
+            if (!firebaseDb || !uid) return null;
+            return firebaseDb.ref(`${this.BASE_PATH}/${uid}/backlog`);
+        },
+        
+        // Listen for all work items (returns unsubscribe function)
+        listen(uid, callback) {
+            const ref = this._ref(uid);
+            if (!ref) return () => {};
+            
+            ref.on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                    const list = Object.entries(data).map(([id, item]) => ({ id, ...item }));
+                    callback(list.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)));
+                } else {
+                    callback([]);
+                }
+            });
+            
+            return () => ref.off();
+        },
+        
+        // Get a single work item
+        async get(uid, itemId) {
+            const ref = this._ref(uid);
+            if (!ref) return null;
+            const snapshot = await ref.child(itemId).once('value');
+            const data = snapshot.val();
+            return data ? { id: itemId, ...data } : null;
+        },
+        
+        // Create a new work item
+        async create(uid, itemData) {
+            const ref = this._ref(uid);
+            if (!ref) return null;
+            
+            const item = {
+                appId: itemData.appId,
+                title: itemData.title,
+                description: itemData.description || '',
+                type: itemData.type || 'feature',
+                priority: itemData.priority || 'core',
+                milestone: itemData.milestone || 'beta',
+                status: itemData.status || 'idea',
+                effort: itemData.effort || 'session',
+                criteria: itemData.criteria || [],
+                context: {
+                    filesAffected: itemData.context?.filesAffected || [],
+                    sections: itemData.context?.sections || [],
+                    dependencies: itemData.context?.dependencies || [],
+                    notes: itemData.context?.notes || '',
+                    relatedItems: itemData.context?.relatedItems || []
+                },
+                tags: itemData.tags || [],
+                createdAt: new Date().toISOString(),
+                createdBy: itemData.createdBy || 'manual',
+                startedAt: null,
+                completedAt: null,
+                completedInVersion: null,
+                sessionId: null
+            };
+            
+            await ref.child(itemData.id).set(item);
+            console.log(`[WorkItemService] Created ${itemData.id}: ${item.title}`);
+            return { id: itemData.id, ...item };
+        },
+        
+        // Update a work item (partial)
+        async update(uid, itemId, updates) {
+            const ref = this._ref(uid);
+            if (!ref) return;
+            await ref.child(itemId).update(updates);
+        },
+        
+        // Transition status with timestamps
+        async updateStatus(uid, itemId, newStatus, extraData = {}) {
+            const now = new Date().toISOString();
+            const updates = { status: newStatus, ...extraData };
+            
+            // Auto-set timestamps on status transitions
+            switch (newStatus) {
+                case 'in-progress':
+                    updates.startedAt = now;
+                    break;
+                case 'done':
+                    updates.completedAt = now;
+                    break;
+                case 'deferred':
+                    updates.deferredAt = now;
+                    break;
+            }
+            
+            await this.update(uid, itemId, updates);
+            console.log(`[WorkItemService] ${itemId} → ${newStatus}`);
+        },
+        
+        // Complete a work item (from deploy close-the-loop)
+        async complete(uid, itemId, version) {
+            await this.updateStatus(uid, itemId, 'done', {
+                completedInVersion: version
+            });
+        },
+        
+        // Get work items filtered by app
+        filterByApp(items, appId) {
+            return items.filter(i => i.appId === appId);
+        },
+        
+        // Get work items filtered by milestone
+        filterByMilestone(items, milestone) {
+            return items.filter(i => i.milestone === milestone);
+        },
+        
+        // Get work items filtered by status
+        filterByStatus(items, status) {
+            return items.filter(i => i.status === status);
+        },
+        
+        // Get in-progress items (for deploy close-the-loop)
+        getInProgress(items, appId) {
+            return items.filter(i => i.status === 'in-progress' && (!appId || i.appId === appId));
+        },
+        
+        // Generate next work item ID from existing list
+        getNextId(currentItems) {
+            const existing = currentItems.map(i => parseInt(i.id?.replace('WI-', '') || '0'));
+            const max = Math.max(0, ...existing);
+            return `WI-${String(max + 1).padStart(3, '0')}`;
+        }
+    };
+    
+    /**
+     * SessionService — Claude session tracking via Firebase
+     * Wraps: Firebase RTDB `command-center/{uid}/sessions` path
+     * Used by: Claude Prep (create on package generation), deploy (link session to deploy)
+     * 
+     * A session represents one AI interaction cycle: prep → build → handoff → deploy
+     *   id: auto-generated timestamp-based
+     *   appId: which app the session is for
+     *   type: build | design | fix | test | research | review | polish | document
+     *   workItemId: optional linked work item
+     *   engineId: which AI engine was targeted
+     *   status: prep | active | completed | abandoned
+     *   packageTokens: estimated token count of the generated package
+     *   deployId: linked deploy record (set after deploy)
+     *   Timestamps: createdAt, completedAt
+     */
+    const SessionService = {
+        BASE_PATH: 'command-center',
+        
+        _ref(uid) {
+            if (!firebaseDb || !uid) return null;
+            return firebaseDb.ref(`${this.BASE_PATH}/${uid}/sessions`);
+        },
+        
+        // Listen for all sessions
+        listen(uid, callback) {
+            const ref = this._ref(uid);
+            if (!ref) return () => {};
+            
+            ref.on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                    const list = Object.entries(data).map(([id, s]) => ({ id, ...s }));
+                    callback(list.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)));
+                } else {
+                    callback([]);
+                }
+            });
+            
+            return () => ref.off();
+        },
+        
+        // Create a session record (called when Claude Prep generates a package)
+        async create(uid, sessionData) {
+            const ref = this._ref(uid);
+            if (!ref) return null;
+            
+            const sessionId = `sess-${Date.now()}`;
+            const session = {
+                appId: sessionData.appId,
+                type: sessionData.type || 'build',
+                workItemId: sessionData.workItemId || null,
+                engineId: sessionData.engineId || 'claude-sonnet-4.5',
+                status: 'prep',
+                packageTokens: sessionData.packageTokens || 0,
+                packageFiles: sessionData.packageFiles || [],
+                deployId: null,
+                notes: sessionData.notes || '',
+                createdAt: new Date().toISOString(),
+                completedAt: null
+            };
+            
+            await ref.child(sessionId).set(session);
+            console.log(`[SessionService] Created ${sessionId} for ${session.appId} (${session.type})`);
+            return { id: sessionId, ...session };
+        },
+        
+        // Update a session
+        async update(uid, sessionId, updates) {
+            const ref = this._ref(uid);
+            if (!ref) return;
+            await ref.child(sessionId).update(updates);
+        },
+        
+        // Link a deploy to a session
+        async linkDeploy(uid, sessionId, deployId) {
+            await this.update(uid, sessionId, {
+                deployId,
+                status: 'completed',
+                completedAt: new Date().toISOString()
+            });
+            console.log(`[SessionService] Linked deploy ${deployId} to session ${sessionId}`);
+        },
+        
+        // Get recent sessions for an app
+        getForApp(sessions, appId, limit = 5) {
+            return sessions
+                .filter(s => s.appId === appId)
+                .slice(0, limit);
+        },
+        
+        // Get active (non-completed) sessions
+        getActive(sessions, appId) {
+            return sessions.filter(s => 
+                s.status !== 'completed' && s.status !== 'abandoned' &&
+                (!appId || s.appId === appId)
+            );
+        }
+    };
+    
+    /**
+     * TokenRegistryService — Token estimation and caching
+     * Provides heuristic token counting for context budget management.
+     * Cache stored in localStorage for instant access during Claude Prep.
+     * 
+     * Three estimation tiers:
+     *   Tier 1: Heuristic (instant, browser-only) — used by default
+     *   Tier 2: js-tiktoken (accurate for GPT) — future
+     *   Tier 3: Anthropic API countTokens (exact for Claude) — future
+     */
+    const TokenRegistryService = {
+        STORAGE_KEY: 'cc_token_registry',
+        
+        // Content type ratios (tokens per character) based on empirical data
+        RATIOS: {
+            code:     0.37,   // ~18 tokens per line, ~49 chars/line (JS/HTML/CSS)
+            markdown: 0.35,   // ~1.35 tokens per word, ~3.8 chars/word
+            prose:    0.33,   // ~1.3 tokens per word, ~4 chars/word
+            json:     0.40,   // Higher due to structural characters
+        },
+        
+        // Detect content type from filename or content
+        detectContentType(filename) {
+            if (!filename) return 'prose';
+            const ext = filename.split('.').pop()?.toLowerCase();
+            switch (ext) {
+                case 'html': case 'htm': case 'js': case 'jsx': case 'ts':
+                case 'tsx': case 'css': case 'scss': case 'py': case 'rb':
+                case 'java': case 'c': case 'cpp': case 'go': case 'rs':
+                case 'php': case 'sh': case 'bash': case 'yaml': case 'yml':
+                case 'xml': case 'svg':
+                    return 'code';
+                case 'md': case 'mdx': case 'txt':
+                    return 'markdown';
+                case 'json': case 'jsonl':
+                    return 'json';
+                default:
+                    return 'prose';
+            }
+        },
+        
+        // Tier 1: Heuristic token estimation (instant, no dependencies)
+        estimateTokens(text, filenameOrType) {
+            if (!text) return 0;
+            const contentType = this.RATIOS[filenameOrType] 
+                ? filenameOrType 
+                : this.detectContentType(filenameOrType);
+            const ratio = this.RATIOS[contentType] || 0.35;
+            return Math.ceil(text.length * ratio);
+        },
+        
+        // Estimate tokens from byte count (when text isn't available)
+        estimateFromBytes(bytes, filenameOrType) {
+            if (!bytes) return 0;
+            const contentType = this.RATIOS[filenameOrType]
+                ? filenameOrType
+                : this.detectContentType(filenameOrType);
+            const ratio = this.RATIOS[contentType] || 0.35;
+            return Math.ceil(bytes * ratio);
+        },
+        
+        // Load cached registry from localStorage
+        load() {
+            try {
+                return JSON.parse(localStorage.getItem(this.STORAGE_KEY) || '{}');
+            } catch { return {}; }
+        },
+        
+        // Save registry to localStorage
+        save(registry) {
+            try {
+                localStorage.setItem(this.STORAGE_KEY, JSON.stringify(registry));
+            } catch (e) {
+                console.error('[TokenRegistryService] Save failed:', e);
+            }
+        },
+        
+        // Cache a token count for a specific app artifact
+        cacheArtifact(appId, path, tokenData) {
+            const registry = this.load();
+            if (!registry[appId]) registry[appId] = { artifacts: {}, lastScanned: null };
+            registry[appId].artifacts[path] = {
+                path,
+                tokens: tokenData.tokens,
+                bytes: tokenData.bytes,
+                type: tokenData.type || 'source',
+                version: tokenData.version || null,
+                lastUpdated: new Date().toISOString()
+            };
+            registry[appId].lastScanned = new Date().toISOString();
+            this.save(registry);
+        },
+        
+        // Get cached data for an app
+        getForApp(appId) {
+            const registry = this.load();
+            return registry[appId] || null;
+        },
+        
+        // Calculate totals from a list of token counts
+        calculateTotals(artifacts) {
+            const totals = { source: 0, documentation: 0, instructions: 0, total: 0 };
+            for (const art of Object.values(artifacts)) {
+                const tokens = art.tokens?.estimated || art.tokens || 0;
+                const type = art.type || 'source';
+                if (totals[type] !== undefined) {
+                    totals[type] += tokens;
+                }
+                totals.total += tokens;
+            }
+            return totals;
+        },
+        
+        // Format token count for display
+        formatTokens(count) {
+            if (count >= 1000000) return `${(count / 1000000).toFixed(1)}M`;
+            if (count >= 1000) return `${(count / 1000).toFixed(1)}K`;
+            return String(count);
+        }
+    };
+    
+    /**
+     * EngineRegistryService — AI engine profiles and recommendations
+     * Static reference data for AI model capabilities, costs, and constraints.
+     * User preferences (default engine) stored in localStorage.
+     * 
+     * Engine profiles inform:
+     *   - Context budget calculation in Claude Prep
+     *   - Engine recommendation per session type
+     *   - Cost estimation per session
+     *   - Platform feature awareness (Projects, Skills, Artifacts, etc.)
+     */
+    const EngineRegistryService = {
+        PREF_KEY: 'cc_default_engine',
+        
+        // Static engine definitions
+        ENGINES: {
+            'claude-sonnet-4.5': {
+                id: 'claude-sonnet-4.5',
+                provider: 'anthropic',
+                name: 'Claude Sonnet 4.5',
+                tier: 'balanced',
+                contextWindow: 200000,
+                contextWindowExtended: 1000000,
+                maxOutput: 64000,
+                cost: {
+                    input: 3.00,
+                    output: 15.00,
+                    cacheWrite: 3.75,
+                    cacheRead: 0.30,
+                    longContextInput: 6.00,
+                    longContextOutput: 22.50
+                },
+                strengths: ['Coding and refactoring', 'Agentic workflows', 'Multi-step reasoning', 'Extended thinking'],
+                bestFor: ['coding', 'architecture', 'testing', 'complex-features'],
+                notes: 'Default recommendation for most sessions. Best coding model per benchmarks.',
+                features: { projects: true, skills: true, artifacts: true, extendedThinking: true, computerUse: true, webSearch: true, memory: true }
+            },
+            'claude-haiku-4.5': {
+                id: 'claude-haiku-4.5',
+                provider: 'anthropic',
+                name: 'Claude Haiku 4.5',
+                tier: 'fast',
+                contextWindow: 200000,
+                maxOutput: 64000,
+                cost: { input: 1.00, output: 5.00, cacheWrite: 1.25, cacheRead: 0.10 },
+                strengths: ['Speed', 'Cost efficiency', 'Classification'],
+                bestFor: ['quick-fixes', 'text-changes', 'chores', 'research'],
+                notes: 'Use for simple bug fixes, text updates, research tasks. 3x cheaper than Sonnet.',
+                features: { projects: true, skills: true, artifacts: true, extendedThinking: true, computerUse: true, webSearch: true, memory: true }
+            },
+            'claude-opus-4.5': {
+                id: 'claude-opus-4.5',
+                provider: 'anthropic',
+                name: 'Claude Opus 4.5',
+                tier: 'flagship',
+                contextWindow: 200000,
+                contextWindowExtended: 1000000,
+                maxOutput: 64000,
+                cost: { input: 5.00, output: 25.00, cacheWrite: 6.25, cacheRead: 0.50 },
+                strengths: ['Most intelligent', 'Complex architecture', 'Novel problem solving'],
+                bestFor: ['design', 'architecture', 'complex-debugging', 'research'],
+                notes: 'Reserve for high-complexity work: architecture design, novel patterns, difficult debugging.',
+                features: { projects: true, skills: true, artifacts: true, extendedThinking: true, computerUse: true, webSearch: true, memory: true }
+            },
+            'gpt-4.1': {
+                id: 'gpt-4.1',
+                provider: 'openai',
+                name: 'GPT-4.1',
+                tier: 'balanced',
+                contextWindow: 1000000,
+                maxOutput: 32768,
+                cost: { input: 2.00, output: 8.00 },
+                strengths: ['Large context native', 'Good at instruction following'],
+                bestFor: ['large-codebase-review', 'migration'],
+                notes: 'Useful when full source must be in context. Cheaper per token but lower coding quality than Sonnet.',
+                features: { projects: false, skills: false, artifacts: false }
+            },
+            'gemini-2.5-pro': {
+                id: 'gemini-2.5-pro',
+                provider: 'google',
+                name: 'Gemini 2.5 Pro',
+                tier: 'balanced',
+                contextWindow: 2000000,
+                maxOutput: 65536,
+                cost: { input: 1.25, output: 10.00 },
+                strengths: ['Largest context window', 'Multimodal', 'Competitive coding'],
+                bestFor: ['full-codebase-analysis', 'design-review', 'documentation'],
+                notes: '2M tokens means entire CC codebase fits in one session. Good for architectural review.',
+                features: { projects: false, skills: false, artifacts: false }
+            }
+        },
+        
+        // Session type → recommended engine mapping
+        SESSION_TYPE_ENGINES: {
+            'build':    'claude-sonnet-4.5',
+            'design':   'claude-opus-4.5',
+            'fix':      'claude-sonnet-4.5',
+            'test':     'claude-sonnet-4.5',
+            'research': 'claude-haiku-4.5',
+            'review':   'claude-sonnet-4.5',
+            'polish':   'claude-haiku-4.5',
+            'document': 'claude-haiku-4.5'
+        },
+        
+        // Work item type → suggested session type
+        WORK_ITEM_SESSION_MAP: {
+            'feature':     'build',
+            'bugfix':      'fix',
+            'enhancement': 'build',
+            'chore':       'build',
+            'research':    'research'
+        },
+        
+        // Get all engines
+        getAll() {
+            return Object.values(this.ENGINES);
+        },
+        
+        // Get a specific engine
+        get(engineId) {
+            return this.ENGINES[engineId] || null;
+        },
+        
+        // Get user's default engine
+        getDefault() {
+            const pref = localStorage.getItem(this.PREF_KEY);
+            return pref && this.ENGINES[pref] ? pref : 'claude-sonnet-4.5';
+        },
+        
+        // Set user's default engine
+        setDefault(engineId) {
+            if (this.ENGINES[engineId]) {
+                localStorage.setItem(this.PREF_KEY, engineId);
+            }
+        },
+        
+        // Recommend engine for a session type
+        recommendForSessionType(sessionType) {
+            const engineId = this.SESSION_TYPE_ENGINES[sessionType] || 'claude-sonnet-4.5';
+            return this.ENGINES[engineId];
+        },
+        
+        // Recommend engine based on work item
+        recommendForWorkItem(workItem) {
+            const sessionType = this.WORK_ITEM_SESSION_MAP[workItem.type] || 'build';
+            return {
+                sessionType,
+                engine: this.recommendForSessionType(sessionType)
+            };
+        },
+        
+        // Check if a package fits within an engine's context window
+        checkBudget(tokenCount, engineId, useExtended = false) {
+            const engine = this.get(engineId || this.getDefault());
+            if (!engine) return { fits: false, engine: null };
+            
+            const limit = useExtended && engine.contextWindowExtended 
+                ? engine.contextWindowExtended 
+                : engine.contextWindow;
+            
+            // Reserve ~20% for conversation/reasoning room
+            const usableLimit = Math.floor(limit * 0.80);
+            
+            return {
+                fits: tokenCount <= usableLimit,
+                engine,
+                limit,
+                usableLimit,
+                tokenCount,
+                remaining: usableLimit - tokenCount,
+                percentUsed: Math.round((tokenCount / usableLimit) * 100),
+                overBy: tokenCount > usableLimit ? tokenCount - usableLimit : 0,
+                recommendations: this._getBudgetRecommendations(tokenCount, engine, useExtended)
+            };
+        },
+        
+        // Generate context budget recommendations
+        _getBudgetRecommendations(tokenCount, engine, useExtended) {
+            const recs = [];
+            const limit = useExtended && engine.contextWindowExtended
+                ? engine.contextWindowExtended
+                : engine.contextWindow;
+            const usableLimit = Math.floor(limit * 0.80);
+            
+            if (tokenCount <= usableLimit) return recs;
+            
+            // Over budget — generate recommendations
+            if (!useExtended && engine.contextWindowExtended) {
+                recs.push({
+                    action: 'extended-context',
+                    label: `Switch to ${TokenRegistryService.formatTokens(engine.contextWindowExtended)} extended context`,
+                    savings: null,
+                    cost: engine.cost.longContextInput ? `$${engine.cost.longContextInput}/$${engine.cost.longContextOutput} per MTok` : null
+                });
+            }
+            
+            recs.push({
+                action: 'architecture-summary',
+                label: 'Use architecture summary instead of full source',
+                savings: `~${TokenRegistryService.formatTokens(Math.floor(tokenCount * 0.85))} saved`,
+                cost: null
+            });
+            
+            recs.push({
+                action: 'section-extraction',
+                label: 'Include only relevant code sections for this work item',
+                savings: `~${TokenRegistryService.formatTokens(Math.floor(tokenCount * 0.90))} saved`,
+                cost: null
+            });
+            
+            recs.push({
+                action: 'skip-changelog',
+                label: 'Skip CHANGELOG.md (low value for build sessions)',
+                savings: null,
+                cost: null
+            });
+            
+            // Suggest a different engine if this one can't handle it
+            const biggerEngines = Object.values(this.ENGINES).filter(e => 
+                e.id !== engine.id && 
+                (e.contextWindow > limit || (e.contextWindowExtended && e.contextWindowExtended > limit))
+            );
+            if (biggerEngines.length > 0) {
+                const best = biggerEngines.sort((a, b) => 
+                    (b.contextWindowExtended || b.contextWindow) - (a.contextWindowExtended || a.contextWindow)
+                )[0];
+                recs.push({
+                    action: 'switch-engine',
+                    label: `Switch to ${best.name} (${TokenRegistryService.formatTokens(best.contextWindowExtended || best.contextWindow)} context)`,
+                    savings: null,
+                    cost: `$${best.cost.input}/$${best.cost.output} per MTok`
+                });
+            }
+            
+            return recs;
+        },
+        
+        // Estimate session cost
+        estimateSessionCost(packageTokens, outputTokens, engineId) {
+            const engine = this.get(engineId || this.getDefault());
+            if (!engine) return null;
+            
+            const inputCost = (packageTokens / 1000000) * engine.cost.input;
+            const outputCost = (outputTokens / 1000000) * engine.cost.output;
+            
+            return {
+                inputCost: Math.round(inputCost * 100) / 100,
+                outputCost: Math.round(outputCost * 100) / 100,
+                totalCost: Math.round((inputCost + outputCost) * 100) / 100,
+                engine: engine.name
+            };
+        }
+    };
+    
+    // =========================================================================
+    // END DATA SERVICE LAYER
+    // =========================================================================
     
     function extractVersionFromHTML(content) {
         // Collect all version candidates with their source
@@ -1354,6 +2381,17 @@
                     if (app.hasServiceWorker === undefined) app.hasServiceWorker = false;
                     // v8.18.0: Ensure project field exists — fall back to seed definition or 'other'
                     if (!app.project) app.project = DEFAULT_APP_DEFINITIONS[id]?.project || 'other';
+                    // v8.20.0: Ensure lifecycle object exists (Phase 0.2 orchestrator)
+                    if (!app.lifecycle) app.lifecycle = {};
+                    if (!app.lifecycle.category) app.lifecycle.category = app.appType === 'internal' ? 'admin' : null;
+                    if (!app.lifecycle.currentMaturity) app.lifecycle.currentMaturity = null;
+                    if (!app.lifecycle.maturityTarget) app.lifecycle.maturityTarget = null;
+                    if (!app.lifecycle.problemStatement) app.lifecycle.problemStatement = '';
+                    if (!app.lifecycle.targetAudience) app.lifecycle.targetAudience = '';
+                    if (!app.lifecycle.userGoal) app.lifecycle.userGoal = '';
+                    if (!app.lifecycle.successMetric) app.lifecycle.successMetric = '';
+                    if (!app.lifecycle.stack) app.lifecycle.stack = {};
+                    if (!app.lifecycle.maturityCriteria) app.lifecycle.maturityCriteria = {};
                 }
             }
             
@@ -1403,7 +2441,19 @@
                     prod: [id],
                     beta: [`${id}beta`, `${id}-beta`]
                 },
-                detectionPatterns: appData.detectionPatterns || [`<title>${appData.name.toLowerCase()}`]
+                detectionPatterns: appData.detectionPatterns || [`<title>${appData.name.toLowerCase()}`],
+                // v8.20.0: Include lifecycle metadata
+                lifecycle: appData.lifecycle || {
+                    category: null,
+                    currentMaturity: null,
+                    maturityTarget: null,
+                    problemStatement: '',
+                    targetAudience: '',
+                    userGoal: '',
+                    successMetric: '',
+                    stack: {},
+                    maturityCriteria: {}
+                }
             };
             return config;
         },
@@ -2617,9 +3667,7 @@
             }
         });
         const [stagedFiles, setStagedFiles] = React.useState([]);
-        const [deployments, setDeployments] = React.useState(() => {
-            try { const s = localStorage.getItem('cc_history_v2'); return s ? JSON.parse(s) : []; } catch { return []; }
-        });
+        const [deployments, setDeployments] = React.useState(() => DeployService.load());
         const [activeDeployments, setActiveDeployments] = React.useState([]);
         const [availableRepos, setAvailableRepos] = React.useState([]);
         const [repoHealthAlert, setRepoHealthAlert] = React.useState(null); // { issues: [{app, repo, target, unexpectedFiles}] }
@@ -2747,20 +3795,9 @@
         
         // Rollback snapshots - stores last known good version for each app/repo/target
         // Format: { "appId:target": { content, version, savedAt, repo } }
-        const [rollbackSnapshots, setRollbackSnapshots] = React.useState(() => {
-            try { const s = localStorage.getItem('cc_rollback_snapshots'); return s ? JSON.parse(s) : {}; } catch { return {}; }
-        });
+        const [rollbackSnapshots, setRollbackSnapshots] = React.useState(() => RollbackService.load());
         
-        // Persist rollback snapshots
-        React.useEffect(() => {
-            try { 
-                localStorage.setItem('cc_rollback_snapshots', JSON.stringify(rollbackSnapshots));
-                // Firebase dual-write
-                if (FirebaseConfigSync.initialized) {
-                    FirebaseConfigSync.pushRollbackSnapshots(rollbackSnapshots).catch(() => {});
-                }
-            } catch {}
-        }, [rollbackSnapshots]);
+        React.useEffect(() => { RollbackService.save(rollbackSnapshots); }, [rollbackSnapshots]);
         
         // Save snapshot before deploy (call this before pushing new content)
         const saveRollbackSnapshot = async (appId, target, repo, targetPath) => {
@@ -2890,19 +3927,7 @@
         const [deployingRepos, setDeployingRepos] = React.useState({}); // { appId: { version, startTime, repo } }
         
         // Session log state (persisted to localStorage)
-        const [sessionLog, setSessionLog] = React.useState(() => {
-            try { 
-                const s = localStorage.getItem('cc_session_log'); 
-                return s ? JSON.parse(s) : {
-                    currentSession: null,
-                    sessions: [],
-                    issues: [],
-                    notes: ''
-                }; 
-            } catch { 
-                return { currentSession: null, sessions: [], issues: [], notes: '' }; 
-            }
-        });
+        const [sessionLog, setSessionLog] = React.useState(() => SessionLogService.load());
         
         // Global issues state (synced with Firebase)
         const [globalIssues, setGlobalIssues] = React.useState([]);
@@ -2913,43 +3938,30 @@
         React.useEffect(() => {
             if (!firebaseAuth) return;
             
+            let unsubscribeIssues = () => {};
+            
             const unsubscribe = firebaseAuth.onAuthStateChanged((u) => {
                 setFirebaseUser(u);
                 if (u) {
                     setFirebaseUid(u.uid);
-                    // Listen for issues changes
-                    const issuesRef = firebaseDb.ref(`command-center/${u.uid}/issues`);
-                    issuesRef.on('value', (snapshot) => {
-                        const data = snapshot.val();
-                        if (data) {
-                            const list = Object.entries(data).map(([id, issue]) => ({ id, ...issue }));
-                            setGlobalIssues(list);
-                        } else {
-                            setGlobalIssues([]);
-                        }
-                    });
-                    return () => issuesRef.off();
+                    // Listen for issues changes via IssueService
+                    unsubscribeIssues = IssueService.listen(u.uid, setGlobalIssues);
                 } else {
                     setFirebaseUid(null);
                     setGlobalIssues([]);
                 }
             });
             
-            return () => unsubscribe();
+            return () => {
+                unsubscribe();
+                unsubscribeIssues();
+            };
         }, []);
         
         // Link issues to a deployed version
         const linkIssuesToVersion = async (issueIds, version, appId) => {
-            if (!firebaseDb || !firebaseUid || !issueIds.length) return;
-            
-            for (const issueId of issueIds) {
-                await firebaseDb.ref(`command-center/${firebaseUid}/issues/${issueId}`).update({
-                    status: 'fixed',
-                    fixedAt: new Date().toISOString(),
-                    fixedInVersion: version,
-                    fixedInApp: appId
-                });
-            }
+            if (!firebaseUid || !issueIds.length) return;
+            await IssueService.linkToVersion(firebaseUid, issueIds, version, appId);
         };
         
         // Use ref to always have latest apps state for async operations
@@ -2961,25 +3973,8 @@
         // Persist
         React.useEffect(() => { try { if (githubToken) localStorage.setItem('cc_token', githubToken); } catch {} }, [githubToken]);
         React.useEffect(() => { try { localStorage.setItem('cc_apps_v6', JSON.stringify(apps)); } catch {} }, [apps]);
-        React.useEffect(() => { 
-            try { 
-                const history = deployments.slice(0, 100);
-                localStorage.setItem('cc_history_v2', JSON.stringify(history));
-                // Firebase dual-write
-                if (FirebaseConfigSync.initialized) {
-                    FirebaseConfigSync.pushDeployHistory(history).catch(() => {});
-                }
-            } catch {} 
-        }, [deployments]);
-        React.useEffect(() => { 
-            try { 
-                localStorage.setItem('cc_session_log', JSON.stringify(sessionLog));
-                // Firebase dual-write
-                if (FirebaseConfigSync.initialized) {
-                    FirebaseConfigSync.pushSessionLog(sessionLog).catch(() => {});
-                }
-            } catch {} 
-        }, [sessionLog]);
+        React.useEffect(() => { DeployService.save(deployments); }, [deployments]);
+        React.useEffect(() => { SessionLogService.save(sessionLog); }, [sessionLog]);
         
         // v8.17.0: Firebase Config Sync — startup overlay
         // Load localStorage first (instant), then pull from Firebase and overlay if newer.
@@ -3076,8 +4071,8 @@
                         const remoteTs = remote.deployHistory._updatedAt || 0;
                         setDeployments(prev => {
                             if (remoteTs > 0 || remote.deployHistory.length > prev.length) {
-                                try { localStorage.setItem('cc_history_v2', JSON.stringify(remote.deployHistory)); } catch {}
-                                return remote.deployHistory;
+                                DeployService.overlay(remote.deployHistory);
+                                return Array.isArray(remote.deployHistory) ? remote.deployHistory : prev;
                             }
                             return prev;
                         });
@@ -3085,14 +4080,10 @@
                     
                     // Overlay session log if Firebase has data
                     if (remote.sessionLog && remote.sessionLog._updatedAt) {
-                        setSessionLog(prev => {
-                            if ((remote.sessionLog._updatedAt || 0) > 0) {
-                                const { _updatedAt, _updatedBy, ...cleanLog } = remote.sessionLog;
-                                try { localStorage.setItem('cc_session_log', JSON.stringify(cleanLog)); } catch {}
-                                return cleanLog;
-                            }
-                            return prev;
-                        });
+                        const overlaid = SessionLogService.overlay(remote.sessionLog);
+                        if (overlaid) {
+                            setSessionLog(overlaid);
+                        }
                     }
                     
                     console.log('[ConfigSync] Startup overlay complete');
@@ -3100,11 +4091,11 @@
                     // Firebase is empty — first run, seed it with local data
                     console.log('[ConfigSync] Firebase empty, seeding with local data...');
                     const localConfig = ConfigManager.load();
-                    const localDeployments = (() => { try { return JSON.parse(localStorage.getItem('cc_history_v2') || '[]'); } catch { return []; } })();
+                    const localDeployments = DeployService.load();
                     const localRulesHistory = (() => { try { return JSON.parse(localStorage.getItem('cc_rulesHistory') || '[]'); } catch { return []; } })();
-                    const localSessionLog = (() => { try { return JSON.parse(localStorage.getItem('cc_session_log') || '{}'); } catch { return {}; } })();
+                    const localSessionLog = SessionLogService.load();
                     const localDeletionHistory = (() => { try { return JSON.parse(localStorage.getItem('cc_deletion_history') || '[]'); } catch { return []; } })();
-                    const localRollbackSnapshots = (() => { try { return JSON.parse(localStorage.getItem('cc_rollback_snapshots') || '{}'); } catch { return {}; } })();
+                    const localRollbackSnapshots = RollbackService.load();
                     
                     await FirebaseConfigSync.pushAll({
                         config: localConfig,
@@ -3145,14 +4136,13 @@
                 }
                 
                 if (remote.deployHistory && Array.isArray(remote.deployHistory) && remote.deployHistory.length > 0) {
-                    try { localStorage.setItem('cc_history_v2', JSON.stringify(remote.deployHistory)); } catch {}
-                    setDeployments(remote.deployHistory);
+                    DeployService.overlay(remote.deployHistory);
+                    setDeployments(Array.isArray(remote.deployHistory) ? remote.deployHistory : []);
                 }
                 
                 if (remote.sessionLog && remote.sessionLog._updatedAt) {
-                    const { _updatedAt, _updatedBy, ...cleanLog } = remote.sessionLog;
-                    try { localStorage.setItem('cc_session_log', JSON.stringify(cleanLog)); } catch {}
-                    setSessionLog(cleanLog);
+                    const overlaid = SessionLogService.overlay(remote.sessionLog);
+                    if (overlaid) setSessionLog(overlaid);
                 }
             }
         };
@@ -3408,7 +4398,7 @@
             // Only check apps deployed in the last 30 days
             const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
             let currentDeployments;
-            try { currentDeployments = JSON.parse(localStorage.getItem('cc_history_v2') || '[]'); } catch { currentDeployments = []; }
+            let currentDeployments = DeployService.load();
             const recentlyDeployed = new Set(
                 currentDeployments
                     .filter(d => d.status === 'success' && new Date(d.completedAt || d.startedAt) > thirtyDaysAgo)
@@ -4880,7 +5870,7 @@
                                 <div>
                                     <h1 className="text-lg font-bold">Command Center</h1>
                                     <div className="text-xs text-slate-400 flex items-center gap-1.5">
-                                        v{document.querySelector('meta[name="version"]')?.content || '8.18.6'} • Deploy & manage apps
+                                        v{document.querySelector('meta[name="version"]')?.content || '8.19.0'} • Deploy & manage apps
                                         <span title={`Firebase sync: ${syncStatus}`} className="inline-flex items-center">
                                             {syncStatus === 'synced' && <span className="text-green-400" title="Synced with Firebase">☁️</span>}
                                             {syncStatus === 'syncing' && <span className="text-yellow-400 animate-pulse" title="Syncing...">🔄</span>}
@@ -8910,7 +9900,7 @@
             // Get recently deployed apps (last 30 days)
             let recentApps = new Set();
             try {
-                const history = JSON.parse(localStorage.getItem('cc_history_v2') || '[]');
+                const history = DeployService.load();
                 const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
                 recentApps = new Set(
                     history.filter(d => d.status === 'success' && new Date(d.completedAt || d.startedAt) > thirtyDaysAgo).map(d => d.appId)
@@ -13089,131 +14079,53 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
         // Listen for Firebase auth
         React.useEffect(() => {
             if (!firebaseAuth) return;
+            
+            let unsubIssues = () => {};
+            let unsubReleases = () => {};
+            let unsubReports = () => {};
+            
             const unsubscribe = firebaseAuth.onAuthStateChanged((u) => {
                 setFirebaseUser(u);
                 if (u) {
-                    loadIssues(u.uid);
-                    loadReleases(u.uid);
-                    loadUserReports(); // Load user-submitted reports
+                    // Use service listeners
+                    setLoading(true);
+                    unsubIssues = IssueService.listen(u.uid, (list) => {
+                        setIssues(list);
+                        setLoading(false);
+                    });
+                    unsubReleases = ReleaseService.listen(u.uid, setReleases);
+                    unsubReports = UserReportService.listen(setUserReports);
                 }
             });
-            return () => unsubscribe();
+            return () => {
+                unsubscribe();
+                unsubIssues();
+                unsubReleases();
+                unsubReports();
+            };
         }, []);
         
-        // Load user-reported issues from Game Shelf
-        const loadUserReports = () => {
-            if (!firebaseDb) return;
-            try {
-                const ref = firebaseDb.ref('reported-issues');
-                ref.on('value', (snapshot) => {
-                    const data = snapshot.val();
-                    if (data) {
-                        const list = Object.entries(data).map(([id, report]) => ({ 
-                            firebaseKey: id, 
-                            ...report 
-                        }));
-                        // Sort by timestamp, newest first
-                        setUserReports(list.sort((a, b) => 
-                            new Date(b.timestamp || b.createdAt || 0) - new Date(a.timestamp || a.createdAt || 0)
-                        ));
-                    } else {
-                        setUserReports([]);
-                    }
-                });
-            } catch (e) {
-                console.error('Error loading user reports:', e);
-            }
-        };
-        
-        // Load issues from Firebase
-        const loadIssues = async (uid) => {
-            if (!firebaseDb) return;
-            setLoading(true);
-            try {
-                const ref = firebaseDb.ref(`command-center/${uid}/issues`);
-                ref.on('value', (snapshot) => {
-                    const data = snapshot.val();
-                    if (data) {
-                        const list = Object.entries(data).map(([id, issue]) => ({ id, ...issue }));
-                        setIssues(list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
-                    } else {
-                        setIssues([]);
-                    }
-                    setLoading(false);
-                });
-            } catch (e) {
-                console.error('Error loading issues:', e);
-                setLoading(false);
-            }
-        };
-        
-        // Load releases from Firebase
-        const loadReleases = async (uid) => {
-            if (!firebaseDb) return;
-            try {
-                const ref = firebaseDb.ref(`command-center/${uid}/releases`);
-                ref.on('value', (snapshot) => {
-                    const data = snapshot.val();
-                    if (data) {
-                        const list = Object.entries(data).map(([id, rel]) => ({ id, ...rel }));
-                        setReleases(list.sort((a, b) => new Date(b.deployedAt) - new Date(a.deployedAt)));
-                    } else {
-                        setReleases([]);
-                    }
-                });
-            } catch (e) {
-                console.error('Error loading releases:', e);
-            }
-        };
-        
         // Generate next issue ID
-        const getNextIssueId = () => {
-            const existing = issues.map(i => parseInt(i.id?.replace('ISS-', '') || 0));
-            const max = Math.max(0, ...existing);
-            return `ISS-${String(max + 1).padStart(3, '0')}`;
-        };
+        const getNextIssueId = () => IssueService.getNextId(issues);
         
         // Create new issue
         const createIssue = async (issueData) => {
-            if (!firebaseDb || !firebaseUser) return;
-            
+            if (!firebaseUser) return;
             const id = getNextIssueId();
-            const issue = {
-                ...issueData,
-                id,
-                status: 'open',
-                createdAt: new Date().toISOString(),
-                createdBy: 'manual',
-                notes: []
-            };
-            
-            await firebaseDb.ref(`command-center/${firebaseUser.uid}/issues/${id}`).set(issue);
+            await IssueService.create(firebaseUser.uid, { ...issueData, id });
             setShowNewIssue(false);
         };
         
         // Update issue status
         const updateIssueStatus = async (issueId, newStatus, extraData = {}) => {
-            if (!firebaseDb || !firebaseUser) return;
-            
-            const updates = {
-                status: newStatus,
-                [`${newStatus}At`]: new Date().toISOString(),
-                ...extraData
-            };
-            
-            await firebaseDb.ref(`command-center/${firebaseUser.uid}/issues/${issueId}`).update(updates);
+            if (!firebaseUser) return;
+            await IssueService.updateStatus(firebaseUser.uid, issueId, newStatus, extraData);
         };
         
         // Link issue to version (when deploying fix)
         const linkIssueToVersion = async (issueId, version, app) => {
-            if (!firebaseDb || !firebaseUser) return;
-            
-            await firebaseDb.ref(`command-center/${firebaseUser.uid}/issues/${issueId}`).update({
-                status: 'fixed',
-                fixedAt: new Date().toISOString(),
-                fixedInVersion: version,
-                fixedInApp: app
-            });
+            if (!firebaseUser) return;
+            await IssueService.linkToVersion(firebaseUser.uid, [issueId], version, app);
         };
         
         // Generate "Copy for Claude" text
@@ -13277,29 +14189,22 @@ Released: ${new Date().toLocaleDateString()}
         
         // Mark issues as released to PROD
         const markReleasedToProd = async (app) => {
-            if (!firebaseDb || !firebaseUser) return;
+            if (!firebaseUser) return;
             
             const releaseIssues = getIssuesForRelease(app);
             const appInfo = configuredApps.find(a => a.id === app);
             const version = appInfo?.currentTestVersion;
             
-            // Update each issue
-            for (const issue of releaseIssues) {
-                await firebaseDb.ref(`command-center/${firebaseUser.uid}/issues/${issue.id}`).update({
-                    status: 'closed',
-                    closedAt: new Date().toISOString(),
-                    releasedToProd: true,
-                    releasedInVersion: version
-                });
-            }
+            // Update each issue via IssueService
+            const issueIds = releaseIssues.map(i => i.id);
+            await IssueService.markReleasedToProd(firebaseUser.uid, issueIds, version);
             
-            // Create release record
-            const releaseId = `${app}-${version}-${Date.now()}`;
-            await firebaseDb.ref(`command-center/${firebaseUser.uid}/releases/${releaseId}`).set({
+            // Create release record via ReleaseService
+            await ReleaseService.create(firebaseUser.uid, {
                 app,
                 version,
                 deployedAt: new Date().toISOString(),
-                issues: releaseIssues.map(i => i.id),
+                issues: issueIds,
                 environment: 'prod'
             });
             
@@ -13310,7 +14215,7 @@ Released: ${new Date().toLocaleDateString()}
         
         // Convert user report to tracked issue
         const convertToTrackedIssue = async (report) => {
-            if (!firebaseDb || !firebaseUser) return;
+            if (!firebaseUser) return;
             
             const id = getNextIssueId();
             const issue = {
@@ -13319,8 +14224,6 @@ Released: ${new Date().toLocaleDateString()}
                 description: report.description || '',
                 app: report.section || 'gameshelf',
                 severity: report.severity || 'medium',
-                status: 'open',
-                createdAt: new Date().toISOString(),
                 createdBy: 'user-report',
                 originalReport: {
                     firebaseKey: report.firebaseKey,
@@ -13336,13 +14239,15 @@ Released: ${new Date().toLocaleDateString()}
                 actual: report.description || ''
             };
             
-            await firebaseDb.ref(`command-center/${firebaseUser.uid}/issues/${id}`).set(issue);
+            await IssueService.create(firebaseUser.uid, issue);
             
             // Mark original report as converted
-            await firebaseDb.ref(`reported-issues/${report.firebaseKey}`).update({
-                convertedToIssue: id,
-                convertedAt: new Date().toISOString()
-            });
+            if (firebaseDb) {
+                await firebaseDb.ref(`reported-issues/${report.firebaseKey}`).update({
+                    convertedToIssue: id,
+                    convertedAt: new Date().toISOString()
+                });
+            }
             
             setSelectedUserReport(null);
         };
@@ -13869,7 +14774,9 @@ const pushIssueToCommandCenter = async (testResult) => {
                         issue={selectedIssue}
                         apps={configuredApps}
                         onSave={async (updated) => {
-                            await firebaseDb.ref(`command-center/${firebaseUser.uid}/issues/${updated.id}`).update(updated);
+                            if (firebaseUser) {
+                                await IssueService.update(firebaseUser.uid, updated.id, updated);
+                            }
                             setSelectedIssue(null);
                         }}
                         onCancel={() => setSelectedIssue(null)}
@@ -14587,9 +15494,20 @@ const pushIssueToCommandCenter = async (testResult) => {
             detectionPatterns: (app.detectionPatterns || []).join('\n'),
             repoPatterns: Object.fromEntries(
                 environments.map(env => [env, (app.repoPatterns?.[env] || []).join(', ')])
-            )
+            ),
+            // v8.20.0: Lifecycle fields
+            lifecycle: {
+                category: app.lifecycle?.category || null,
+                currentMaturity: app.lifecycle?.currentMaturity || null,
+                maturityTarget: app.lifecycle?.maturityTarget || null,
+                problemStatement: app.lifecycle?.problemStatement || '',
+                targetAudience: app.lifecycle?.targetAudience || '',
+                userGoal: app.lifecycle?.userGoal || '',
+                successMetric: app.lifecycle?.successMetric || ''
+            }
         });
         
+        const [activeTab, setActiveTab] = React.useState('general'); // 'general' or 'lifecycle'
         const [repoMode, setRepoMode] = React.useState('dropdown'); // 'dropdown' or 'manual'
         const [patternsManuallyEdited, setPatternsManuallyEdited] = React.useState(!isNew);
         const [showEmojiPicker, setShowEmojiPicker] = React.useState(false);
@@ -14695,7 +15613,9 @@ const pushIssueToCommandCenter = async (testResult) => {
                 ...form,
                 id: effectiveId,
                 detectionPatterns: form.detectionPatterns.split('\n').filter(p => p.trim()),
-                repoPatterns
+                repoPatterns,
+                // v8.20.0: Include lifecycle data
+                lifecycle: form.lifecycle
             };
             onSave(data);
         };
@@ -14705,9 +15625,24 @@ const pushIssueToCommandCenter = async (testResult) => {
                 <div className="bg-slate-800 rounded-xl border border-slate-600 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
                     <div className="p-6 border-b border-slate-700">
                         <h3 className="text-lg font-bold">{isNew ? 'Add New App' : `Edit ${app.name}`}</h3>
+                        {/* v8.20.0: Tab navigation */}
+                        <div className="flex gap-1 mt-3">
+                            <button 
+                                onClick={() => setActiveTab('general')}
+                                className={`px-3 py-1.5 rounded text-sm font-medium ${activeTab === 'general' ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
+                            >
+                                ⚙️ General
+                            </button>
+                            <button 
+                                onClick={() => setActiveTab('lifecycle')}
+                                className={`px-3 py-1.5 rounded text-sm font-medium ${activeTab === 'lifecycle' ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
+                            >
+                                📊 Lifecycle
+                            </button>
+                        </div>
                     </div>
                     
-                    <div className="p-6 space-y-4">
+                    {activeTab === 'general' && <div className="p-6 space-y-4">
                         <div className="grid grid-cols-2 gap-4">
                             <div>
                                 <label className="block text-sm font-medium mb-1">App Name</label>
@@ -14920,7 +15855,132 @@ const pushIssueToCommandCenter = async (testResult) => {
                                 </div>
                             )}
                         </div>
-                    </div>
+                    </div>}
+                    
+                    {/* v8.20.0: Lifecycle Tab */}
+                    {activeTab === 'lifecycle' && <div className="p-6 space-y-4">
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium mb-1">Category</label>
+                                <select
+                                    value={form.lifecycle.category || ''}
+                                    onChange={e => setForm({ ...form, lifecycle: { ...form.lifecycle, category: e.target.value || null }})}
+                                    className="w-full p-2 bg-slate-900 border border-slate-600 rounded"
+                                >
+                                    <option value="">Not set</option>
+                                    <option value="game">🎮 Game</option>
+                                    <option value="tool">🔧 Tool</option>
+                                    <option value="dashboard">📊 Dashboard</option>
+                                    <option value="content">📄 Content</option>
+                                    <option value="admin">⚙️ Admin</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium mb-1">Current Maturity</label>
+                                <select
+                                    value={form.lifecycle.currentMaturity || ''}
+                                    onChange={e => setForm({ ...form, lifecycle: { ...form.lifecycle, currentMaturity: e.target.value || null }})}
+                                    className="w-full p-2 bg-slate-900 border border-slate-600 rounded"
+                                >
+                                    <option value="">Not set</option>
+                                    <option value="prototype">🧪 Prototype</option>
+                                    <option value="alpha">🔬 Alpha</option>
+                                    <option value="beta">🔧 Beta</option>
+                                    <option value="production">🚀 Production</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <label className="block text-sm font-medium mb-1">Maturity Target</label>
+                            <select
+                                value={form.lifecycle.maturityTarget || ''}
+                                onChange={e => setForm({ ...form, lifecycle: { ...form.lifecycle, maturityTarget: e.target.value || null }})}
+                                className="w-full p-2 bg-slate-900 border border-slate-600 rounded"
+                            >
+                                <option value="">Not set</option>
+                                <option value="prototype">🧪 Prototype</option>
+                                <option value="alpha">🔬 Alpha</option>
+                                <option value="beta">🔧 Beta</option>
+                                <option value="production">🚀 Production</option>
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label className="block text-sm font-medium mb-1">Problem Statement</label>
+                            <textarea
+                                value={form.lifecycle.problemStatement}
+                                onChange={e => setForm({ ...form, lifecycle: { ...form.lifecycle, problemStatement: e.target.value }})}
+                                className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-sm"
+                                rows="2"
+                                placeholder="What problem does this app solve?"
+                            />
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium mb-1">Target Audience</label>
+                                <input
+                                    type="text"
+                                    value={form.lifecycle.targetAudience}
+                                    onChange={e => setForm({ ...form, lifecycle: { ...form.lifecycle, targetAudience: e.target.value }})}
+                                    className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-sm"
+                                    placeholder="Who is this for?"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium mb-1">User Goal</label>
+                                <input
+                                    type="text"
+                                    value={form.lifecycle.userGoal}
+                                    onChange={e => setForm({ ...form, lifecycle: { ...form.lifecycle, userGoal: e.target.value }})}
+                                    className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-sm"
+                                    placeholder="What should users accomplish?"
+                                />
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <label className="block text-sm font-medium mb-1">Success Metric</label>
+                            <input
+                                type="text"
+                                value={form.lifecycle.successMetric}
+                                onChange={e => setForm({ ...form, lifecycle: { ...form.lifecycle, successMetric: e.target.value }})}
+                                className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-sm"
+                                placeholder="How do we measure success?"
+                            />
+                        </div>
+                        
+                        {form.lifecycle.currentMaturity && form.lifecycle.maturityTarget && (
+                            <div className="bg-slate-900/50 rounded-lg p-3 border border-slate-700">
+                                <div className="text-sm font-medium mb-2">Maturity Progress</div>
+                                <div className="flex items-center gap-2 text-sm">
+                                    {['prototype', 'alpha', 'beta', 'production'].map((m, i) => {
+                                        const milestones = ['prototype', 'alpha', 'beta', 'production'];
+                                        const currentIdx = milestones.indexOf(form.lifecycle.currentMaturity);
+                                        const targetIdx = milestones.indexOf(form.lifecycle.maturityTarget);
+                                        const icons = { prototype: '🧪', alpha: '🔬', beta: '🔧', production: '🚀' };
+                                        const isComplete = i <= currentIdx;
+                                        const isCurrent = i === currentIdx;
+                                        const isTarget = i === targetIdx;
+                                        const isInRange = i <= targetIdx;
+                                        return React.createElement(React.Fragment, { key: m },
+                                            i > 0 && React.createElement('div', { className: `flex-1 h-0.5 ${isComplete ? 'bg-emerald-500' : isInRange ? 'bg-slate-600' : 'bg-slate-800'}` }),
+                                            React.createElement('div', { 
+                                                className: `flex flex-col items-center ${isComplete ? 'text-emerald-400' : isInRange ? 'text-slate-400' : 'text-slate-600'}`,
+                                                title: m.charAt(0).toUpperCase() + m.slice(1)
+                                            },
+                                                React.createElement('span', { className: 'text-base' }, icons[m]),
+                                                React.createElement('span', { className: `text-xs mt-0.5 ${isCurrent ? 'font-bold underline' : ''} ${isTarget ? 'font-bold' : ''}` }, 
+                                                    m.charAt(0).toUpperCase() + m.slice(1).substring(0, 4) + (isTarget ? ' ★' : '')
+                                                )
+                                            )
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+                    </div>}
                     
                     <div className="p-6 border-t border-slate-700 flex justify-end gap-3">
                         <button 
@@ -16883,8 +17943,9 @@ ${repoStr || '- *No repos configured*'}
                 const mainFile = await github.getFileContent(repo, targetPath);
                 if (mainFile?.textContent) {
                     appFolder.file(app.targetPath || 'index.html', mainFile.textContent);
-                    files.push({ name: app.targetPath || 'index.html', size: mainFile.textContent.length });
-                    addLog(`✅ ${app.targetPath || 'index.html'} (${(mainFile.textContent.length / 1024).toFixed(0)}KB)`);
+                    const mainName = app.targetPath || 'index.html';
+                    files.push({ name: mainName, size: mainFile.textContent.length, tokens: TokenRegistryService.estimateTokens(mainFile.textContent, mainName) });
+                    addLog(`✅ ${mainName} (${(mainFile.textContent.length / 1024).toFixed(0)}KB)`);
                 } else {
                     addLog(`⚠️ Could not fetch ${targetPath}`, 'warn');
                 }
@@ -16896,7 +17957,7 @@ ${repoStr || '- *No repos configured*'}
                     const swFile = await github.getFileContent(repo, swPath);
                     if (swFile?.textContent) {
                         appFolder.file('sw.js', swFile.textContent);
-                        files.push({ name: 'sw.js', size: swFile.textContent.length });
+                        files.push({ name: 'sw.js', size: swFile.textContent.length, tokens: TokenRegistryService.estimateTokens(swFile.textContent, 'sw.js') });
                         addLog(`✅ sw.js (${(swFile.textContent.length / 1024).toFixed(0)}KB)`);
                     } else {
                         addLog('⚠️ sw.js not found (PWA app)', 'warn');
@@ -16908,7 +17969,7 @@ ${repoStr || '- *No repos configured*'}
                     const manifestFile = await github.getFileContent(repo, manifestPath);
                     if (manifestFile?.textContent) {
                         appFolder.file('manifest.json', manifestFile.textContent);
-                        files.push({ name: 'manifest.json', size: manifestFile.textContent.length });
+                        files.push({ name: 'manifest.json', size: manifestFile.textContent.length, tokens: TokenRegistryService.estimateTokens(manifestFile.textContent, 'manifest.json') });
                         addLog(`✅ manifest.json`);
                     }
                 }
@@ -16929,7 +17990,7 @@ ${repoStr || '- *No repos configured*'}
                         const docFile = await github.getFileContent(repo, tryPath);
                         if (docFile?.textContent) {
                             appFolder.file(docName, docFile.textContent);
-                            files.push({ name: docName, size: docFile.textContent.length });
+                            files.push({ name: docName, size: docFile.textContent.length, tokens: TokenRegistryService.estimateTokens(docFile.textContent, docName) });
                             addLog(`✅ ${docName} (from ${tryPath})`);
                             docsFound++;
                             found = true;
@@ -16960,7 +18021,7 @@ ${repoStr || '- *No repos configured*'}
                         }
                         if (content) {
                             appFolder.file(docName, content);
-                            files.push({ name: docName, size: content.length, generated: true });
+                            files.push({ name: docName, size: content.length, generated: true, tokens: TokenRegistryService.estimateTokens(content, docName) });
                             addLog(`📝 Generated skeleton: ${docName}`, 'warn');
                         }
                     }
@@ -16989,7 +18050,7 @@ ${repoStr || '- *No repos configured*'}
                         const extraFile = await github.getFileContent(repo, filePath);
                         if (extraFile?.textContent) {
                             appFolder.file(extra.name, extraFile.textContent);
-                            files.push({ name: extra.name, size: extraFile.textContent.length });
+                            files.push({ name: extra.name, size: extraFile.textContent.length, tokens: TokenRegistryService.estimateTokens(extraFile.textContent, extra.name) });
                             addLog(`✅ ${extra.name} (extra reference doc)`);
                         }
                     }
@@ -17007,12 +18068,12 @@ ${repoStr || '- *No repos configured*'}
                 
                 const brief = generateSessionBrief(app, config, deployments);
                 // Append file manifest to brief
-                const manifest = '\n## Files in This Package\n| File | Size | Source |\n|------|------|--------|\n' +
-                    files.map(f => `| ${f.name} | ${(f.size / 1024).toFixed(1)}KB | ${f.generated ? '⚡ Generated skeleton' : '📂 From repo'} |`).join('\n') +
+                const manifest = '\n## Files in This Package\n| File | Size | Tokens | Source |\n|------|------|--------|--------|\n' +
+                    files.map(f => `| ${f.name} | ${(f.size / 1024).toFixed(1)}KB | ${TokenRegistryService.formatTokens(f.tokens || 0)} | ${f.generated ? '⚡ Generated skeleton' : '📂 From repo'} |`).join('\n') +
                     '\n';
                 const fullBrief = brief + manifest;
                 appFolder.file('SESSION_BRIEF.md', fullBrief);
-                files.push({ name: 'SESSION_BRIEF.md', size: fullBrief.length });
+                files.push({ name: 'SESSION_BRIEF.md', size: fullBrief.length, tokens: TokenRegistryService.estimateTokens(fullBrief, 'SESSION_BRIEF.md') });
                 
                 // === STEP 5: Build zip ===
                 addLog('📦 Building zip...');
@@ -17031,7 +18092,12 @@ ${repoStr || '- *No repos configured*'}
                     addLog(`⚠️ ${missingDocs.length} doc${missingDocs.length > 1 ? 's were' : ' was'} generated as skeleton${missingDocs.length > 1 ? 's' : ''} — flesh out during the session`, 'warn');
                 }
                 
-                setResult({ blobUrl, filename, fileCount: files.length, totalSize, missingDocs, files });
+                const totalTokens = files.reduce((sum, f) => sum + (f.tokens || 0), 0);
+                const budget = EngineRegistryService.checkBudget(totalTokens);
+                
+                addLog(`📊 Token estimate: ${TokenRegistryService.formatTokens(totalTokens)} (${budget.percentUsed}% of ${budget.engine.name} budget)`, budget.fits ? 'success' : 'warn');
+                
+                setResult({ blobUrl, filename, fileCount: files.length, totalSize, missingDocs, files, totalTokens, budget });
                 setStatus('done');
                 
             } catch (e) {
@@ -17229,13 +18295,16 @@ ${repoStr || '- *No repos configured*'}
                     <div className="p-5 border-t border-slate-700">
                         {status === 'done' && result && (
                             <div className="space-y-3">
-                                {/* Summary */}
-                                <div className="flex items-center gap-4 text-sm">
+                                {/* Summary stats row */}
+                                <div className="flex items-center gap-4 text-sm flex-wrap">
                                     <div className="flex items-center gap-1.5 text-slate-300">
                                         <span>📦</span> {result.fileCount} files
                                     </div>
                                     <div className="flex items-center gap-1.5 text-slate-300">
-                                        <span>💾</span> {(result.totalSize / 1024).toFixed(0)}KB uncompressed
+                                        <span>💾</span> {(result.totalSize / 1024).toFixed(0)}KB
+                                    </div>
+                                    <div className="flex items-center gap-1.5 text-slate-300">
+                                        <span>🧮</span> {TokenRegistryService.formatTokens(result.totalTokens)} tokens
                                     </div>
                                     {result.missingDocs.length > 0 && (
                                         <div className="flex items-center gap-1.5 text-amber-400">
@@ -17243,6 +18312,93 @@ ${repoStr || '- *No repos configured*'}
                                         </div>
                                     )}
                                 </div>
+                                
+                                {/* Context Budget Bar */}
+                                {result.budget && (() => {
+                                    const b = result.budget;
+                                    const pct = Math.min(b.percentUsed, 100);
+                                    const barColor = b.percentUsed <= 50 ? 'bg-green-500' : b.percentUsed <= 75 ? 'bg-emerald-500' : b.percentUsed <= 90 ? 'bg-amber-500' : b.fits ? 'bg-orange-500' : 'bg-red-500';
+                                    const textColor = b.fits ? 'text-slate-400' : 'text-red-400';
+                                    return (
+                                        <div className="bg-slate-900 rounded-lg p-3">
+                                            <div className="flex items-center justify-between text-xs mb-1.5">
+                                                <span className="text-slate-400 font-medium">{b.engine.name}</span>
+                                                <span className={textColor}>
+                                                    {TokenRegistryService.formatTokens(b.tokenCount)} / {TokenRegistryService.formatTokens(b.usableLimit)} usable ({b.percentUsed}%)
+                                                </span>
+                                            </div>
+                                            <div className="h-2.5 bg-slate-700 rounded-full overflow-hidden">
+                                                <div className={`h-full rounded-full transition-all duration-500 ${barColor}`}
+                                                    style={{ width: `${pct}%` }} />
+                                            </div>
+                                            <div className="flex justify-between text-[10px] text-slate-600 mt-1">
+                                                <span>0</span>
+                                                <span>{TokenRegistryService.formatTokens(b.limit)} total ({TokenRegistryService.formatTokens(b.usableLimit)} usable · 20% reserved)</span>
+                                            </div>
+                                            {!b.fits && b.recommendations.length > 0 && (
+                                                <div className="mt-2.5 pt-2.5 border-t border-slate-700">
+                                                    <div className="text-xs text-red-400 font-medium mb-1.5">⚠️ Over budget by {TokenRegistryService.formatTokens(b.overBy)} tokens</div>
+                                                    <div className="space-y-1">
+                                                        {b.recommendations.map((rec, i) => (
+                                                            <div key={i} className="flex items-start gap-2 text-xs">
+                                                                <span className="text-slate-500 mt-0.5">•</span>
+                                                                <div>
+                                                                    <span className="text-slate-300">{rec.label}</span>
+                                                                    {rec.savings && <span className="text-green-500 ml-1">({rec.savings})</span>}
+                                                                    {rec.cost && <span className="text-amber-500 ml-1">({rec.cost})</span>}
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
+                                
+                                {/* File Manifest Table */}
+                                {result.files && result.files.length > 0 && (
+                                    <details className="group">
+                                        <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-300 select-none">📋 File manifest ({result.files.length} files)</summary>
+                                        <div className="mt-2 bg-slate-900 rounded-lg overflow-hidden">
+                                            <table className="w-full text-xs">
+                                                <thead>
+                                                    <tr className="text-slate-500 border-b border-slate-700">
+                                                        <th className="text-left py-1.5 px-2 font-medium">File</th>
+                                                        <th className="text-right py-1.5 px-2 font-medium">Size</th>
+                                                        <th className="text-right py-1.5 px-2 font-medium">Tokens</th>
+                                                        <th className="text-right py-1.5 px-2 font-medium">%</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {[...result.files].sort((a, b) => (b.tokens || 0) - (a.tokens || 0)).map((f, i) => {
+                                                        const pctOfTotal = result.totalTokens ? Math.round(((f.tokens || 0) / result.totalTokens) * 100) : 0;
+                                                        return (
+                                                            <tr key={i} className="border-b border-slate-800 hover:bg-slate-800/50">
+                                                                <td className="py-1 px-2 font-mono text-slate-300">
+                                                                    {f.generated ? '⚡ ' : ''}{f.name}
+                                                                </td>
+                                                                <td className="py-1 px-2 text-right text-slate-500">{(f.size / 1024).toFixed(1)}KB</td>
+                                                                <td className="py-1 px-2 text-right text-slate-400">{TokenRegistryService.formatTokens(f.tokens || 0)}</td>
+                                                                <td className="py-1 px-2 text-right">
+                                                                    <span className={`${pctOfTotal >= 50 ? 'text-amber-400' : 'text-slate-500'}`}>{pctOfTotal}%</span>
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    })}
+                                                </tbody>
+                                                <tfoot>
+                                                    <tr className="border-t border-slate-600 font-medium">
+                                                        <td className="py-1.5 px-2 text-slate-300">Total</td>
+                                                        <td className="py-1.5 px-2 text-right text-slate-400">{(result.totalSize / 1024).toFixed(0)}KB</td>
+                                                        <td className="py-1.5 px-2 text-right text-slate-300">{TokenRegistryService.formatTokens(result.totalTokens)}</td>
+                                                        <td className="py-1.5 px-2 text-right text-slate-500">100%</td>
+                                                    </tr>
+                                                </tfoot>
+                                            </table>
+                                        </div>
+                                    </details>
+                                )}
                                 
                                 {/* Download button */}
                                 <button onClick={download}
@@ -18285,11 +19441,11 @@ The developer uses Claude for iterative development — each session should:
             setSyncResult(null);
             try {
                 const localConfig = ConfigManager.load();
-                const localDeployments = (() => { try { return JSON.parse(localStorage.getItem('cc_history_v2') || '[]'); } catch { return []; } })();
+                const localDeployments = DeployService.load();
                 const localRulesHistory = (() => { try { return JSON.parse(localStorage.getItem('cc_rulesHistory') || '[]'); } catch { return []; } })();
-                const localSessionLog = (() => { try { return JSON.parse(localStorage.getItem('cc_session_log') || '{}'); } catch { return {}; } })();
+                const localSessionLog = SessionLogService.load();
                 const localDeletionHistory = (() => { try { return JSON.parse(localStorage.getItem('cc_deletion_history') || '[]'); } catch { return []; } })();
-                const localRollbackSnapshots = (() => { try { return JSON.parse(localStorage.getItem('cc_rollback_snapshots') || '{}'); } catch { return {}; } })();
+                const localRollbackSnapshots = RollbackService.load();
                 
                 const ok = await FirebaseConfigSync.pushAll({
                     config: localConfig,
@@ -18527,6 +19683,97 @@ The developer uses Claude for iterative development — each session should:
                             {syncResult.ok ? '✓' : '✗'} {syncResult.msg}
                         </div>
                     )}
+                </div>
+                
+                {/* AI Engines (v8.21.0) */}
+                <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
+                    <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                        🤖 AI Engines
+                    </h2>
+                    <p className="text-sm text-slate-400 mb-4">
+                        Engine profiles used for context budget calculations in Claude Prep. Set your default engine to match your primary Claude plan.
+                    </p>
+                    
+                    {/* Default Engine Selector */}
+                    <div className="mb-4">
+                        <label className="text-xs text-slate-400 block mb-1.5">Default Engine</label>
+                        <select 
+                            value={EngineRegistryService.getDefault()}
+                            onChange={e => { EngineRegistryService.setDefault(e.target.value); setSettings(prev => ({...prev, _engineRefresh: Date.now()})); }}
+                            className="w-full sm:w-auto p-2 bg-slate-700 border border-slate-600 rounded text-sm"
+                        >
+                            {EngineRegistryService.getAll().map(e => (
+                                <option key={e.id} value={e.id}>{e.name} — {TokenRegistryService.formatTokens(e.contextWindow)} context</option>
+                            ))}
+                        </select>
+                    </div>
+                    
+                    {/* Engine Comparison Table */}
+                    <div className="overflow-x-auto -mx-2 px-2">
+                        <table className="w-full text-xs">
+                            <thead>
+                                <tr className="text-slate-500 border-b border-slate-700">
+                                    <th className="text-left py-2 px-2 font-medium">Engine</th>
+                                    <th className="text-center py-2 px-1 font-medium">Tier</th>
+                                    <th className="text-right py-2 px-2 font-medium">Context</th>
+                                    <th className="text-right py-2 px-2 font-medium">Extended</th>
+                                    <th className="text-right py-2 px-2 font-medium">$/MTok In</th>
+                                    <th className="text-right py-2 px-2 font-medium">$/MTok Out</th>
+                                    <th className="text-center py-2 px-1 font-medium">Projects</th>
+                                    <th className="text-center py-2 px-1 font-medium">Skills</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {EngineRegistryService.getAll().map(engine => {
+                                    const isDefault = engine.id === EngineRegistryService.getDefault();
+                                    const tierColors = { fast: 'text-cyan-400 bg-cyan-900/30', balanced: 'text-blue-400 bg-blue-900/30', flagship: 'text-purple-400 bg-purple-900/30' };
+                                    return (
+                                        <tr key={engine.id} className={`border-b border-slate-800 ${isDefault ? 'bg-indigo-900/20' : 'hover:bg-slate-700/30'}`}>
+                                            <td className="py-2 px-2">
+                                                <div className="flex items-center gap-1.5">
+                                                    {isDefault && <span className="text-indigo-400 text-[10px]">★</span>}
+                                                    <span className={`font-medium ${isDefault ? 'text-indigo-300' : 'text-slate-300'}`}>{engine.name}</span>
+                                                </div>
+                                                <div className="text-[10px] text-slate-500 mt-0.5">{engine.strengths.slice(0, 2).join(', ')}</div>
+                                            </td>
+                                            <td className="py-2 px-1 text-center">
+                                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${tierColors[engine.tier] || 'text-slate-400'}`}>
+                                                    {engine.tier}
+                                                </span>
+                                            </td>
+                                            <td className="py-2 px-2 text-right text-slate-300 font-mono">{TokenRegistryService.formatTokens(engine.contextWindow)}</td>
+                                            <td className="py-2 px-2 text-right font-mono">
+                                                {engine.contextWindowExtended 
+                                                    ? <span className="text-green-400">{TokenRegistryService.formatTokens(engine.contextWindowExtended)}</span>
+                                                    : <span className="text-slate-600">—</span>
+                                                }
+                                            </td>
+                                            <td className="py-2 px-2 text-right text-slate-400 font-mono">${engine.cost.input.toFixed(2)}</td>
+                                            <td className="py-2 px-2 text-right text-slate-400 font-mono">${engine.cost.output.toFixed(2)}</td>
+                                            <td className="py-2 px-1 text-center">{engine.features.projects ? <span className="text-green-400">✓</span> : <span className="text-slate-600">—</span>}</td>
+                                            <td className="py-2 px-1 text-center">{engine.features.skills ? <span className="text-green-400">✓</span> : <span className="text-slate-600">—</span>}</td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    {/* Engine Details (expandable) */}
+                    <details className="mt-3">
+                        <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-300 select-none">Session type → engine recommendations</summary>
+                        <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                            {Object.entries(EngineRegistryService.SESSION_TYPE_ENGINES).map(([type, engineId]) => {
+                                const engine = EngineRegistryService.get(engineId);
+                                return (
+                                    <div key={type} className="bg-slate-900 rounded px-2.5 py-1.5">
+                                        <div className="text-[10px] text-slate-500 uppercase">{type}</div>
+                                        <div className="text-xs text-slate-300">{engine?.name?.split(' ').pop()}</div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </details>
                 </div>
                 
                 <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
