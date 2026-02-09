@@ -6,6 +6,12 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [8.18.4] — 2026-02-09
+
+### Fixed
+- **Firebase overlay blocked by migration timestamp** — `ConfigManager.save()` during `cc_apps_v6` migration bumped `_updatedAt`, making local config "newer" than Firebase. Overlay was skipped, so hosted version never received repos. Migration save now preserves existing timestamp.
+- **Always overlay Firebase config in Phase 1** — removed timestamp comparison; always apply Firebase config when it has data. Timestamp-based conflict resolution will be added in multi-user phase.
+
 ## [8.18.3] — 2026-02-09
 
 ### Fixed
