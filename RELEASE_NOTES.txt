@@ -1,6 +1,167 @@
 Command Center — Release Notes
 ================================
 
+v8.15.3 — 2026-02-09
+--------------------
+FIX: Doc Push Bugs
+
+Bug 1: After pushing docs, the staged files weren't cleared,
+causing the UI to show "Push 6 Docs" again and push them twice.
+Now successfully pushed docs are removed from staged files.
+
+Bug 2: Standalone repos (no subPath like CC) had docs pushed to
+wrong paths like command-center/CONTEXT.md instead of CONTEXT.md.
+The default docTargetPath now correctly uses just the fileName.
+
+Both fixes applied to batch deploy controls AND Deploy All modal.
+
+v8.15.2 — 2026-02-09
+--------------------
+FIX: Seed Drift + Copy Buttons
+
+Fixed 3 config ↔ code drift items detected by v8.15.1:
+- Quotle icon: 📖 → 💬 (manifest + definitions)
+- quotle-info project name: Quotle.info → Quotle-info (manifest + seeds + definitions)
+- Command Center appType: internal → public (manifest + definitions)
+
+Added 📋 Copy button inside the expanded prompt text for both
+doc validation and config drift banners.
+
+v8.15.1 — 2026-02-09
+--------------------
+FEATURE: Config ↔ Code Drift Detection
+
+When deploying CC itself, the new version's seed values are compared
+against the running config to detect mismatches.
+
+How it works:
+1. CC_SEED_MANIFEST is a JSON block embedded in index.html between
+   /* CC_SEED_MANIFEST_START */ and /* CC_SEED_MANIFEST_END */ markers
+2. detectConfigDrift() parses it from the staged file and diffs against
+   the running config (localStorage)
+3. Drifts are classified:
+   - 🔴 Error: gs-app-id doesn't match any config app
+   - ⚠️ Warn: project/app name, project assignment, etc. mismatch
+   - ℹ️ Info: apps/projects in config but not in code seeds
+
+UI:
+- Color-coded banner appears in staged files area (only on CC self-deploy)
+- "Copy Fix Prompt" button copies detailed Claude prompt with all drifts
+- Expandable prompt shows exactly what to tell Claude to fix
+
+This ensures that when you edit app/project config in the CC UI,
+you get alerted if the code's seed values don't match.
+
+v8.15.0 — 2026-02-09
+--------------------
+BREAKING: App Identity Rename (management → command-center)
+
+Command Center is now a standalone app with its own identity.
+Previously it was "management" — a sub-app under Game Shelf.
+
+Changes:
+- gs-app-id meta tag: "command-center" (was "management")
+- Page title: "Command Center" (was "Game Shelf Command Center")
+- DEFAULT_APP_DEFINITIONS key/id: "command-center"
+- Fallback detection signature: "command-center"
+- Default deploy target: "command-center"
+- Repo-to-app-id mappings: both Smart Deploy + Claude Prep
+- Internal tools list in Projects view
+- Deploy instructions: references command-center-test repo
+
+Migration:
+- mergeWithDefaults() auto-renames "management" → "command-center"
+  in localStorage on first load of v8.15.0
+- Old deployment history still displays correctly (read-only)
+
+v8.14.2 — 2026-02-09
+--------------------
+FIX: Deploy + Docs UX
+
+- Batch deploy controls now show "Deploy 1 file + Push 6 docs" (was "Deploy 7 selected files")
+- Doc files from zip now inherit the detected app from index.html
+- Single button click deploys to GitHub Pages AND pushes docs to source repo
+- Refactored batch action handler to eliminate code duplication
+
+v8.14.1 — 2026-02-09
+--------------------
+FEATURE: Doc Package Validation
+
+When deploy + doc files are staged together, CC now validates:
+1. Missing required docs (CONTEXT.md, PROJECT_PLAN.md, CHANGELOG.md, RELEASE_NOTES.txt)
+2. CONTEXT.md version header matches deploy version
+3. CHANGELOG.md latest [X.X.X] entry matches deploy version
+4. RELEASE_NOTES.txt latest entry matches deploy version
+
+UI:
+- Amber "Doc Package Issues" banner above staged files with all issues listed
+- Expandable "Show Claude fix prompt" with ready-to-paste text
+- "Copy Fix Prompt" button for one-click copy
+- Per-file green ✓ or amber ⚠️ indicators on each doc card
+
+The Claude fix prompt includes specific file names, expected versions,
+and what action to take (create missing docs, update version references).
+
+v8.14.0 — 2026-02-09
+--------------------
+FEATURE: Unified Deploy + Push Docs
+
+Drop a project zip (e.g. cc-project-v8_14_0.zip) and CC automatically:
+- Routes index.html/sw.js/manifest.json → deploy to GitHub Pages
+- Routes CONTEXT.md/CHANGELOG.md/etc → push to source repo
+- SESSION_BRIEF.md auto-skipped (it's auto-generated)
+
+New in staged files:
+- Doc files (.md, .txt) show cyan "Push to repo:" label
+- Deploy files show normal "Deploy as:" label
+- Both types selectable/deselectable individually
+
+Deploy All modal:
+- Files grouped into "Deploy to GitHub Pages" and "Push docs to repo" sections
+- Adaptive button text: "Deploy 1 + Push 6 Docs"
+- Docs pushed via GitHub API with SHA check for updates vs creates
+
+Also: file input now accepts .md and .txt files, drop zone hint updated.
+
+v8.13.2.0 — 2026-02-09
+--------------------
+ARCHITECTURE: Config as Source of Truth
+
+mergeWithDefaults() overhaul:
+- Seed data (DEFAULT_APP_DEFINITIONS, SEED_PROJECTS) now only used for first-time init
+- Stored config.apps and config.projects are authoritative after first load
+- No more force-merging defaults into existing stored data on every load
+- Schema migration only: ensures structural fields exist without overwriting values
+
+Removed DEFAULT_APP_DEFINITIONS runtime fallbacks:
+- 8 subPath fallback references removed (deploy, Smart Deploy, version check, Projects)
+- PWA detection now reads from config.apps instead of hardcoded defaults
+- targetPath lookup now reads from config.apps
+- repoPatterns for auto-env-selection now reads from config.apps
+- appWithDefaults spread removed from deploy function
+
+This prevents hardcoded seed values from overriding user customizations
+(e.g., Command Center project assignment reverting to Game Shelf on reload).
+
+v8.13.1.7 — 2026-02-09
+--------------------
+CHANGE: Command Center Project Independence
+- Added "Command Center" project to SEED_PROJECTS (🏗️, cyan)
+- Updated management app default: project 'command-center' (was 'gameshelf')
+- Updated repoPatterns: command-center / command-center-test (was management-prod)
+- Added repos.test to management app definition
+- Icon updated from 🎛️ to 🏗️ to match user config
+
+v8.13.1.6 — 2026-02-09
+--------------------
+FIX: Version Scanner False Positives on CC Self-Deploy
+- Extracted SEED_VERSION constant for new app scaffolding (generateInitialHTML, generateAdminHTML)
+  Previously hardcoded "0.1.0" in template HTML triggered "Version Issues Detected"
+- Enhanced shouldSkip() in findAllVersionStrings():
+  - Detects meta version tags inside generate*() functions (1000-char lookback)
+  - Skips placeholder patterns (X.X.X, X.Y.Z) as non-version strings
+- CC now deploys cleanly with single version (8.13.1.6) detected
+
 v8.13.1.5 — 2026-02-07
 --------------------
 FEATURE: Push Docs to Repo + Detection Improvements
