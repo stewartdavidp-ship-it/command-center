@@ -6,6 +6,17 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [8.18.6] — 2026-02-09
+
+### Fixed
+- **Firebase overlay deleting local-only apps** — overlay replaced entire apps object with Firebase data, wiping apps that only existed locally. Now merges local apps into Firebase data, preserving local-only apps, repos, versions, and projects. Pushes merged config back to Firebase.
+
+## [8.18.5] — 2026-02-09
+
+### Fixed
+- **Firebase overlay overwriting correct local repos** — "always overlay" from v8.18.4 let stale Firebase repo names (`managementprod`) overwrite correct local repos (`command-center`). Overlay now preserves local repos as authoritative source of truth, pushes corrections back to Firebase.
+- **Reverted migration timestamp hack** — restored `ConfigManager.save()` in migration. Overlay repo preservation handles conflicts properly.
+
 ## [8.18.4] — 2026-02-09
 
 ### Fixed
