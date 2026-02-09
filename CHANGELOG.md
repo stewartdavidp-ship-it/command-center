@@ -6,6 +6,71 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [8.21.0] — 2026-02-09
+
+### Added
+- **AI Engines settings section** — New "🤖 AI Engines" card in Settings with default engine selector (persists to localStorage) and full engine comparison table showing name, tier, context window, extended context, input/output cost per MTok, Projects support, and Skills support
+- **Engine comparison table** — All 5 engines displayed with tier badges (fast/balanced/flagship), default engine highlighted with ★ and indigo tint
+- **Session type → engine recommendations** — Expandable details showing build→Sonnet, design→Opus, fix→Sonnet, research→Haiku, etc.
+- **Token estimation in Claude Prep** — Every file in the package now includes heuristic token count via `TokenRegistryService.estimateTokens()`, using content-type-aware ratios
+- **Context budget bar in Claude Prep** — After package generation, color-coded progress bar (green→emerald→amber→orange→red) shows tokens vs default engine's usable context limit (80% of total, 20% reserved for conversation)
+- **Over-budget recommendations** — When package exceeds engine capacity, displays specific recommendations from `EngineRegistryService.checkBudget()`: switch to extended context, use architecture summary, section extraction, skip changelog, or switch engines
+- **File manifest table in Claude Prep** — Expandable `<details>` showing all package files sorted by token count descending, with File, Size (KB), Tokens, and % columns; files consuming 50%+ highlighted in amber
+- **Token column in SESSION_BRIEF.md** — The file manifest written into the session brief now includes a Tokens column
+- **Orchestrator Phase 0.3** — Engine Registry UI + Token Integration in Claude Prep
+
+### Changed
+- **ClaudePrepModal stats row** — Now shows 🧮 token count alongside existing 📦 file count and 💾 size
+- **ClaudePrepModal log** — Now logs token estimate and budget percentage on package completion
+
+---
+
+## [8.20.0] — 2026-02-09
+
+### Added
+- **WorkItemService** — Firebase-backed CRUD for backlog work items with status transitions (idea→ready→in-progress→done→deferred), milestone filtering, and deploy close-the-loop support
+- **SessionService** — Firebase-backed Claude session tracking (prep→active→completed→abandoned lifecycle), deploy linking, per-app session history
+- **TokenRegistryService** — Heuristic token estimation (code: 0.37, markdown: 0.35, prose: 0.33, json: 0.40 tokens/char), content type detection, localStorage caching, budget calculations
+- **EngineRegistryService** — Static AI engine profiles (Claude Sonnet/Haiku/Opus 4.5, GPT-4.1, Gemini 2.5 Pro) with context windows, costs, session type recommendations, budget checking with over-budget recommendations
+- **App Lifecycle metadata** — `app.lifecycle` object in ConfigManager: category (game/tool/dashboard/content/admin), currentMaturity, maturityTarget, problemStatement, targetAudience, userGoal, successMetric, stack, maturityCriteria
+- **AppEditModal Lifecycle tab** — New ⚙️ General | 📊 Lifecycle tab navigation; lifecycle tab has category, maturity, problem/audience/goal/metric fields, visual maturity progress bar
+- **Orchestrator Phase 0.2** — Foundation services for AI Development Orchestrator
+
+### Changed
+- `ConfigManager.mergeWithDefaults()` — ensures lifecycle fields exist on all stored apps (schema migration)
+- `ConfigManager.addApp()` — includes lifecycle metadata in new app definitions
+- `AppEditModal` — tabbed interface (general + lifecycle), save handler includes lifecycle data
+
+### Architecture
+- Four new service objects follow established Phase 0.1 pattern (standalone objects, Firebase RTDB or localStorage persistence)
+- WorkItemService & SessionService use per-user Firebase paths (`command-center/{uid}/backlog`, `command-center/{uid}/sessions`)
+- TokenRegistryService is pure client-side (no Firebase dependency)
+- EngineRegistryService is static reference data with localStorage preference for default engine
+- Lifecycle fields are additive — existing apps get empty defaults, no data loss
+
+## [8.19.0] — 2026-02-09
+
+### Added
+- **Data Service Layer** — Six service objects extracted from App() and views: DeployService, SessionLogService, IssueService, ReleaseService, UserReportService, RollbackService
+- **Orchestrator Phase 0.1** — Foundation for AI Development Orchestrator evolution
+
+### Changed
+- All deploy history persistence routed through `DeployService` (localStorage + Firebase dual-write)
+- All session log persistence routed through `SessionLogService`
+- All rollback snapshot persistence routed through `RollbackService`
+- All issues CRUD in IssuesView routed through `IssueService` and `ReleaseService`
+- Global issues listener in App() uses `IssueService.listen()`
+- Issue-to-version linking uses `IssueService.linkToVersion()`
+- Firebase startup overlay uses service `.overlay()` methods
+- Force sync and push-all operations use service `.load()` methods
+
+### Architecture
+- Services follow `FirebaseConfigSync` pattern (standalone objects, not React components)
+- Pure refactoring — zero behavior change, all views work identically
+- Eliminates 6 inline `localStorage.getItem/setItem` patterns from App()
+- Eliminates 8 inline `firebaseDb.ref()` calls from IssuesView
+- Prepares data access layer for Phase 0.2 (new entity services)
+
 ## [8.18.6] — 2026-02-09
 
 ### Fixed
