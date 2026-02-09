@@ -1,23 +1,89 @@
 Command Center — Release Notes
 ================================
 
+v8.16.7 — 2026-02-09
+--------------------
+Google auth moved from Firebase page to header status bar.
+Shows profile photo + first name when signed in, "Sign In"
+when not. Click signed-in user to sign out. Greyed out when
+running locally (HTTPS required).
+
+v8.16.6 — 2026-02-09
+--------------------
+Hide top "Scan Repositories" button when on Repo Reset tab
+to avoid confusion between the two scan buttons.
+
+v8.16.5 — 2026-02-09
+--------------------
+Repo Reset reworked as bulk scanner. "Scan All Repos" checks
+all recently-deployed apps (test + prod) at once. Results
+grouped by app/repo. Select All + Delete handles files and
+directories recursively. Auto re-scans after cleanup.
+
+v8.16.4 — 2026-02-09
+--------------------
+FIX: React Error #310 on Repo Reset tab. Extracted from IIFE
+(useState hooks illegal there) into proper RepoResetPanel component.
+
+v8.16.3 — 2026-02-09
+--------------------
+FIX: "Running Locally" banner link was hardcoded to old
+managementprod repo (404). Now dynamically reads prod repo URL
+from command-center app config.
+
+v8.16.2 — 2026-02-09
+--------------------
+FIX: Health alert "Open Repo Reset" now lands on the Repo Reset
+tab (was landing on Stale Files). Also dismisses the alert banner.
+
+v8.16.1 — 2026-02-09
+--------------------
+Health check now only scans apps deployed in the last 30 days.
+Reads deployment history from localStorage to determine which
+apps are active. Reduces API calls from ~40 to just the repos
+you're actively using.
+
+v8.16.0 — 2026-02-09
+--------------------
+FEATURE: Daily Repo Health Check
+
+On startup (after version refresh), CC now scans all app repos
+for unexpected files — runs once per 24 hours.
+
+If issues found, an amber banner appears at the top of Dashboard:
+  ⚠️ Repo Health Check — 2 repos with unexpected files
+  🏗️ Command Center (test) — 3 unexpected: command-center/, docs/...
+  🎮 Game Shelf (prod) — 1 unexpected: old-backup.html
+
+Buttons:
+- "Open Repo Reset" → navigates to Cleanup → Repo Reset tab
+- "✕ Dismiss" → hides banner until next daily check
+
+The check is lightweight (root-level listRepoContents only, no
+recursive scan). The Repo Reset tool does the full recursive scan
+when you want to see details and delete files.
+
 v8.15.6 — 2026-02-09
 --------------------
 FIX: HTML Deploy Path from Zip
+FEATURE: Repo Reset Tool
 
-Root cause of promotion showing wrong version and live monitoring
-never completing.
+Deploy fix: HTML files from zips with nested folders were deploying
+to the wrong path (e.g. command-center/index.html instead of
+index.html). Now HTML files always use filename-only as targetPath.
+This also fixes promotion reading wrong versions from test repos.
 
-Zips like cc-project-v8/command-center/index.html had the root
-folder stripped (cc-project-v8/) but the subfolder (command-center/)
-remained in the deploy targetPath. This caused:
-1. index.html deployed to command-center/index.html in test repo
-2. GitHub Pages served the old root index.html (v1.0.0)
-3. Live monitoring expected 8.15.x but found 1.0.0 forever
-4. Promote fetched root index.html (v1.0.0) instead of the real deploy
-
-Fix: HTML files always use filename-only as targetPath. Non-HTML
-files (icons/, sw.js, manifest.json) still preserve subdirectory paths.
+Repo Reset: New tab in Cleanup view.
+1. Select app + target (test/prod)
+2. Scan — fetches all repo contents recursively
+3. Compares against expected structure:
+   - Simple apps: index.html
+   - PWA apps: index.html, sw.js, manifest.json, icons/
+   - Prod repos also: doc files at root
+   - Always expected: README.md, LICENSE, .gitignore, CNAME
+4. Shows summary cards: expected / unexpected / total
+5. Select All + delete unexpected files
+6. Deletion log with per-file success/failure
 
 v8.15.5 — 2026-02-09
 --------------------
