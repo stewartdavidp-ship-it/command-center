@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Command Center</title>
-    <meta name="version" content="8.18.3">
+    <meta name="version" content="8.18.4">
     <meta name="gs-app-id" content="command-center">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -28,7 +28,7 @@
     <div id="root"><div style="display:flex;align-items:center;justify-content:center;min-height:100vh;"><div style="text-align:center;"><div style="margin-bottom:20px;"><svg viewBox="0 0 100 100" width="64" height="64" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="gsLoadGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#667eea"/><stop offset="100%" style="stop-color:#764ba2"/></linearGradient></defs><rect x="5" y="5" width="90" height="90" rx="20" fill="url(#gsLoadGrad)"/><g transform="rotate(-12, 35, 50)"><rect x="15" y="28" width="28" height="36" rx="4" fill="white"/><circle cx="43" cy="46" r="6" fill="white"/><text x="29" y="54" font-family="Arial" font-size="20" font-weight="bold" fill="#667eea" text-anchor="middle">G</text></g><g transform="rotate(12, 65, 50)"><rect x="57" y="28" width="28" height="36" rx="4" fill="rgba(255,255,255,0.9)"/><circle cx="57" cy="46" r="6" fill="url(#gsLoadGrad)"/><text x="71" y="54" font-family="Arial" font-size="20" font-weight="bold" fill="#764ba2" text-anchor="middle">S</text></g></svg></div>Loading...</div></div></div>
 
     <script type="text/babel">
-    console.log('Command Center v8.18.3 starting...');
+    console.log('Command Center v8.18.4 starting...');
     
     // =========================================================================
     // FIREBASE CONFIG
@@ -2607,8 +2607,13 @@
                 if (oldApps) {
                     // Migrate old format to config
                     const cfg = ConfigManager.load();
+                    const existingTimestamp = cfg._updatedAt; // Preserve so Firebase overlay can still win
                     const migrated = ConfigManager.migrateFromOldFormat(oldApps, cfg);
-                    ConfigManager.save(migrated);
+                    // Save locally but preserve timestamp so Firebase overlay isn't blocked
+                    try { 
+                        if (existingTimestamp) migrated._updatedAt = existingTimestamp;
+                        localStorage.setItem(ConfigManager.STORAGE_KEY, JSON.stringify(migrated)); 
+                    } catch {}
                     return ConfigManager.toLegacyAppsFormat(migrated);
                 }
                 return ConfigManager.toLegacyAppsFormat(ConfigManager.load()); 
@@ -3001,15 +3006,13 @@
                 }
                 
                 if (remote.config && remote.config._updatedAt) {
-                    // Firebase has data — check if it's newer than local
-                    const localConfig = ConfigManager.load();
-                    const localTimestamp = localConfig._updatedAt || 0;
-                    
-                    if (remote.config._updatedAt > localTimestamp) {
-                        console.log('[ConfigSync] Firebase config is newer, overlaying...');
-                        // Strip sync metadata before merging
-                        const { _updatedAt, _updatedBy, ...cleanConfig } = remote.config;
-                        const merged = ConfigManager.mergeWithDefaults(cleanConfig);
+                    // Firebase has data — overlay onto local
+                    // v8.18.3: Always overlay in Phase 1 (single user). Timestamp comparison
+                    // was causing issues where migration bumped local timestamp, blocking overlay.
+                    console.log('[ConfigSync] Firebase has config, overlaying...');
+                    // Strip sync metadata before merging
+                    const { _updatedAt, _updatedBy, ...cleanConfig } = remote.config;
+                    const merged = ConfigManager.mergeWithDefaults(cleanConfig);
                         merged._updatedAt = _updatedAt;
                         merged._updatedBy = _updatedBy;
                         
@@ -3046,7 +3049,6 @@
                         if (reposFilled > 0) {
                             FirebaseConfigSync.pushConfig(merged).catch(() => {});
                         }
-                    }
                     
                     // Overlay deploy history if Firebase is newer
                     if (remote.deployHistory && Array.isArray(remote.deployHistory) && remote.deployHistory.length > 0) {
@@ -4857,7 +4859,7 @@
                                 <div>
                                     <h1 className="text-lg font-bold">Command Center</h1>
                                     <div className="text-xs text-slate-400 flex items-center gap-1.5">
-                                        v{document.querySelector('meta[name="version"]')?.content || '8.18.3'} • Deploy & manage apps
+                                        v{document.querySelector('meta[name="version"]')?.content || '8.18.4'} • Deploy & manage apps
                                         <span title={`Firebase sync: ${syncStatus}`} className="inline-flex items-center">
                                             {syncStatus === 'synced' && <span className="text-green-400" title="Synced with Firebase">☁️</span>}
                                             {syncStatus === 'syncing' && <span className="text-yellow-400 animate-pulse" title="Syncing...">🔄</span>}
