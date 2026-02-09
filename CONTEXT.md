@@ -4,7 +4,7 @@
 
 ## Current Version
 
-**v8.18.3** — Released 2026-02-09
+**v8.18.4** — Released 2026-02-09
 
 ## What Command Center Is
 
@@ -157,6 +157,10 @@ Configure
 | `ConfigManager` | Config load/save/migrate with backward compatibility |
 
 ## Recent Changes (This Session)
+
+### v8.18.4 — Fix: Firebase Overlay Blocked by Migration Timestamp
+- **Migration save preserves timestamp** — `cc_apps_v6` migration no longer calls `ConfigManager.save()` (which bumped `_updatedAt`), instead writes directly to localStorage preserving existing timestamp
+- **Always overlay in Phase 1** — removed timestamp comparison from startup overlay; always applies Firebase config when available. Conflict resolution deferred to multi-user phase.
 
 ### v8.18.3 — Fix: Firebase Overlay Overwriting Local Repos
 - **Overlay repo preservation** — startup overlay now preserves locally-populated repos when Firebase has empty strings, then pushes corrected config back to Firebase automatically
