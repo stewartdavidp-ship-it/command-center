@@ -1,6 +1,105 @@
 Command Center — Release Notes
 ================================
 
+v8.21.0 — 2026-02-09
+--------------------
+Orchestrator Phase 0.3: Engine Registry UI + Token Integration in Claude Prep.
+
+AI ENGINES IN SETTINGS:
+• New "🤖 AI Engines" section in Settings view
+• Default engine selector — dropdown with all 5 engines, persists to
+  localStorage via EngineRegistryService.setDefault()
+• Engine comparison table — shows name, tier (fast/balanced/flagship),
+  context window, extended context, input cost, output cost, Projects
+  support, and Skills support for all engines
+• Default engine row highlighted with indigo tint and ★ indicator
+• Expandable session type recommendations (build→Sonnet, design→Opus, etc.)
+
+TOKEN ESTIMATION IN CLAUDE PREP:
+• Every file in the package now includes a token count estimated via
+  TokenRegistryService.estimateTokens() — heuristic Tier 1 counting
+• Stats row shows 🧮 token count alongside 📦 file count and 💾 size
+• File manifest table — expandable <details> with File, Size, Tokens, %
+  columns, sorted by token count descending; 50%+ files highlighted amber
+
+CONTEXT BUDGET BAR:
+• Color-coded progress bar after package generation:
+  - Green (≤50%) → Emerald (≤75%) → Amber (≤90%) → Orange (≤100%) → Red (over)
+• Shows engine name, tokens / usable limit, percentage
+• Usable limit = 80% of engine context window (20% reserved for reasoning)
+• Over-budget state shows specific recommendations:
+  - Switch to extended context (if available on engine)
+  - Use architecture summary instead of full source
+  - Include only relevant code sections
+  - Skip CHANGELOG.md
+  - Switch to a larger-context engine
+
+TOKEN COLUMN IN SESSION BRIEF:
+• The file manifest in SESSION_BRIEF.md now includes a Tokens column
+  alongside File, Size, and Source columns
+
+v8.20.0 — 2026-02-09
+--------------------
+Orchestrator Phase 0.2: New data services and app lifecycle metadata.
+
+NEW SERVICES:
+• WorkItemService — Backlog work items with full CRUD, status transitions
+  (idea → ready → in-progress → done → deferred), milestone filtering,
+  and deploy close-the-loop (auto-complete work items on deploy)
+• SessionService — Claude session tracking across the prep → build →
+  deploy lifecycle. Links sessions to deploys and work items.
+• TokenRegistryService — Heuristic token estimation for context budget
+  management. Detects content type (code/markdown/prose/json) and applies
+  empirical ratios. Caches results in localStorage.
+• EngineRegistryService — AI engine profiles for Claude Sonnet/Haiku/Opus
+  4.5, GPT-4.1, Gemini 2.5 Pro. Includes context windows, pricing,
+  session type recommendations, budget checking with actionable
+  recommendations when over budget.
+
+APP LIFECYCLE:
+• Every app now has a `lifecycle` object: category, current maturity,
+  maturity target, problem statement, target audience, user goal,
+  success metric, tech stack, maturity criteria
+• AppEditModal has new tabbed interface: ⚙️ General | 📊 Lifecycle
+• Lifecycle tab: category dropdown, maturity selectors, problem/audience/
+  goal/metric fields, visual maturity progress bar
+• Existing apps get empty lifecycle defaults (no data loss)
+
+This is a pure-additive release. No existing behavior changed.
+
+v8.19.0 — 2026-02-09
+--------------------
+Phase 0.1: Data Service Layer Extraction
+
+Orchestrator project foundation — extracted all data access from
+App() and views into service objects. Pure refactoring, zero
+behavior change. All existing views work identically.
+
+New service objects (inserted after FirebaseConfigSync):
+- DeployService: deploy history CRUD (load/save/add/update/getForApp)
+- SessionLogService: session log CRUD (load/save/addRecentEntry)
+- IssueService: issues CRUD via Firebase (listen/create/update/
+  updateStatus/linkToVersion/markReleasedToProd/getNextId)
+- ReleaseService: release records via Firebase (listen/create)
+- UserReportService: user-submitted reports listener
+- RollbackService: rollback snapshot CRUD (load/save/get/set/clear)
+
+What changed:
+- All inline localStorage read/write for deploys, session log,
+  rollback snapshots now goes through service objects
+- All inline Firebase RTDB calls for issues/releases in IssuesView
+  now go through IssueService/ReleaseService
+- App() globalIssues listener uses IssueService.listen()
+- App() linkIssuesToVersion uses IssueService.linkToVersion()
+- Startup sync overlay uses service .overlay() methods
+- Force sync and push-all use service .load() methods
+- Health check and cleanup use DeployService.load()
+
+Pattern followed: FirebaseConfigSync (localStorage + Firebase
+dual-write, fire-and-forget async). Services are standalone
+objects, not React components — views still use React state
+for rendering, services handle persistence.
+
 v8.18.6 — 2026-02-09
 --------------------
 Fix: Firebase overlay deleting local-only apps.
