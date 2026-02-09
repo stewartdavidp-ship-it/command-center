@@ -6,6 +6,18 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [8.15.5] — 2026-02-09
+
+### Fixed
+- **`setStagedFiles` scoping error** — was undefined in `DashboardView` causing `ReferenceError: Can't find variable: setStagedFiles` after doc push. Now passed as prop from `App`. This was the root cause of docs not clearing from staged files after push.
+
+## [8.15.4] — 2026-02-09
+
+### Changed
+- **Drift banner auto-collapse** — uses `<details>` element; auto-opens only for errors/warnings, collapsed for info-only drift
+- **Subdued info-only styling** — slate colors instead of blue when only info items present
+- **Copy Fix Prompt** — only shown in header for errors/warnings; `e.preventDefault()` prevents details toggle
+
 ## [8.15.3] — 2026-02-09
 
 ### Fixed
