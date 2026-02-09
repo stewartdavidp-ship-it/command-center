@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Command Center</title>
-    <meta name="version" content="8.16.7">
+    <meta name="version" content="8.18.0">
     <meta name="gs-app-id" content="command-center">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -28,7 +28,7 @@
     <div id="root"><div style="display:flex;align-items:center;justify-content:center;min-height:100vh;"><div style="text-align:center;"><div style="margin-bottom:20px;"><svg viewBox="0 0 100 100" width="64" height="64" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="gsLoadGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#667eea"/><stop offset="100%" style="stop-color:#764ba2"/></linearGradient></defs><rect x="5" y="5" width="90" height="90" rx="20" fill="url(#gsLoadGrad)"/><g transform="rotate(-12, 35, 50)"><rect x="15" y="28" width="28" height="36" rx="4" fill="white"/><circle cx="43" cy="46" r="6" fill="white"/><text x="29" y="54" font-family="Arial" font-size="20" font-weight="bold" fill="#667eea" text-anchor="middle">G</text></g><g transform="rotate(12, 65, 50)"><rect x="57" y="28" width="28" height="36" rx="4" fill="rgba(255,255,255,0.9)"/><circle cx="57" cy="46" r="6" fill="url(#gsLoadGrad)"/><text x="71" y="54" font-family="Arial" font-size="20" font-weight="bold" fill="#764ba2" text-anchor="middle">S</text></g></svg></div>Loading...</div></div></div>
 
     <script type="text/babel">
-    console.log('Command Center v8.16.0 starting...');
+    console.log('Command Center v8.18.0 starting...');
     
     // =========================================================================
     // FIREBASE CONFIG
@@ -377,8 +377,286 @@
     const firebaseAdmin = new FirebaseAdmin();
     
     // =========================================================================
-    // VERSION UTILITIES
+    // FIREBASE CONFIG SYNC (v8.17.0 — Server-Side Config Storage)
     // =========================================================================
+    // Syncs CC configuration data to Firebase RTDB as source of truth.
+    // localStorage remains the instant-load cache; Firebase is the primary store.
+    // Sensitive data (tokens, SA keys, API keys) stays in localStorage only.
+    //
+    // Firebase path: command-center/{dataKey}
+    // Data sets synced: config, deploy-history, rules-history, session-log,
+    //                   deletion-history, rollback-snapshots
+    // =========================================================================
+    
+    const FirebaseConfigSync = {
+        BASE_PATH: 'command-center',
+        db: null,
+        initialized: false,
+        syncStatus: 'offline', // 'offline' | 'syncing' | 'synced' | 'error'
+        statusListeners: new Set(),
+        
+        // Data key → localStorage key mapping
+        DATA_KEYS: {
+            'config': 'commandCenterConfig',
+            'deploy-history': 'cc_history_v2',
+            'rules-history': 'cc_rulesHistory',
+            'session-log': 'cc_session_log',
+            'deletion-history': 'cc_deletion_history',
+            'rollback-snapshots': 'cc_rollback_snapshots'
+        },
+        
+        // Initialize with Firebase database reference
+        init(database) {
+            if (!database) {
+                console.warn('[ConfigSync] No database provided, running in offline mode');
+                return;
+            }
+            this.db = database;
+            this.initialized = true;
+            console.log('[ConfigSync] Initialized with Firebase RTDB');
+        },
+        
+        // --- Status management ---
+        
+        _setStatus(status) {
+            this.syncStatus = status;
+            this.statusListeners.forEach(fn => fn(status));
+        },
+        
+        onStatusChange(callback) {
+            this.statusListeners.add(callback);
+            return () => this.statusListeners.delete(callback);
+        },
+        
+        // --- Write methods (fire-and-forget after localStorage save) ---
+        
+        // Debounce timers per data key (prevents rapid-fire writes during batch operations)
+        _debounceTimers: {},
+        DEBOUNCE_KEYS: new Set(['deploy-history', 'session-log', 'deletion-history']), // Keys that get debounced
+        DEBOUNCE_MS: 2000, // 2-second debounce window
+        
+        async push(dataKey, data) {
+            if (!this.initialized || !this.db) return;
+            try {
+                const payload = JSON.parse(JSON.stringify(data)); // Deep clone to strip undefined
+                payload._updatedAt = Date.now();
+                payload._updatedBy = 'local';
+                await this.db.ref(`${this.BASE_PATH}/${dataKey}`).set(payload);
+                this._setStatus('synced');
+                console.log(`[ConfigSync] Pushed ${dataKey} to Firebase`);
+            } catch (err) {
+                console.warn(`[ConfigSync] Failed to push ${dataKey}:`, err.message);
+                this._setStatus('error');
+            }
+        },
+        
+        // Debounced push — delays the write, resets timer on each call
+        pushDebounced(dataKey, data) {
+            if (!this.initialized || !this.db) return Promise.resolve();
+            
+            // Clear any existing timer for this key
+            if (this._debounceTimers[dataKey]) {
+                clearTimeout(this._debounceTimers[dataKey]);
+            }
+            
+            this._setStatus('syncing');
+            
+            return new Promise((resolve) => {
+                this._debounceTimers[dataKey] = setTimeout(() => {
+                    delete this._debounceTimers[dataKey];
+                    this.push(dataKey, data).then(resolve).catch(resolve);
+                }, this.DEBOUNCE_MS);
+            });
+        },
+        
+        // Smart push — uses debounce for rapid-fire keys, immediate for others
+        pushSmart(dataKey, data) {
+            if (this.DEBOUNCE_KEYS.has(dataKey)) {
+                return this.pushDebounced(dataKey, data);
+            }
+            return this.push(dataKey, data);
+        },
+        
+        async pushConfig(config) {
+            return this.push('config', config);
+        },
+        
+        async pushDeployHistory(history) {
+            return this.pushSmart('deploy-history', history);
+        },
+        
+        async pushRulesHistory(history) {
+            return this.push('rules-history', history);
+        },
+        
+        async pushSessionLog(log) {
+            return this.pushSmart('session-log', log);
+        },
+        
+        async pushDeletionHistory(history) {
+            return this.pushSmart('deletion-history', history);
+        },
+        
+        async pushRollbackSnapshots(snapshots) {
+            return this.push('rollback-snapshots', snapshots);
+        },
+        
+        // --- Read methods (one-time fetch for startup overlay) ---
+        
+        async pull(dataKey) {
+            if (!this.initialized || !this.db) return null;
+            try {
+                const snap = await this.db.ref(`${this.BASE_PATH}/${dataKey}`).once('value');
+                return snap.val();
+            } catch (err) {
+                console.warn(`[ConfigSync] Failed to pull ${dataKey}:`, err.message);
+                return null;
+            }
+        },
+        
+        async pullConfig() {
+            return this.pull('config');
+        },
+        
+        async pullDeployHistory() {
+            const data = await this.pull('deploy-history');
+            return data || [];
+        },
+        
+        async pullRulesHistory() {
+            const data = await this.pull('rules-history');
+            return data || [];
+        },
+        
+        async pullSessionLog() {
+            const data = await this.pull('session-log');
+            return data || { currentSession: null, sessions: [], issues: [], notes: '' };
+        },
+        
+        async pullDeletionHistory() {
+            const data = await this.pull('deletion-history');
+            return data || [];
+        },
+        
+        async pullRollbackSnapshots() {
+            const data = await this.pull('rollback-snapshots');
+            return data || {};
+        },
+        
+        // --- Startup sync: pull all data from Firebase ---
+        // Returns an object with all synced data sets, or null for sets not found.
+        // The caller decides whether to overlay onto local state.
+        
+        async pullAll() {
+            if (!this.initialized || !this.db) {
+                this._setStatus('offline');
+                return null;
+            }
+            
+            this._setStatus('syncing');
+            
+            try {
+                const [config, deployHistory, rulesHistory, sessionLog, deletionHistory, rollbackSnapshots] = await Promise.all([
+                    this.pullConfig(),
+                    this.pullDeployHistory(),
+                    this.pullRulesHistory(),
+                    this.pullSessionLog(),
+                    this.pullDeletionHistory(),
+                    this.pullRollbackSnapshots()
+                ]);
+                
+                this._setStatus('synced');
+                
+                return {
+                    config,
+                    deployHistory,
+                    rulesHistory,
+                    sessionLog,
+                    deletionHistory,
+                    rollbackSnapshots,
+                    _pulledAt: Date.now()
+                };
+            } catch (err) {
+                console.warn('[ConfigSync] pullAll failed:', err.message);
+                this._setStatus('error');
+                return null;
+            }
+        },
+        
+        // --- Push all non-sensitive data to Firebase (initial seed or manual sync) ---
+        
+        async pushAll({ config, deployHistory, rulesHistory, sessionLog, deletionHistory, rollbackSnapshots }) {
+            if (!this.initialized || !this.db) return false;
+            
+            this._setStatus('syncing');
+            
+            try {
+                const promises = [];
+                if (config) promises.push(this.pushConfig(config));
+                if (deployHistory) promises.push(this.pushDeployHistory(deployHistory));
+                if (rulesHistory) promises.push(this.pushRulesHistory(rulesHistory));
+                if (sessionLog) promises.push(this.pushSessionLog(sessionLog));
+                if (deletionHistory) promises.push(this.pushDeletionHistory(deletionHistory));
+                if (rollbackSnapshots) promises.push(this.pushRollbackSnapshots(rollbackSnapshots));
+                
+                await Promise.all(promises);
+                this._setStatus('synced');
+                console.log('[ConfigSync] Pushed all data to Firebase');
+                return true;
+            } catch (err) {
+                console.warn('[ConfigSync] pushAll failed:', err.message);
+                this._setStatus('error');
+                return false;
+            }
+        },
+        
+        // --- Determine if Firebase data is newer than local ---
+        
+        isNewer(firebaseData, localTimestamp) {
+            if (!firebaseData || !firebaseData._updatedAt) return false;
+            return firebaseData._updatedAt > (localTimestamp || 0);
+        },
+        
+        // --- Clear all Command Center data from Firebase ---
+        
+        async clearAll() {
+            if (!this.initialized || !this.db) return false;
+            this._setStatus('syncing');
+            try {
+                await this.db.ref(this.BASE_PATH).remove();
+                this._setStatus('synced');
+                console.log('[ConfigSync] Cleared all Firebase data');
+                return true;
+            } catch (err) {
+                console.warn('[ConfigSync] Failed to clear Firebase data:', err.message);
+                this._setStatus('error');
+                return false;
+            }
+        },
+        
+        // --- Get approximate data size in Firebase ---
+        
+        async getDataSize() {
+            if (!this.initialized || !this.db) return null;
+            try {
+                const snap = await this.db.ref(this.BASE_PATH).once('value');
+                const data = snap.val();
+                if (!data) return { totalBytes: 0, keys: {} };
+                const totalStr = JSON.stringify(data);
+                const keys = {};
+                for (const key of Object.keys(data)) {
+                    keys[key] = JSON.stringify(data[key]).length;
+                }
+                return { totalBytes: totalStr.length, keys };
+            } catch (err) {
+                console.warn('[ConfigSync] Failed to get data size:', err.message);
+                return null;
+            }
+        }
+    };
+    
+    // Initialize ConfigSync with the database reference
+    FirebaseConfigSync.init(firebaseDb);
     
     function extractVersionFromHTML(content) {
         // Collect all version candidates with their source
@@ -985,10 +1263,23 @@
             return this.getDefaultConfig();
         },
         
-        // Save config to localStorage
+        // Save config to localStorage + Firebase
         save(config) {
             try {
+                // Add sync timestamp
+                config._updatedAt = Date.now();
+                config._updatedBy = 'local';
+                
+                // 1. localStorage (immediate, synchronous)
                 localStorage.setItem(this.STORAGE_KEY, JSON.stringify(config));
+                
+                // 2. Firebase (async, fire-and-forget)
+                if (FirebaseConfigSync.initialized) {
+                    FirebaseConfigSync.pushConfig(config).catch(err =>
+                        console.warn('[ConfigManager] Firebase sync failed:', err.message)
+                    );
+                }
+                
                 return true;
             } catch (e) {
                 console.error('Failed to save config:', e);
@@ -2293,6 +2584,12 @@
             return ConfigManager.load();
         });
         
+        // v8.17.0: Firebase config sync status
+        const [syncStatus, setSyncStatus] = React.useState(() => 
+            FirebaseConfigSync.initialized ? 'syncing' : 'offline'
+        );
+        const [syncInitialized, setSyncInitialized] = React.useState(false);
+        
         // Apps derived from config (legacy compatibility + v7 format)
         const [apps, setApps] = React.useState(() => {
             try { 
@@ -2447,7 +2744,13 @@
         
         // Persist rollback snapshots
         React.useEffect(() => {
-            try { localStorage.setItem('cc_rollback_snapshots', JSON.stringify(rollbackSnapshots)); } catch {}
+            try { 
+                localStorage.setItem('cc_rollback_snapshots', JSON.stringify(rollbackSnapshots));
+                // Firebase dual-write
+                if (FirebaseConfigSync.initialized) {
+                    FirebaseConfigSync.pushRollbackSnapshots(rollbackSnapshots).catch(() => {});
+                }
+            } catch {}
         }, [rollbackSnapshots]);
         
         // Save snapshot before deploy (call this before pushing new content)
@@ -2649,8 +2952,150 @@
         // Persist
         React.useEffect(() => { try { if (githubToken) localStorage.setItem('cc_token', githubToken); } catch {} }, [githubToken]);
         React.useEffect(() => { try { localStorage.setItem('cc_apps_v6', JSON.stringify(apps)); } catch {} }, [apps]);
-        React.useEffect(() => { try { localStorage.setItem('cc_history_v2', JSON.stringify(deployments.slice(0, 100))); } catch {} }, [deployments]);
-        React.useEffect(() => { try { localStorage.setItem('cc_session_log', JSON.stringify(sessionLog)); } catch {} }, [sessionLog]);
+        React.useEffect(() => { 
+            try { 
+                const history = deployments.slice(0, 100);
+                localStorage.setItem('cc_history_v2', JSON.stringify(history));
+                // Firebase dual-write
+                if (FirebaseConfigSync.initialized) {
+                    FirebaseConfigSync.pushDeployHistory(history).catch(() => {});
+                }
+            } catch {} 
+        }, [deployments]);
+        React.useEffect(() => { 
+            try { 
+                localStorage.setItem('cc_session_log', JSON.stringify(sessionLog));
+                // Firebase dual-write
+                if (FirebaseConfigSync.initialized) {
+                    FirebaseConfigSync.pushSessionLog(sessionLog).catch(() => {});
+                }
+            } catch {} 
+        }, [sessionLog]);
+        
+        // v8.17.0: Firebase Config Sync — startup overlay
+        // Load localStorage first (instant), then pull from Firebase and overlay if newer.
+        // On first run (Firebase empty), push local data up to seed Firebase.
+        React.useEffect(() => {
+            if (!FirebaseConfigSync.initialized || syncInitialized) return;
+            
+            const unsubscribe = FirebaseConfigSync.onStatusChange(setSyncStatus);
+            
+            const doSync = async () => {
+                console.log('[ConfigSync] Starting startup overlay...');
+                const remote = await FirebaseConfigSync.pullAll();
+                
+                if (!remote) {
+                    // Firebase unreachable — stay with localStorage
+                    console.log('[ConfigSync] Firebase unreachable, running offline');
+                    setSyncInitialized(true);
+                    return;
+                }
+                
+                if (remote.config && remote.config._updatedAt) {
+                    // Firebase has data — check if it's newer than local
+                    const localConfig = ConfigManager.load();
+                    const localTimestamp = localConfig._updatedAt || 0;
+                    
+                    if (remote.config._updatedAt > localTimestamp) {
+                        console.log('[ConfigSync] Firebase config is newer, overlaying...');
+                        // Strip sync metadata before merging
+                        const { _updatedAt, _updatedBy, ...cleanConfig } = remote.config;
+                        const merged = ConfigManager.mergeWithDefaults(cleanConfig);
+                        merged._updatedAt = _updatedAt;
+                        merged._updatedBy = _updatedBy;
+                        
+                        // Save to localStorage (without re-pushing to Firebase)
+                        try { localStorage.setItem(ConfigManager.STORAGE_KEY, JSON.stringify(merged)); } catch {}
+                        
+                        setConfig(merged);
+                        setApps(ConfigManager.toLegacyAppsFormat(merged));
+                    }
+                    
+                    // Overlay deploy history if Firebase is newer
+                    if (remote.deployHistory && Array.isArray(remote.deployHistory) && remote.deployHistory.length > 0) {
+                        const remoteTs = remote.deployHistory._updatedAt || 0;
+                        setDeployments(prev => {
+                            if (remoteTs > 0 || remote.deployHistory.length > prev.length) {
+                                try { localStorage.setItem('cc_history_v2', JSON.stringify(remote.deployHistory)); } catch {}
+                                return remote.deployHistory;
+                            }
+                            return prev;
+                        });
+                    }
+                    
+                    // Overlay session log if Firebase has data
+                    if (remote.sessionLog && remote.sessionLog._updatedAt) {
+                        setSessionLog(prev => {
+                            if ((remote.sessionLog._updatedAt || 0) > 0) {
+                                const { _updatedAt, _updatedBy, ...cleanLog } = remote.sessionLog;
+                                try { localStorage.setItem('cc_session_log', JSON.stringify(cleanLog)); } catch {}
+                                return cleanLog;
+                            }
+                            return prev;
+                        });
+                    }
+                    
+                    console.log('[ConfigSync] Startup overlay complete');
+                } else {
+                    // Firebase is empty — first run, seed it with local data
+                    console.log('[ConfigSync] Firebase empty, seeding with local data...');
+                    const localConfig = ConfigManager.load();
+                    const localDeployments = (() => { try { return JSON.parse(localStorage.getItem('cc_history_v2') || '[]'); } catch { return []; } })();
+                    const localRulesHistory = (() => { try { return JSON.parse(localStorage.getItem('cc_rulesHistory') || '[]'); } catch { return []; } })();
+                    const localSessionLog = (() => { try { return JSON.parse(localStorage.getItem('cc_session_log') || '{}'); } catch { return {}; } })();
+                    const localDeletionHistory = (() => { try { return JSON.parse(localStorage.getItem('cc_deletion_history') || '[]'); } catch { return []; } })();
+                    const localRollbackSnapshots = (() => { try { return JSON.parse(localStorage.getItem('cc_rollback_snapshots') || '{}'); } catch { return {}; } })();
+                    
+                    await FirebaseConfigSync.pushAll({
+                        config: localConfig,
+                        deployHistory: localDeployments,
+                        rulesHistory: localRulesHistory,
+                        sessionLog: localSessionLog,
+                        deletionHistory: localDeletionHistory,
+                        rollbackSnapshots: localRollbackSnapshots
+                    });
+                    
+                    console.log('[ConfigSync] Initial seed complete');
+                }
+                
+                setSyncInitialized(true);
+            };
+            
+            doSync();
+            
+            return () => unsubscribe();
+        }, [syncInitialized]);
+        
+        // v8.18.0: Force sync handler for Settings UI
+        const handleForceSync = async (direction) => {
+            if (!FirebaseConfigSync.initialized) return;
+            
+            if (direction === 'pull') {
+                const remote = await FirebaseConfigSync.pullAll();
+                if (!remote) throw new Error('Firebase unreachable');
+                
+                if (remote.config && remote.config._updatedAt) {
+                    const { _updatedAt, _updatedBy, ...cleanConfig } = remote.config;
+                    const merged = ConfigManager.mergeWithDefaults(cleanConfig);
+                    merged._updatedAt = _updatedAt;
+                    merged._updatedBy = _updatedBy;
+                    try { localStorage.setItem(ConfigManager.STORAGE_KEY, JSON.stringify(merged)); } catch {}
+                    setConfig(merged);
+                    setApps(ConfigManager.toLegacyAppsFormat(merged));
+                }
+                
+                if (remote.deployHistory && Array.isArray(remote.deployHistory) && remote.deployHistory.length > 0) {
+                    try { localStorage.setItem('cc_history_v2', JSON.stringify(remote.deployHistory)); } catch {}
+                    setDeployments(remote.deployHistory);
+                }
+                
+                if (remote.sessionLog && remote.sessionLog._updatedAt) {
+                    const { _updatedAt, _updatedBy, ...cleanLog } = remote.sessionLog;
+                    try { localStorage.setItem('cc_session_log', JSON.stringify(cleanLog)); } catch {}
+                    setSessionLog(cleanLog);
+                }
+            }
+        };
         
         // Monitor live site until new version appears
         const monitorLiveDeployment = async (url, expectedVersion, repo, onUpdate, appId = null, target = 'prod') => {
@@ -4350,7 +4795,15 @@
                                 <Icons.GameShelfLogo size={32} />
                                 <div>
                                     <h1 className="text-lg font-bold">Command Center</h1>
-                                    <div className="text-xs text-slate-400">v{document.querySelector('meta[name="version"]')?.content || '8.13.0'} • Deploy & manage apps</div>
+                                    <div className="text-xs text-slate-400 flex items-center gap-1.5">
+                                        v{document.querySelector('meta[name="version"]')?.content || '8.18.0'} • Deploy & manage apps
+                                        <span title={`Firebase sync: ${syncStatus}`} className="inline-flex items-center">
+                                            {syncStatus === 'synced' && <span className="text-green-400" title="Synced with Firebase">☁️</span>}
+                                            {syncStatus === 'syncing' && <span className="text-yellow-400 animate-pulse" title="Syncing...">🔄</span>}
+                                            {syncStatus === 'offline' && <span className="text-slate-500" title="Offline — using local data">⚡</span>}
+                                            {syncStatus === 'error' && <span className="text-red-400" title="Sync error">⚠️</span>}
+                                        </span>
+                                    </div>
                                 </div>
                             </div>
                             <div className="flex items-center gap-1">
@@ -4768,7 +5221,7 @@
                     )}
                     
                     {view === 'settings' && (
-                        <SettingsView token={githubToken} setToken={setGithubToken} settings={settings} setSettings={setSettings} repoCount={availableRepos.length} />
+                        <SettingsView token={githubToken} setToken={setGithubToken} settings={settings} setSettings={setSettings} repoCount={availableRepos.length} syncStatus={syncStatus} onForceSync={handleForceSync} />
                     )}
                     
                     {view === 'setup' && (
@@ -8689,11 +9142,15 @@
             } catch { return []; }
         });
         
-        // Save deletion history to localStorage
+        // Save deletion history to localStorage + Firebase
         const saveDeletionHistory = (history) => {
             setDeletionHistory(history);
             try {
                 localStorage.setItem('cc_deletion_history', JSON.stringify(history));
+                // Firebase dual-write
+                if (FirebaseConfigSync.initialized) {
+                    FirebaseConfigSync.pushDeletionHistory(history).catch(() => {});
+                }
             } catch (e) {
                 console.error('Failed to save deletion history:', e);
             }
@@ -10179,6 +10636,10 @@
             setHistory(updated);
             try {
                 localStorage.setItem('cc_rulesHistory', JSON.stringify(updated));
+                // Firebase dual-write
+                if (FirebaseConfigSync.initialized) {
+                    FirebaseConfigSync.pushRulesHistory(updated).catch(() => {});
+                }
             } catch (e) {
                 console.warn('Failed to save rules history:', e);
             }
@@ -10264,6 +10725,10 @@
             setHistory(updated);
             try {
                 localStorage.setItem('cc_rulesHistory', JSON.stringify(updated));
+                // Firebase dual-write
+                if (FirebaseConfigSync.initialized) {
+                    FirebaseConfigSync.pushRulesHistory(updated).catch(() => {});
+                }
             } catch {}
             if (selectedSnapshot?.id === snapshotId) {
                 setSelectedSnapshot(null);
@@ -17699,10 +18164,99 @@ The developer uses Claude for iterative development — each session should:
     // SETTINGS VIEW
     // =========================================================================
     
-    function SettingsView({ token, setToken, settings, setSettings, repoCount }) {
+    function SettingsView({ token, setToken, settings, setSettings, repoCount, syncStatus, onForceSync }) {
         const [show, setShow] = React.useState(false);
         const [testing, setTesting] = React.useState(false);
         const [result, setResult] = React.useState(null);
+        
+        // Firebase Sync state
+        const [syncAction, setSyncAction] = React.useState(null); // 'pushing' | 'pulling' | 'clearing'
+        const [syncResult, setSyncResult] = React.useState(null);
+        const [dataSize, setDataSize] = React.useState(null);
+        const [loadingSize, setLoadingSize] = React.useState(false);
+        const [lastSyncTime, setLastSyncTime] = React.useState(null);
+        
+        // Fetch data size on mount and when sync status changes
+        React.useEffect(() => {
+            if (FirebaseConfigSync.initialized && syncStatus === 'synced') {
+                fetchDataSize();
+            }
+        }, [syncStatus]);
+        
+        const fetchDataSize = async () => {
+            setLoadingSize(true);
+            const size = await FirebaseConfigSync.getDataSize();
+            setDataSize(size);
+            setLoadingSize(false);
+        };
+        
+        const formatBytes = (bytes) => {
+            if (bytes < 1024) return `${bytes} B`;
+            if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+            return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+        };
+        
+        const handlePushAll = async () => {
+            setSyncAction('pushing');
+            setSyncResult(null);
+            try {
+                const localConfig = ConfigManager.load();
+                const localDeployments = (() => { try { return JSON.parse(localStorage.getItem('cc_history_v2') || '[]'); } catch { return []; } })();
+                const localRulesHistory = (() => { try { return JSON.parse(localStorage.getItem('cc_rulesHistory') || '[]'); } catch { return []; } })();
+                const localSessionLog = (() => { try { return JSON.parse(localStorage.getItem('cc_session_log') || '{}'); } catch { return {}; } })();
+                const localDeletionHistory = (() => { try { return JSON.parse(localStorage.getItem('cc_deletion_history') || '[]'); } catch { return []; } })();
+                const localRollbackSnapshots = (() => { try { return JSON.parse(localStorage.getItem('cc_rollback_snapshots') || '{}'); } catch { return {}; } })();
+                
+                const ok = await FirebaseConfigSync.pushAll({
+                    config: localConfig,
+                    deployHistory: localDeployments,
+                    rulesHistory: localRulesHistory,
+                    sessionLog: localSessionLog,
+                    deletionHistory: localDeletionHistory,
+                    rollbackSnapshots: localRollbackSnapshots
+                });
+                
+                setSyncResult(ok ? { ok: true, msg: 'All local data pushed to Firebase' } : { ok: false, msg: 'Push failed' });
+                setLastSyncTime(Date.now());
+                await fetchDataSize();
+            } catch (e) {
+                setSyncResult({ ok: false, msg: e.message });
+            }
+            setSyncAction(null);
+        };
+        
+        const handlePullAll = async () => {
+            setSyncAction('pulling');
+            setSyncResult(null);
+            try {
+                if (onForceSync) {
+                    await onForceSync('pull');
+                    setSyncResult({ ok: true, msg: 'Firebase data pulled and overlaid onto local state' });
+                    setLastSyncTime(Date.now());
+                } else {
+                    setSyncResult({ ok: false, msg: 'Force sync not available' });
+                }
+            } catch (e) {
+                setSyncResult({ ok: false, msg: e.message });
+            }
+            setSyncAction(null);
+        };
+        
+        const handleClearFirebase = async () => {
+            if (!window.confirm('Are you sure you want to clear ALL Command Center data from Firebase?\n\nThis cannot be undone. Your local data will remain intact.')) {
+                return;
+            }
+            setSyncAction('clearing');
+            setSyncResult(null);
+            try {
+                const ok = await FirebaseConfigSync.clearAll();
+                setSyncResult(ok ? { ok: true, msg: 'All Command Center data cleared from Firebase' } : { ok: false, msg: 'Clear failed' });
+                setDataSize({ totalBytes: 0, keys: {} });
+            } catch (e) {
+                setSyncResult({ ok: false, msg: e.message });
+            }
+            setSyncAction(null);
+        };
         
         // Token expiration tracking (v8.3.3)
         const [tokenExpires, setTokenExpires] = React.useState(() => {
@@ -17802,6 +18356,93 @@ The developer uses Claude for iterative development — each session should:
                     </p>
                     
                     <FirebaseAdminSettings />
+                </div>
+                
+                {/* Firebase Config Sync (v8.18.0) */}
+                <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
+                    <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                        ☁️ Firebase Config Sync
+                    </h2>
+                    <p className="text-sm text-slate-400 mb-4">
+                        Non-sensitive CC data (config, deploy history, session log, rules history) is synced to Firebase RTDB at <code className="text-xs bg-slate-700 px-1.5 py-0.5 rounded">command-center/</code>. 
+                        Secrets (GitHub PAT, Firebase SA key) stay in localStorage only.
+                    </p>
+                    
+                    {/* Status row */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                        <div className="bg-slate-700/50 rounded-lg p-3">
+                            <div className="text-xs text-slate-400 mb-1">Status</div>
+                            <div className="text-sm font-medium flex items-center gap-2">
+                                {syncStatus === 'synced' && <><span className="text-green-400">☁️</span> Synced</>}
+                                {syncStatus === 'syncing' && <><span className="text-yellow-400 animate-pulse">🔄</span> Syncing...</>}
+                                {syncStatus === 'offline' && <><span className="text-slate-500">⚡</span> Offline</>}
+                                {syncStatus === 'error' && <><span className="text-red-400">⚠️</span> Error</>}
+                            </div>
+                        </div>
+                        <div className="bg-slate-700/50 rounded-lg p-3">
+                            <div className="text-xs text-slate-400 mb-1">Firebase Data Size</div>
+                            <div className="text-sm font-medium">
+                                {loadingSize ? '...' : dataSize ? formatBytes(dataSize.totalBytes) : '—'}
+                                {!loadingSize && dataSize && dataSize.totalBytes > 0 && (
+                                    <button onClick={fetchDataSize} className="ml-2 text-xs text-slate-400 hover:text-slate-300">🔄</button>
+                                )}
+                            </div>
+                        </div>
+                        <div className="bg-slate-700/50 rounded-lg p-3">
+                            <div className="text-xs text-slate-400 mb-1">Last Manual Sync</div>
+                            <div className="text-sm font-medium">
+                                {lastSyncTime ? new Date(lastSyncTime).toLocaleTimeString() : '—'}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    {/* Data breakdown */}
+                    {dataSize && dataSize.keys && Object.keys(dataSize.keys).length > 0 && (
+                        <div className="mb-4 bg-slate-700/30 rounded-lg p-3">
+                            <div className="text-xs text-slate-400 mb-2">Data Breakdown</div>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                {Object.entries(dataSize.keys).sort((a, b) => b[1] - a[1]).map(([key, bytes]) => (
+                                    <div key={key} className="flex justify-between items-center text-xs">
+                                        <span className="text-slate-300">{key}</span>
+                                        <span className="text-slate-500 ml-2">{formatBytes(bytes)}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    
+                    {/* Action buttons */}
+                    <div className="flex flex-wrap gap-2 mb-3">
+                        <button 
+                            onClick={handlePushAll}
+                            disabled={!!syncAction || !FirebaseConfigSync.initialized}
+                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm font-medium transition-colors">
+                            {syncAction === 'pushing' ? '⏳ Pushing...' : '⬆️ Push All to Firebase'}
+                        </button>
+                        <button 
+                            onClick={handlePullAll}
+                            disabled={!!syncAction || !FirebaseConfigSync.initialized}
+                            className="px-4 py-2 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm font-medium transition-colors">
+                            {syncAction === 'pulling' ? '⏳ Pulling...' : '⬇️ Pull All from Firebase'}
+                        </button>
+                        <button 
+                            onClick={handleClearFirebase}
+                            disabled={!!syncAction || !FirebaseConfigSync.initialized}
+                            className="px-4 py-2 bg-red-900/50 text-red-400 border border-red-700 hover:bg-red-900 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm font-medium transition-colors">
+                            {syncAction === 'clearing' ? '⏳ Clearing...' : '🗑️ Clear Firebase Data'}
+                        </button>
+                    </div>
+                    
+                    {!FirebaseConfigSync.initialized && (
+                        <div className="text-sm text-amber-400 mb-3">⚠️ Firebase not initialized — sync features unavailable</div>
+                    )}
+                    
+                    {/* Result feedback */}
+                    {syncResult && (
+                        <div className={`p-3 rounded-lg text-sm ${syncResult.ok ? 'bg-green-900/30 border border-green-700 text-green-400' : 'bg-red-900/30 border border-red-700 text-red-400'}`}>
+                            {syncResult.ok ? '✓' : '✗'} {syncResult.msg}
+                        </div>
+                    )}
                 </div>
                 
                 <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
