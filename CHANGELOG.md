@@ -6,6 +6,11 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [8.18.1] — 2026-02-09
+
+### Fixed
+- **Apps grouped under "Other" after Firebase sync** — `mergeWithDefaults()` schema migration was missing `project` field, so apps synced from Firebase without it defaulted to `'other'`. Added backfill from `DEFAULT_APP_DEFINITIONS` seeds.
+
 ## [8.18.0] — 2026-02-09
 
 ### Added
