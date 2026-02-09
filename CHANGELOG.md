@@ -6,7 +6,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [8.21.0] — 2026-02-09
+## [8.21.1] — 2026-02-09
 
 ### Added
 - **AI Engines settings section** — New "🤖 AI Engines" card in Settings with default engine selector (persists to localStorage) and full engine comparison table showing name, tier, context window, extended context, input/output cost per MTok, Projects support, and Skills support
