@@ -6,6 +6,11 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [8.15.6] — 2026-02-09
+
+### Fixed
+- **HTML deploy path from zip** — HTML files from zips with nested folders (e.g. `cc-project/command-center/index.html`) were deploying to the nested path instead of root. Now HTML files always use filename-only as targetPath. This also fixes promotion reading the wrong version from test repos.
+
 ## [8.15.5] — 2026-02-09
 
 ### Fixed
