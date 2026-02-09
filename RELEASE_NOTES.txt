@@ -1,6 +1,18 @@
 Command Center — Release Notes
 ================================
 
+v8.18.2 — 2026-02-09
+--------------------
+Fix: Auto-detected repos not synced to config/Firebase.
+
+autoMapRepos() wrote testRepo/prodRepo to legacy apps state
+(cc_apps_v6) but never back to config.apps[id].repos. This
+meant Firebase config had empty repo strings, and the hosted
+Dashboard filtered out apps without repos.
+
+Now syncs detected repos back to config after auto-mapping,
+so Push All includes correct repo assignments.
+
 v8.18.1 — 2026-02-09
 --------------------
 Fix: Apps missing project field after Firebase sync.
