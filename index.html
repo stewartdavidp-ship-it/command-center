@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Command Center</title>
-    <meta name="version" content="8.21.0">
+    <meta name="version" content="8.21.1">
     <meta name="gs-app-id" content="command-center">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -4397,7 +4397,6 @@
             
             // Only check apps deployed in the last 30 days
             const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
-            let currentDeployments;
             let currentDeployments = DeployService.load();
             const recentlyDeployed = new Set(
                 currentDeployments
