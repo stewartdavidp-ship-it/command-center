@@ -152,11 +152,28 @@ Single-file web application for managing deployment, monitoring, and configurati
 - [x] Review & Launch step with summary grid, work items table, Claude instructions
 - [x] Quick setup option preserved (skip scope)
 
+### Orchestrator Phase 4.1: Portfolio View + Cost Tracking (v8.30.0)
+- [x] PortfolioView — maturity distribution, backlog health, session velocity, deploy frequency
+- [x] Cost estimation — per-session cost from package tokens × engine pricing (input + 30% output)
+- [x] Cost breakdown table by app with sessions, tokens, cost columns
+- [x] Time range filter (7d/30d/90d/All Time) on Portfolio view
+- [x] Maturity badges on Dashboard app cards (colored by stage)
+
+### Orchestrator Phase 4.2: Environment Optimization Guide (v8.31.0)
+- [x] EnvironmentOptimizationView — per-app Claude Project setup guides
+- [x] Doc classification — persistent (Project Knowledge) vs session (upload each time)
+- [x] Token savings calculator — per-session and monthly savings estimates
+- [x] Project Instructions generator — copy-paste-ready Custom Instructions from app metadata
+- [x] Skills recommendations — category-driven with relevance badges
+- [x] Platform feature recommendations with status badges
+- [x] Session type quick reference table
+- [x] 6-step setup checklist per app
+
 ---
 
 ## In Progress
 
-_(Phase 3.1 complete — next: Phase 3.2 Smart Artifact Generation)_
+_(All orchestrator phases complete — see Planned Features for remaining backlog)_
 
 ---
 
