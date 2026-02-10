@@ -1,6 +1,44 @@
 Command Center — Release Notes
 ================================
 
+v8.23.0 — 2026-02-09
+--------------------
+Orchestrator Phase 1.2: Project Scoping Flow.
+
+PROJECT SCOPING MODAL (NEW):
+• 4-step scoping wizard: Describe → Clarify → Features → Standards
+• Category-driven questions for 5 app types: Game, Tool, Dashboard, Content, Admin
+• Each category has tailored toggle/select/text questions with sensible defaults
+• Questions drive feature pre-population and starting standards selection
+• No AI dependency — works fully without API key
+
+FEATURE PRE-POPULATION:
+• V1 features auto-generated from category + question answers
+• Future features list for V2+ ideas (inform architecture, don't build)
+• Key decisions list for items to resolve before Session 1
+• Each feature has: title, description, priority, effort
+• Developer can add/edit/remove/reorder all features
+
+STARTING STANDARDS:
+• 12 universal standards (always recommended): dark mode, CSS variables, mobile-first, toasts, etc.
+• 24 category-driven standards selected based on scoping answers
+• Reviewable checklist — developer can toggle individual standards
+
+AUTO-GENERATE WORK ITEMS:
+• V1 features → work items (type: feature, status: ready, source: 'scoped')
+• Out-of-scope features → work items (status: deferred)
+• Future features → work items (status: idea, priority: nice-to-have)
+• Key decisions → work items (type: research, status: ready)
+• Uses WorkItemService.createBatch() for single Firebase write
+
+INTEGRATION POINTS:
+• BacklogView: "🎯 Scope Work" dropdown button with per-app scope initiation
+• SetupNewAppView: New Step 2 "Scope" between Define and Check Repos (5-step wizard now)
+• Quick setup option: skip scoping for simple/throwaway apps
+• Scope data stored at command-center/{uid}/appScopes/{appId} in Firebase
+
+---
+
 v8.22.0 — 2026-02-09
 --------------------
 Orchestrator Phase 1.1: Backlog View + Work Item CRUD.
