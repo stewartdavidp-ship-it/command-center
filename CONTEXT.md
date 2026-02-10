@@ -4,7 +4,7 @@
 
 ## Current Version
 
-**v8.33.0** — Released 2026-02-10
+**v8.34.0** — Released 2026-02-10
 
 ## What Command Center Is
 
@@ -34,7 +34,7 @@ Command Center is an internal tool for managing the Game Shelf ecosystem of web 
 
 ### Meta Tags (Required)
 ```html
-<meta name="version" content="8.33.0">
+<meta name="version" content="8.34.0">
 <meta name="gs-app-id" content="management">
 ```
 
