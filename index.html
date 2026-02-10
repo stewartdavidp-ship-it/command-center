@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Command Center</title>
-    <meta name="version" content="8.34.0">
+    <meta name="version" content="8.36.0">
     <meta name="gs-app-id" content="command-center">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -1738,7 +1738,7 @@
     // =========================================================================
     
     // =========================================================================
-    // PORKBUN SERVICE — Domain registrar API integration (v8.34.0)
+    // PORKBUN SERVICE — Domain registrar API integration (v8.35.0)
     // Handles: domain search, registration, DNS CRUD, GitHub Pages wiring
     // API docs: https://porkbun.com/api/json/v3/documentation
     // All calls are POST with JSON body. Auth via apiKey + secretApiKey in body.
@@ -2020,7 +2020,7 @@
     };
 
     // =========================================================================
-    // GODADDY SERVICE — Domain registrar DNS API integration (v8.34.0)
+    // GODADDY SERVICE — Domain registrar DNS API integration (v8.35.0)
     // Handles: domain listing, DNS CRUD for existing GoDaddy domains
     // API docs: https://developer.godaddy.com/doc/endpoint/domains
     // Auth: sso-key API_KEY:API_SECRET in Authorization header
@@ -2241,7 +2241,7 @@
     };
 
     // =========================================================================
-    // DOMAIN PROVIDER REGISTRY — Abstracts multiple registrar APIs (v8.34.0)
+    // DOMAIN PROVIDER REGISTRY — Abstracts multiple registrar APIs (v8.35.0)
     // All providers implement the same interface: ping, listDomains,
     // listDNSRecords, createDNSRecord, deleteDNSRecord, configureForGitHubPages
     // =========================================================================
@@ -2926,7 +2926,7 @@
             );
         }
         
-        // Fix const VERSION = '8.7.6' (but not GAMESHELF_VERSION)
+        // Fix const VERSION = '8.36.0' (but not GAMESHELF_VERSION)
         fixed = fixed.replace(
             /(const\s+VERSION\s*=\s*['"])[^'"]*(['"])/g,
             `$1${targetVersion}$2`
@@ -2984,6 +2984,16 @@
     function isNewerVersion(newVersion, currentVersion) {
         if (!currentVersion) return true;
         return compareVersions(newVersion, currentVersion) > 0;
+    }
+    
+    function bumpVersion(version, type) {
+        if (!version) return '1.0.0';
+        const parts = version.replace(/^v/i, '').split('.').map(Number);
+        while (parts.length < 3) parts.push(0);
+        if (type === 'major') { parts[0]++; parts[1] = 0; parts[2] = 0; }
+        else if (type === 'minor') { parts[1]++; parts[2] = 0; }
+        else { parts[2]++; }
+        return parts.join('.');
     }
     
     function formatVersion(v) {
@@ -4352,7 +4362,7 @@
             return { enabled: true };
         }
         
-        // v8.34.0: Custom domain configuration for GitHub Pages
+        // v8.35.0: Custom domain configuration for GitHub Pages
         async updatePagesConfig(repo, cname, enforceHttps = false) {
             const [owner, repoName] = repo.split('/');
             const response = await fetch(`${this.baseUrl}/repos/${owner}/${repoName}/pages`, {
@@ -4371,7 +4381,7 @@
             return await response.json();
         }
         
-        // v8.34.0: Check GitHub Pages health/DNS status
+        // v8.35.0: Check GitHub Pages health/DNS status
         async checkPagesHealth(repo) {
             const [owner, repoName] = repo.split('/');
             const response = await fetch(`${this.baseUrl}/repos/${owner}/${repoName}/pages/health`, {
@@ -5001,6 +5011,7 @@
         };
         const [repoFiles, setRepoFiles] = React.useState({}); // { repoFullName: { files: [], loading: bool } }
         const [selectedRepoForBrowse, setSelectedRepoForBrowse] = React.useState(null);
+        const [selectedAppKeyForBrowse, setSelectedAppKeyForBrowse] = React.useState(null);
         const [markedForDeletion, setMarkedForDeletion] = React.useState([]); // [{ repo, path, sha }]
         const [deployingRepos, setDeployingRepos] = React.useState({}); // { appId: { version, startTime, repo } }
         
@@ -5551,12 +5562,13 @@
         };
         
         // Load repo files
-        const loadRepoFiles = async (repo) => {
+        const loadRepoFiles = async (repo, subPath = '') => {
             if (!github || !repo) return;
-            setRepoFiles(prev => ({ ...prev, [repo]: { files: [], loading: true } }));
+            const cacheKey = subPath ? `${repo}::${subPath}` : repo;
+            setRepoFiles(prev => ({ ...prev, [cacheKey]: { files: [], loading: true } }));
             
-            const files = await github.listRepoContents(repo);
-            setRepoFiles(prev => ({ ...prev, [repo]: { files, loading: false } }));
+            const files = await github.listRepoContents(repo, subPath || undefined);
+            setRepoFiles(prev => ({ ...prev, [cacheKey]: { files, loading: false } }));
         };
         
         const updateApp = (appId, updates) => setApps(prev => ({ ...prev, [appId]: { ...prev[appId], ...updates } }));
@@ -5777,57 +5789,9 @@
                             );
                         }
                         
-                        // === POST-EXTRACTION VALIDATION FOR PWA PACKAGES ===
-                        // Check for version mismatches between index.html and sw.js
-                        setStagedFiles(currentFiles => {
-                            const htmlFiles = currentFiles.filter(f => f.name === 'index.html' && f.version);
-                            const swFiles = currentFiles.filter(f => f.name === 'sw.js' && f.version);
-                            
-                            if (htmlFiles.length > 0 && swFiles.length > 0) {
-                                const htmlVersion = htmlFiles[0].version;
-                                const swVersion = swFiles[0].version;
-                                
-                                if (htmlVersion !== swVersion) {
-                                    // Don't block, but show warning
-                                    showAlert(
-                                        `⚠️ Version mismatch detected!\n\n` +
-                                        `index.html: v${htmlVersion}\n` +
-                                        `sw.js: v${swVersion}\n\n` +
-                                        `These should match for PWA apps. Users may get cached old versions.`,
-                                        '🔄 Version Mismatch'
-                                    );
-                                }
-                            }
-                            
-                            // Check if we got the expected files for a PWA package
-                            // Only check for PWA files if the app actually has a service worker
-                            const appConfig = primaryApp ? apps[primaryApp] : null;
-                            const isPWA = appConfig?.hasServiceWorker === true;
-                            
-                            if (isPWA && primaryApp && htmlFiles.length > 0) {
-                                const hasIndex = currentFiles.some(f => f.name === 'index.html');
-                                const hasSw = currentFiles.some(f => f.name === 'sw.js');
-                                const hasManifest = currentFiles.some(f => f.name === 'manifest.json');
-                                const hasIcons = currentFiles.some(f => f.targetPath?.startsWith('icons/'));
-                                
-                                const missing = [];
-                                if (!hasIndex) missing.push('index.html');
-                                if (!hasSw) missing.push('sw.js');
-                                if (!hasManifest) missing.push('manifest.json');
-                                if (!hasIcons) missing.push('icons/');
-                                
-                                if (missing.length > 0) {
-                                    showAlert(
-                                        `⚠️ PWA package may be incomplete!\n\n` +
-                                        `Missing: ${missing.join(', ')}\n\n` +
-                                        `PWA apps need all these files to update correctly on user devices.`,
-                                        '📦 Incomplete Package'
-                                    );
-                                }
-                            }
-                            
-                            return currentFiles; // Don't modify, just validate
-                        });
+                        // Post-extraction validation is now handled by the unified
+                        // validatePackage() panel in DashboardView (selection-driven)
+                        
                         
                     } catch (err) {
                         console.error('ZIP extraction failed:', err);
@@ -6012,15 +5976,8 @@
             // Get full path including subPath
             const fullTargetPath = getRepoFilePath(appWithSubPath, file.targetPath || app.targetPath);
             
-            const currentVersion = await fetchCurrentVersion(repo, fullTargetPath);
             const newVersion = file.version;
-            
-            if (!forceDeploy && currentVersion && newVersion) {
-                if (!isNewerVersion(newVersion, currentVersion)) {
-                    setModal({ type: 'versionWarning', data: { file, appId, target, currentVersion, newVersion } });
-                    return;
-                }
-            }
+            // Version validation is now handled pre-deploy by the unified validation panel
             
             // 📸 Save rollback snapshot BEFORE deploying
             await saveRollbackSnapshot(appId, target, repo, fullTargetPath);
@@ -6244,38 +6201,7 @@
             const indexFile = files.find(f => f.targetPath === 'index.html' || f.name === 'index.html');
             const newVersion = indexFile?.version || 'batch';
             
-            // Check for version validation issues in any file
-            const filesWithIssues = files.filter(f => f.versionValidation && !f.versionValidation.isValid);
-            if (filesWithIssues.length > 0) {
-                const proceed = await showConfirm(
-                    filesWithIssues.map(f => {
-                        const v = f.versionValidation;
-                        let msg = `${f.name}:\n`;
-                        if (v.missing.length > 0) msg += `  • Missing: ${v.missing.join(', ')}\n`;
-                        if (v.uniqueVersions.length > 1) msg += `  • Mismatched versions: ${v.uniqueVersions.join(', ')}\n`;
-                        return msg;
-                    }).join('\n') +
-                    `\nYou can click "Fix to v${newVersion}" on each file to auto-correct.\n\n` +
-                    `Deploy anyway with inconsistent versions?`,
-                    '⚠️ Version Issues Detected'
-                );
-                if (!proceed) return;
-            }
-            
-            // Check version increment against current repo version
-            if (newVersion !== 'batch') {
-                const currentVersion = target === 'prod' ? app.currentProdVersion : app.currentTestVersion;
-                if (currentVersion && !isNewerVersion(newVersion, currentVersion)) {
-                    const proceed = await showConfirm(
-                        `Current in ${target.toUpperCase()}: v${currentVersion}\n` +
-                        `New version: v${newVersion}\n\n` +
-                        `This may be a downgrade or same version.\n` +
-                        `Deploy anyway?`,
-                        '⚠️ Version Not Incrementing'
-                    );
-                    if (!proceed) return;
-                }
-            }
+            // Version validation is now handled pre-deploy by the unified validation panel
             
             // Log file details for debugging
             console.log('handleBatchDeploy received:', files.map(f => ({
@@ -7314,6 +7240,7 @@
                             apps={apps} github={github}
                             repoFiles={repoFiles} onLoadRepo={loadRepoFiles}
                             selectedRepo={selectedRepoForBrowse} onSelectRepo={setSelectedRepoForBrowse}
+                            selectedAppKey={selectedAppKeyForBrowse} onSelectAppKey={setSelectedAppKeyForBrowse}
                             markedForDeletion={markedForDeletion} setMarkedForDeletion={setMarkedForDeletion}
                             onDeleteMarked={() => setModal({ type: 'confirmDelete' })}
                             showAlert={showAlert}
@@ -8247,6 +8174,7 @@
         const [isDeploying, setIsDeploying] = React.useState(false);
         const [deployCompleted, setDeployCompleted] = React.useState(false);
         const [lastCompletedDeployId, setLastCompletedDeployId] = React.useState(null);
+        const [errorOverride, setErrorOverride] = React.useState(false);
         // Track if deploy button was clicked in this session (prevents history-based false positive)
         const deployClickedThisSession = React.useRef(false);
         
@@ -8280,7 +8208,8 @@
         const otherApps = configuredApps.filter(a => a.appType === 'other');
         
         // Doc package validation — runs whenever staged files change
-        const docValidation = React.useMemo(() => validateDocPackage(stagedFiles), [stagedFiles]);
+        // Unified package validation — runs on selected files (selection-driven)
+        // Note: actual validation computed inside deploy controls where selectedFiles is available
         
         // Config ↔ code drift detection — only when deploying CC itself
         const configDrift = React.useMemo(() => {
@@ -8526,7 +8455,13 @@
                 const newSet = new Set([...prev].filter(id => validIds.has(id)));
                 return newSet.size !== prev.size ? newSet : prev;
             });
+            setErrorOverride(false); // Reset error override when files change
         }, [stagedFiles]);
+        
+        // Reset error override when selection changes
+        React.useEffect(() => {
+            setErrorOverride(false);
+        }, [selectedFileIds]);
         
         const toggleFileSelection = (file) => {
             setSelectedFileIds(prev => {
@@ -8581,65 +8516,7 @@
                                 </div>
                             </div>
                             
-                            {/* Doc Package Validation Banner */}
-                            {docValidation && !docValidation.isValid && (
-                                <div className="mb-4 p-4 bg-amber-900/20 rounded-lg border border-amber-700/50">
-                                    <div className="flex items-center justify-between mb-2">
-                                        <div className="text-sm font-medium text-amber-300 flex items-center gap-2">
-                                            ⚠️ Doc Package Issues
-                                            {docValidation.deployVersion && (
-                                                <span className="text-xs bg-amber-800/50 px-1.5 py-0.5 rounded">v{docValidation.deployVersion}</span>
-                                            )}
-                                        </div>
-                                        {docValidation.claudePrompt && (
-                                            <button
-                                                onClick={() => {
-                                                    navigator.clipboard.writeText(docValidation.claudePrompt);
-                                                    showAlert('Copied to clipboard! Paste this into Claude to fix the issues.', '📋 Fix Prompt Copied');
-                                                }}
-                                                className="px-2 py-1 text-xs bg-amber-700 hover:bg-amber-600 rounded flex items-center gap-1 text-amber-100"
-                                            >
-                                                📋 Copy Fix Prompt
-                                            </button>
-                                        )}
-                                    </div>
-                                    
-                                    {docValidation.missingDocs.length > 0 && (
-                                        <div className="text-xs text-amber-400 mb-1.5">
-                                            <span className="font-medium">Missing docs:</span>{' '}
-                                            {docValidation.missingDocs.map((d, i) => (
-                                                <span key={d}>
-                                                    <span className="text-amber-300">{d}</span>
-                                                    {i < docValidation.missingDocs.length - 1 ? ', ' : ''}
-                                                </span>
-                                            ))}
-                                        </div>
-                                    )}
-                                    
-                                    {docValidation.versionIssues.length > 0 && (
-                                        <div className="text-xs space-y-0.5">
-                                            {docValidation.versionIssues.map((issue, i) => (
-                                                <div key={i} className="text-amber-400">
-                                                    <span className="text-amber-300">{issue.file}:</span> {issue.detail}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                    
-                                    {docValidation.claudePrompt && (
-                                        <details className="mt-2">
-                                            <summary className="text-xs text-amber-500 cursor-pointer hover:text-amber-400">Show Claude fix prompt</summary>
-                                            <div className="relative mt-1.5">
-                                                <pre className="p-2 pr-16 bg-slate-900 rounded text-xs text-slate-300 whitespace-pre-wrap overflow-x-auto border border-slate-700">{docValidation.claudePrompt}</pre>
-                                                <button onClick={() => { navigator.clipboard.writeText(docValidation.claudePrompt); showAlert('Copied!', '📋'); }}
-                                                    className="absolute top-2 right-2 px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded text-slate-300">
-                                                    📋 Copy
-                                                </button>
-                                            </div>
-                                        </details>
-                                    )}
-                                </div>
-                            )}
+                            {/* Doc validation now handled by unified panel in deploy controls */}
                             
                             {/* Config ↔ Code Drift Banner (CC self-deploy only) */}
                             {configDrift && configDrift.drifts.length > 0 && (() => {
@@ -8726,6 +8603,13 @@
                                 const hasMismatch = primaryDetected && deployTarget.appId !== primaryDetected;
                                 const hasConflict = uniqueDetected.length > 1;
                                 
+                                // Unified validation — computed once, used by panel and deploy button
+                                const valAppConfig = apps[deployTarget.appId] || null;
+                                const valDeployedVersion = deployTarget.target === 'prod'
+                                    ? valAppConfig?.currentProdVersion
+                                    : valAppConfig?.currentTestVersion;
+                                const validation = validatePackage(selectedFiles, stagedFiles, valAppConfig, valDeployedVersion);
+                                
                                 return (
                                 <div className="mb-4 p-4 bg-slate-900 rounded-lg border border-indigo-500">
                                     <div className="text-sm font-medium mb-3 flex items-center gap-2">
@@ -8788,99 +8672,290 @@
                                         </div>
                                     )}
                                     
-                                    <button onClick={async () => {
-                                        // Reset completed state when starting new deploy
-                                        setDeployCompleted(false);
+                                    {/* === UNIFIED VALIDATION PANEL === */}
+                                    {(() => {
+                                        if (!validation) return null;
                                         
-                                        // Helper to execute deploy + doc push
-                                        const executeBatchAction = async () => {
-                                            setIsDeploying(true);
-                                            deployClickedThisSession.current = true;
+                                        const panelBg = validation.severity === 'error'
+                                            ? 'bg-red-900/20 border-red-700/50'
+                                            : validation.severity === 'warning'
+                                                ? 'bg-amber-900/20 border-amber-700/50'
+                                                : 'bg-slate-800/50 border-slate-600/50';
+                                        const panelText = validation.severity === 'error'
+                                            ? 'text-red-300'
+                                            : validation.severity === 'warning'
+                                                ? 'text-amber-300'
+                                                : 'text-slate-400';
+                                        const isInfoOnly = validation.severity === 'info';
+                                        
+                                        const errorIssues = validation.issues.filter(i => i.severity === 'error');
+                                        const warnIssues = validation.issues.filter(i => i.severity === 'warning');
+                                        const infoIssues = validation.issues.filter(i => i.severity === 'info');
+                                        
+                                        
+                                        return isInfoOnly ? (
+                                            // Info: single collapsed line
+                                            <details className={`mb-3 rounded-lg border ${panelBg}`}>
+                                                <summary className={`p-2 cursor-pointer select-none text-xs ${panelText} flex items-center gap-1.5`}>
+                                                    ℹ️ {infoIssues.map(i => i.detail).join('; ')}
+                                                </summary>
+                                                {validation.claudePrompt && (
+                                                    <div className="px-2 pb-2">
+                                                        <pre className="p-2 bg-slate-900 rounded text-xs text-slate-400 whitespace-pre-wrap border border-slate-700">{validation.claudePrompt}</pre>
+                                                    </div>
+                                                )}
+                                            </details>
+                                        ) : (
+                                            // Warning/Error: expanded panel
+                                            <div className={`mb-3 p-3 rounded-lg border ${panelBg}`}>
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <div className={`text-xs font-medium ${panelText} flex items-center gap-1.5`}>
+                                                        {validation.severity === 'error' ? '⛔' : '⚠️'} {validation.summary}
+                                                    </div>
+                                                    {validation.claudePrompt && (
+                                                        <button
+                                                            onClick={() => {
+                                                                navigator.clipboard.writeText(validation.claudePrompt);
+                                                                showAlert('Copied to clipboard! Paste into Claude to fix.', '📋 Fix Prompt Copied');
+                                                            }}
+                                                            className={`px-2 py-1 text-xs rounded flex items-center gap-1 ${
+                                                                validation.severity === 'error' 
+                                                                    ? 'bg-red-700 hover:bg-red-600 text-red-100' 
+                                                                    : 'bg-amber-700 hover:bg-amber-600 text-amber-100'
+                                                            }`}
+                                                        >
+                                                            📋 Copy Fix Prompt
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                
+                                                <div className="text-xs space-y-1.5">
+                                                    {errorIssues.map((issue, i) => (
+                                                        <div key={`e${i}`} className="text-red-400 flex items-start gap-1.5">
+                                                            <span className="flex-shrink-0">🔴</span>
+                                                            <span>{issue.detail}</span>
+                                                        </div>
+                                                    ))}
+                                                    {warnIssues.map((issue, i) => (
+                                                        <div key={`w${i}`}>
+                                                            <div className="text-amber-400 flex items-start gap-1.5">
+                                                                <span className="flex-shrink-0">🟡</span>
+                                                                <span>{issue.detail}</span>
+                                                            </div>
+                                                            {/* Version bump action (code-only flow) */}
+                                                            {issue.action?.type === 'bump-version' && (
+                                                                <div className="ml-5 mt-1.5 flex items-center gap-2 flex-wrap">
+                                                                    <button
+                                                                        onClick={() => {
+                                                                            const newV = issue.action.suggested;
+                                                                            // Bump index.html
+                                                                            const idxFile = stagedFiles.find(f => f.name === 'index.html' && f.fileAction === 'deploy');
+                                                                            if (idxFile) {
+                                                                                const fixedHtml = fixVersionsInContent(idxFile.content, newV);
+                                                                                const newValidation = validateVersions(fixedHtml, idxFile.name);
+                                                                                onUpdateStagedFile(idxFile.id, { content: fixedHtml, version: newV, versionValidation: newValidation });
+                                                                            }
+                                                                            // Bump sw.js
+                                                                            const swFile = stagedFiles.find(f => f.name === 'sw.js' && f.fileAction === 'deploy');
+                                                                            if (swFile && swFile.content) {
+                                                                                const fixedSw = swFile.content.replace(
+                                                                                    /(CACHE_VERSION\s*=\s*['"])v?[^'"]*(['"])/g,
+                                                                                    `$1v${newV}$2`
+                                                                                );
+                                                                                onUpdateStagedFile(swFile.id, { content: fixedSw, version: newV });
+                                                                            }
+                                                                            showAlert(`Bumped to v${newV}`, '✅ Version Updated');
+                                                                        }}
+                                                                        className="px-2 py-1 bg-green-700 hover:bg-green-600 text-xs rounded text-green-100 flex items-center gap-1"
+                                                                    >
+                                                                        🔧 Bump to v{issue.action.suggested}
+                                                                    </button>
+                                                                    <span className="text-slate-500 text-xs">or</span>
+                                                                    <input
+                                                                        type="text"
+                                                                        placeholder="x.x.x"
+                                                                        className="w-20 px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white"
+                                                                        onKeyDown={(e) => {
+                                                                            if (e.key === 'Enter' && e.target.value.match(/^\d+\.\d+\.\d+$/)) {
+                                                                                const newV = e.target.value;
+                                                                                const idxFile = stagedFiles.find(f => f.name === 'index.html' && f.fileAction === 'deploy');
+                                                                                if (idxFile) {
+                                                                                    const fixedHtml = fixVersionsInContent(idxFile.content, newV);
+                                                                                    const newValidation = validateVersions(fixedHtml, idxFile.name);
+                                                                                    onUpdateStagedFile(idxFile.id, { content: fixedHtml, version: newV, versionValidation: newValidation });
+                                                                                }
+                                                                                const swFile = stagedFiles.find(f => f.name === 'sw.js' && f.fileAction === 'deploy');
+                                                                                if (swFile && swFile.content) {
+                                                                                    const fixedSw = swFile.content.replace(
+                                                                                        /(CACHE_VERSION\s*=\s*['"])v?[^'"]*(['"])/g,
+                                                                                        `$1v${newV}$2`
+                                                                                    );
+                                                                                    onUpdateStagedFile(swFile.id, { content: fixedSw, version: newV });
+                                                                                }
+                                                                                showAlert(`Bumped to v${newV}`, '✅ Version Updated');
+                                                                                e.target.value = '';
+                                                                            }
+                                                                        }}
+                                                                    />
+                                                                    <button
+                                                                        onClick={() => {
+                                                                            // Mark as dismissed — just deploy as-is
+                                                                            // The deploy button already works, this is just UX clarity
+                                                                        }}
+                                                                        className="px-2 py-1 text-slate-500 hover:text-slate-300 text-xs"
+                                                                    >
+                                                                        Deploy as-is
+                                                                    </button>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                    {infoIssues.map((issue, i) => (
+                                                        <div key={`i${i}`} className="text-slate-500 flex items-start gap-1.5">
+                                                            <span className="flex-shrink-0">ℹ️</span>
+                                                            <span>{issue.detail}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                
+                                                {/* Claude prompt expandable */}
+                                                {validation.claudePrompt && (
+                                                    <details className="mt-2">
+                                                        <summary className={`text-xs cursor-pointer hover:opacity-80 ${
+                                                            validation.severity === 'error' ? 'text-red-500' : 'text-amber-500'
+                                                        }`}>Show Claude fix prompt</summary>
+                                                        <div className="relative mt-1.5">
+                                                            <pre className="p-2 pr-16 bg-slate-900 rounded text-xs text-slate-300 whitespace-pre-wrap overflow-x-auto border border-slate-700">{validation.claudePrompt}</pre>
+                                                            <button onClick={() => { navigator.clipboard.writeText(validation.claudePrompt); showAlert('Copied!', '📋'); }}
+                                                                className="absolute top-2 right-2 px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded text-slate-300">
+                                                                📋 Copy
+                                                            </button>
+                                                        </div>
+                                                    </details>
+                                                )}
+                                                
+                                                {/* Error override checkbox */}
+                                                {validation.severity === 'error' && (
+                                                    <label className="mt-2 flex items-start gap-2 text-xs text-red-400 cursor-pointer select-none">
+                                                        <input type="checkbox" className="mt-0.5"
+                                                            checked={errorOverride}
+                                                            onChange={e => setErrorOverride(e.target.checked)}
+                                                        />
+                                                        <span>I understand these issues may break the app for users — deploy anyway</span>
+                                                    </label>
+                                                )}
+                                            </div>
+                                        );
+                                    })()}
+                                    
+                                    {/* Deploy Button */}
+                                    {(() => {
+                                        const hasValidationError = validation?.severity === 'error' && !errorOverride;
+                                        
+                                        const buttonDisabled = !github || isDeploying || hasValidationError;
+                                        const buttonStyle = (() => {
+                                            if (isDeploying) return 'bg-emerald-700 cursor-wait';
+                                            if (deployCompleted) return 'bg-orange-500 hover:bg-orange-600';
+                                            if (hasValidationError) return 'bg-slate-600 cursor-not-allowed opacity-50';
+                                            if (validation?.severity === 'error' && errorOverride) return 'bg-red-600 hover:bg-red-700';
+                                            if (validation?.severity === 'warning') return 'bg-amber-600 hover:bg-amber-700';
+                                            if (hasMismatch) return 'bg-amber-600 hover:bg-amber-700';
+                                            return deployTarget.target === 'prod' ? 'bg-green-600 hover:bg-green-700' : 'bg-blue-600 hover:bg-blue-700';
+                                        })();
+                                        
+                                        const buttonPrefix = (() => {
+                                            if (isDeploying || deployCompleted) return '';
+                                            if (hasValidationError) return '🚫 ';
+                                            if (validation?.severity === 'error' && errorOverride) return '⚠️ ';
+                                            if (validation?.severity === 'warning') return '⚠️ ';
+                                            if (hasMismatch) return '⚠️ ';
+                                            return '';
+                                        })();
+                                        
+                                        return (
+                                        <button onClick={async () => {
+                                            setDeployCompleted(false);
                                             
-                                            // Deploy files to GitHub Pages
-                                            if (selectedDeployFiles.length > 0) {
-                                                console.log('Deploying files:', selectedDeployFiles.map(f => ({ name: f.name, id: f.id, size: f.content?.length })));
-                                                await onBatchDeploy(selectedDeployFiles, deployTarget.appId, deployTarget.target);
-                                            }
-                                            
-                                            // Push doc files to source repo
-                                            if (selectedDocFiles.length > 0 && github) {
-                                                const app = apps[deployTarget.appId];
-                                                const repo = app?.repos?.prod || app?.prodRepo || app?.repos?.test || app?.testRepo;
-                                                if (repo) {
-                                                    console.log('Pushing docs to:', repo);
-                                                    const pushedDocIds = [];
-                                                    for (const doc of selectedDocFiles) {
-                                                        try {
-                                                            const existing = await github.getFile(repo, doc.targetPath);
-                                                            const sha = existing?.sha || null;
-                                                            await github.createOrUpdateFile(
-                                                                repo,
-                                                                doc.targetPath,
-                                                                doc.content,
-                                                                `${sha ? 'Update' : 'Add'} ${doc.name} via Command Center`,
-                                                                sha
-                                                            );
-                                                            console.log(`✅ Pushed ${doc.name} → ${repo}/${doc.targetPath}`);
-                                                            pushedDocIds.push(doc.id);
-                                                        } catch (e) {
-                                                            console.error(`❌ Failed to push ${doc.name}:`, e.message);
+                                            const executeBatchAction = async () => {
+                                                setIsDeploying(true);
+                                                deployClickedThisSession.current = true;
+                                                
+                                                if (selectedDeployFiles.length > 0) {
+                                                    console.log('Deploying files:', selectedDeployFiles.map(f => ({ name: f.name, id: f.id, size: f.content?.length })));
+                                                    await onBatchDeploy(selectedDeployFiles, deployTarget.appId, deployTarget.target);
+                                                }
+                                                
+                                                if (selectedDocFiles.length > 0 && github) {
+                                                    const app = apps[deployTarget.appId];
+                                                    const repo = app?.repos?.prod || app?.prodRepo || app?.repos?.test || app?.testRepo;
+                                                    if (repo) {
+                                                        console.log('Pushing docs to:', repo);
+                                                        const pushedDocIds = [];
+                                                        for (const doc of selectedDocFiles) {
+                                                            try {
+                                                                const existing = await github.getFile(repo, doc.targetPath);
+                                                                const sha = existing?.sha || null;
+                                                                await github.createOrUpdateFile(
+                                                                    repo,
+                                                                    doc.targetPath,
+                                                                    doc.content,
+                                                                    `${sha ? 'Update' : 'Add'} ${doc.name} via Command Center`,
+                                                                    sha
+                                                                );
+                                                                console.log(`✅ Pushed ${doc.name} → ${repo}/${doc.targetPath}`);
+                                                                pushedDocIds.push(doc.id);
+                                                            } catch (e) {
+                                                                console.error(`❌ Failed to push ${doc.name}:`, e.message);
+                                                            }
+                                                        }
+                                                        if (pushedDocIds.length > 0) {
+                                                            setStagedFiles(prev => prev.filter(f => !pushedDocIds.includes(f.id)));
                                                         }
                                                     }
-                                                    // Remove successfully pushed docs from staged files
-                                                    if (pushedDocIds.length > 0) {
-                                                        setStagedFiles(prev => prev.filter(f => !pushedDocIds.includes(f.id)));
-                                                    }
                                                 }
-                                            }
+                                                
+                                                const currentApp = apps[deployTarget.appId];
+                                                if (currentApp?.testRepo) {
+                                                    setDeployTarget(prev => ({ ...prev, target: 'test' }));
+                                                }
+                                            };
                                             
-                                            // Reset to TEST after deploy
-                                            const currentApp = apps[deployTarget.appId];
-                                            if (currentApp?.testRepo) {
-                                                setDeployTarget(prev => ({ ...prev, target: 'test' }));
+                                            if (hasMismatch) {
+                                                const confirmed = await showConfirm(
+                                                    `File detected as ${apps[primaryDetected]?.name} but deploying to ${apps[deployTarget.appId]?.name}. Continue anyway?`,
+                                                    'Deploy Mismatch Warning'
+                                                );
+                                                if (confirmed) await executeBatchAction();
+                                            } else {
+                                                await executeBatchAction();
                                             }
-                                        };
-                                        
-                                        // Show confirmation if mismatch detected
-                                        if (hasMismatch) {
-                                            const confirmed = await showConfirm(
-                                                `File detected as ${apps[primaryDetected]?.name} but deploying to ${apps[deployTarget.appId]?.name}. Continue anyway?`,
-                                                'Deploy Mismatch Warning'
-                                            );
-                                            if (confirmed) await executeBatchAction();
-                                        } else {
-                                            await executeBatchAction();
-                                        }
-                                    }}
-                                        disabled={!github || isDeploying}
-                                        className={`w-full p-3 rounded font-medium flex items-center justify-center gap-2 transition-all ${
-                                            isDeploying
-                                                ? 'bg-emerald-700 cursor-wait'
-                                                : deployCompleted
-                                                    ? 'bg-orange-500 hover:bg-orange-600'
-                                                    : hasMismatch 
-                                                        ? 'bg-amber-600 hover:bg-amber-700' 
-                                                        : deployTarget.target === 'prod' 
-                                                            ? 'bg-green-600 hover:bg-green-700' 
-                                                            : 'bg-blue-600 hover:bg-blue-700'
-                                        }`}>
-                                        {isDeploying ? (
-                                            <>
-                                                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                                Deploying...
-                                            </>
-                                        ) : deployCompleted ? (
-                                            <>
-                                                ✓ Deployed! Click to deploy again
-                                            </>
-                                        ) : (
-                                            <>
-                                                {hasMismatch && '⚠️ '}{selectedDeployFiles.length > 0 
-                                                    ? (selectedDeployFiles.length === 1 ? 'Deploy File' : `Batch Deploy ${selectedDeployFiles.length} Files`)
-                                                    : ''}{selectedDeployFiles.length > 0 && selectedDocFiles.length > 0 ? ' + ' : ''}{selectedDocFiles.length > 0 ? `Push ${selectedDocFiles.length} Docs` : ''}
-                                            </>
-                                        )}
-                                    </button>
+                                        }}
+                                            disabled={buttonDisabled}
+                                            className={`w-full p-3 rounded font-medium flex items-center justify-center gap-2 transition-all ${buttonStyle}`}>
+                                            {isDeploying ? (
+                                                <>
+                                                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                                    Deploying...
+                                                </>
+                                            ) : deployCompleted ? (
+                                                <>
+                                                    ✓ Deployed! Click to deploy again
+                                                </>
+                                            ) : hasValidationError ? (
+                                                <>
+                                                    🚫 Fix errors to deploy
+                                                </>
+                                            ) : (
+                                                <>
+                                                    {buttonPrefix}{selectedDeployFiles.length > 0 
+                                                        ? (selectedDeployFiles.length === 1 ? 'Deploy File' : `Batch Deploy ${selectedDeployFiles.length} Files`)
+                                                        : ''}{selectedDeployFiles.length > 0 && selectedDocFiles.length > 0 ? ' + ' : ''}{selectedDocFiles.length > 0 ? `Push ${selectedDocFiles.length} Docs` : ''}
+                                                    {' → '}{deployTarget.target.toUpperCase()}
+                                                </>
+                                            )}
+                                        </button>
+                                        );
+                                    })()}
                                 </div>
                                 );
                             })()}
@@ -9042,25 +9117,6 @@
                                                             ✓ All {f.versionValidation.allVersions.length} version strings match (v{f.versionValidation.primary})
                                                         </div>
                                                     )}
-                                                    
-                                                    {/* Doc version alignment indicator */}
-                                                    {f.fileAction === 'push-doc' && docValidation && (() => {
-                                                        const status = docValidation.fileStatus?.[f.name];
-                                                        if (status?.hasIssues) {
-                                                            return (
-                                                                <div className="mt-1.5 text-xs text-amber-400 flex items-center gap-1">
-                                                                    ⚠️ {status.issues.map(i => i.detail).join('; ')}
-                                                                </div>
-                                                            );
-                                                        } else if (docValidation.deployVersion && REQUIRED_DOCS.includes(f.name)) {
-                                                            return (
-                                                                <div className="mt-1.5 text-xs text-green-400 flex items-center gap-1">
-                                                                    ✓ Version aligned with v{docValidation.deployVersion}
-                                                                </div>
-                                                            );
-                                                        }
-                                                        return null;
-                                                    })()}
                                                 </div>
                                             </div>
                                             <button onClick={e => { 
@@ -9461,14 +9517,21 @@
     // REPO FILES VIEW
     // =========================================================================
     
-    function RepoFilesView({ apps, github, repoFiles, onLoadRepo, selectedRepo, onSelectRepo, markedForDeletion, setMarkedForDeletion, onDeleteMarked, showAlert }) {
+    function RepoFilesView({ apps, github, repoFiles, onLoadRepo, selectedRepo, onSelectRepo, selectedAppKey, onSelectAppKey, markedForDeletion, setMarkedForDeletion, onDeleteMarked, showAlert }) {
         const configuredApps = Object.values(apps).filter(a => a.testRepo || a.prodRepo);
         const allRepos = [...new Set(configuredApps.flatMap(a => [a.testRepo, a.prodRepo].filter(Boolean)))];
         
-        const currentFiles = repoFiles[selectedRepo]?.files || [];
-        const isLoading = repoFiles[selectedRepo]?.loading;
+        // v8.35.0: Derive selected app and subPath from selectedAppKey
+        const selectedAppId = selectedAppKey ? selectedAppKey.split('::')[0] : null;
+        const selectedApp = selectedAppId ? configuredApps.find(a => a.id === selectedAppId) : null;
+        const selectedSubPath = selectedApp?.subPath || '';
+        const cacheKey = selectedRepo ? (selectedSubPath ? `${selectedRepo}::${selectedSubPath}` : selectedRepo) : null;
+        
+        const currentFiles = repoFiles[cacheKey]?.files || [];
+        const isLoading = repoFiles[cacheKey]?.loading;
         
         const [versionAudit, setVersionAudit] = React.useState(null);
+        const [expandedDirs, setExpandedDirs] = React.useState([]);
         
         const toggleMarkForDeletion = (file) => {
             const existing = markedForDeletion.find(m => m.repo === selectedRepo && m.path === file.path);
@@ -9512,9 +9575,17 @@
             setDownloadingPackage(true);
             try {
                 // Get app info for naming and subPath
-                // v8.7.5: When multiple apps share a repo, prefer ones with subPath (more specific)
-                const matchingApps = configuredApps.filter(a => a.testRepo === selectedRepo || a.prodRepo === selectedRepo);
-                const app = matchingApps.find(a => a.subPath) || matchingApps[0];
+                // v8.35.0: Use selectedAppKey to find exact app (handles shared repos)
+                let app = null;
+                if (selectedAppKey) {
+                    const appId = selectedAppKey.split('::')[0];
+                    app = configuredApps.find(a => a.id === appId);
+                }
+                if (!app) {
+                    // Fallback: When multiple apps share a repo, prefer ones with subPath (more specific)
+                    const matchingApps = configuredApps.filter(a => a.testRepo === selectedRepo || a.prodRepo === selectedRepo);
+                    app = matchingApps.find(a => a.subPath) || matchingApps[0];
+                }
                 const repoName = selectedRepo.split('/')[1];
                 const subPath = app?.subPath || '';
                 
@@ -9590,8 +9661,8 @@
                 }
                 
                 // Determine folder name for zip structure: {app}-latest/
-                // Strip 'test' suffix if present to get base app name
-                let appName = repoName.replace(/test$/i, '');
+                // v8.35.0: Use app name for zip folder, not repo name
+                let appName = (app?.id || repoName).replace(/test$/i, '');
                 const folderName = `${appName}-latest`;
                 
                 // Create zip with proper structure: {app}-latest/{files}
@@ -9602,8 +9673,12 @@
                     try {
                         const response = await fetch(file.download_url);
                         const blob = await response.blob();
-                        // Add to folder with same relative path
-                        folder.file(file.path, blob);
+                        // v8.35.0: Strip subPath prefix for correct zip structure
+                        let relativePath = file.path;
+                        if (subPath && relativePath.startsWith(subPath + '/')) {
+                            relativePath = relativePath.substring(subPath.length + 1);
+                        }
+                        folder.file(relativePath, blob);
                     } catch (e) {
                         console.warn(`Failed to fetch ${file.path}:`, e);
                     }
@@ -9642,10 +9717,16 @@
             setVersionAudit({ loading: true });
             
             try {
-                // v8.7.5: Get app's subPath to find correct index.html
-                // When multiple apps share a repo, prefer ones with subPath (more specific)
-                const matchingApps = configuredApps.filter(a => a.testRepo === selectedRepo || a.prodRepo === selectedRepo);
-                const app = matchingApps.find(a => a.subPath) || matchingApps[0];
+                // v8.35.0: Use selectedAppKey to find exact app (handles shared repos)
+                let app = null;
+                if (selectedAppKey) {
+                    const appId = selectedAppKey.split('::')[0];
+                    app = configuredApps.find(a => a.id === appId);
+                }
+                if (!app) {
+                    const matchingApps = configuredApps.filter(a => a.testRepo === selectedRepo || a.prodRepo === selectedRepo);
+                    app = matchingApps.find(a => a.subPath) || matchingApps[0];
+                }
                 const indexPath = app?.subPath ? `${app.subPath}/index.html` : 'index.html';
                 
                 const fileData = await github.getFileContent(selectedRepo, indexPath);
@@ -9672,22 +9753,38 @@
             <div className="space-y-6">
                 <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
                     <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                        <Icons.Folder /> Repository Files
+                        <Icons.Folder /> App Files
                     </h2>
                     
                     <div className="flex gap-4 mb-4">
-                        <select value={selectedRepo || ''} onChange={e => { onSelectRepo(e.target.value); if (e.target.value) onLoadRepo(e.target.value); }}
+                        <select value={selectedAppKey || ''} onChange={e => {
+                            const val = e.target.value;
+                            if (!val) { onSelectRepo(''); onSelectAppKey(''); return; }
+                            const appId = val.split('::')[0];
+                            const repo = val.split('::').slice(2).join('::');
+                            const app = configuredApps.find(a => a.id === appId);
+                            const subPath = app?.subPath || '';
+                            onSelectAppKey(val);
+                            onSelectRepo(repo);
+                            setExpandedDirs([]);
+                            if (repo) onLoadRepo(repo, subPath);
+                        }}
                             className="flex-1 p-2 bg-slate-700 border border-slate-600 rounded">
-                            <option value="">Select repository...</option>
-                            {allRepos.map(r => {
-                                const app = configuredApps.find(a => a.testRepo === r || a.prodRepo === r);
-                                const isTest = app?.testRepo === r;
-                                return <option key={r} value={r}>{getAppEmoji(app?.icon)} {r.split('/')[1]} ({isTest ? 'TEST' : 'PROD'})</option>;
-                            })}
+                            <option value="">Select app...</option>
+                            {configuredApps
+                                .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id))
+                                .flatMap(app => {
+                                    const options = [];
+                                    if (app.prodRepo) options.push({ label: `${getAppEmoji(app.icon)} ${app.name || app.id} — PROD`, key: `${app.id}::prod::${app.prodRepo}` });
+                                    if (app.testRepo) options.push({ label: `${getAppEmoji(app.icon)} ${app.name || app.id} — TEST`, key: `${app.id}::test::${app.testRepo}` });
+                                    return options;
+                                })
+                                .map(opt => <option key={opt.key} value={opt.key}>{opt.label}</option>)
+                            }
                         </select>
                         
                         {selectedRepo && (
-                            <button onClick={() => onLoadRepo(selectedRepo)} className="px-4 py-2 bg-slate-700 rounded flex items-center gap-2">
+                            <button onClick={() => onLoadRepo(selectedRepo, selectedSubPath)} className="px-4 py-2 bg-slate-700 rounded flex items-center gap-2">
                                 <Icons.Refresh className={isLoading ? 'animate-spin' : ''} /> Refresh
                             </button>
                         )}
@@ -9784,6 +9881,51 @@
                     
                     {!isLoading && currentFiles.length > 0 && (
                         <div className="space-y-1">
+                            {/* Directories first */}
+                            {currentFiles.filter(f => f.type === 'dir').map(dir => (
+                                <div key={dir.path} className="bg-slate-700/30 rounded">
+                                    <div className="p-2 flex items-center gap-3 cursor-pointer hover:bg-slate-700/50" 
+                                        onClick={() => {
+                                            const dirCacheKey = `${selectedRepo}::${dir.path}`;
+                                            if (repoFiles[dirCacheKey]?.files) {
+                                                setExpandedDirs(prev => prev.includes(dir.path) ? prev.filter(d => d !== dir.path) : [...prev, dir.path]);
+                                            } else {
+                                                onLoadRepo(selectedRepo, dir.path);
+                                                setExpandedDirs(prev => [...prev, dir.path]);
+                                            }
+                                        }}>
+                                        <span>{expandedDirs.includes(dir.path) ? '📂' : '📁'}</span>
+                                        <span className="flex-1 font-mono text-sm font-semibold">{dir.name}/</span>
+                                        <span className="text-xs text-slate-500">folder</span>
+                                    </div>
+                                    {expandedDirs.includes(dir.path) && (() => {
+                                        const dirCacheKey = `${selectedRepo}::${dir.path}`;
+                                        const dirFiles = repoFiles[dirCacheKey]?.files || [];
+                                        const dirLoading = repoFiles[dirCacheKey]?.loading;
+                                        return (
+                                            <div className="ml-6 border-l border-slate-600 pl-2 pb-1">
+                                                {dirLoading && <div className="p-2 text-xs text-slate-500">Loading...</div>}
+                                                {dirFiles.filter(f => f.type === 'file').map(file => (
+                                                    <div key={file.path} className={`p-1.5 rounded flex items-center gap-3 ${isMarked(file) ? 'bg-red-900/30 border border-red-700' : 'hover:bg-slate-700/50'}`}>
+                                                        <span>{getFileIcon(file.name)}</span>
+                                                        <span className="flex-1 font-mono text-sm">{file.name}</span>
+                                                        <span className="text-xs text-slate-500">{formatBytes(file.size)}</span>
+                                                        <div className="flex gap-1">
+                                                            <a href={file.download_url} target="_blank" className="p-1 hover:bg-slate-600 rounded" title="View"><Icons.Eye /></a>
+                                                            <button onClick={() => downloadFile(file)} className="p-1 hover:bg-slate-600 rounded" title="Download"><Icons.Download /></button>
+                                                            <button onClick={() => toggleMarkForDeletion(file)} 
+                                                                className={`p-1 rounded ${isMarked(file) ? 'bg-red-600 text-white' : 'hover:bg-red-900/50 text-slate-400 hover:text-red-400'}`}
+                                                                title={isMarked(file) ? 'Unmark' : 'Mark for deletion'}><Icons.Trash /></button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                                {!dirLoading && dirFiles.length === 0 && <div className="p-2 text-xs text-slate-500">Empty</div>}
+                                            </div>
+                                        );
+                                    })()}
+                                </div>
+                            ))}
+                            {/* Then files */}
                             {currentFiles.filter(f => f.type === 'file').map(file => (
                                 <div key={file.path} className={`p-2 rounded flex items-center gap-3 ${isMarked(file) ? 'bg-red-900/30 border border-red-700' : 'bg-slate-700/50 hover:bg-slate-700'}`}>
                                     <span>{getFileIcon(file.name)}</span>
@@ -22398,153 +22540,271 @@ const pushIssueToCommandCenter = async (testResult) => {
     // Required docs for a full doc set (per CLAUDE-PREP-STANDARD)
     const REQUIRED_DOCS = ['CONTEXT.md', 'PROJECT_PLAN.md', 'CHANGELOG.md', 'RELEASE_NOTES.txt'];
     
-    // Validate doc package: completeness and version alignment
-    function validateDocPackage(stagedFiles) {
-        const deployFiles = stagedFiles.filter(f => f.fileAction === 'deploy');
-        const docFiles = stagedFiles.filter(f => f.fileAction === 'push-doc');
-        
-        // If no deploy files at all, skip validation (pure doc push is fine)
-        if (deployFiles.length === 0 && docFiles.length === 0) return null;
-        
-        // If only deploy files and no docs, skip validation — user just picked an HTML to deploy
-        // Package validation only applies when multiple files are staged (i.e. a full package)
-        if (docFiles.length === 0 && deployFiles.length <= 2) return null;
-        
-        const result = {
-            isValid: true,
-            missingDocs: [],
-            versionIssues: [],  // { file, expected, found, detail }
-            deployVersion: null,
-            claudePrompt: null
-        };
-        
-        // Get the deploy version from index.html
-        const indexFile = deployFiles.find(f => f.name === 'index.html' || f.targetPath?.endsWith('index.html'));
-        result.deployVersion = indexFile?.version || null;
-        
-        // 1. Check for missing required docs
-        const docNames = new Set(docFiles.map(f => f.name));
-        for (const required of REQUIRED_DOCS) {
-            if (!docNames.has(required)) {
-                result.missingDocs.push(required);
+    // =========================================================================
+    // UNIFIED PACKAGE VALIDATION (v8.36.0)
+    // Selection-driven: runs on selected files to determine intent and issues.
+    // Replaces: validateDocPackage, post-extraction showAlerts, deploy-time confirms
+    // =========================================================================
+
+    function getValidationIntent(selectedFiles) {
+        const deployFiles = selectedFiles.filter(f => f.fileAction === 'deploy');
+        const docFiles = selectedFiles.filter(f => f.fileAction === 'push-doc');
+
+        if (selectedFiles.length === 0) return 'none';
+        if (deployFiles.length === 0 && docFiles.length > 0) return 'docs-only';
+        if (deployFiles.length === 1 && docFiles.length === 0) return 'quick-deploy';
+
+        const hasHtml = deployFiles.some(f => f.name === 'index.html');
+        const hasSw = deployFiles.some(f => f.name === 'sw.js');
+        const hasManifest = deployFiles.some(f => f.name === 'manifest.json');
+        const hasIcons = deployFiles.some(f => f.targetPath?.startsWith('icons/'));
+        const pwaFileCount = [hasHtml, hasSw, hasManifest, hasIcons].filter(Boolean).length;
+
+        const isPackage = pwaFileCount >= 3 || (deployFiles.length >= 2 && docFiles.length >= 2);
+
+        if (isPackage && docFiles.length > 0) return 'full-package';
+        if (isPackage) return 'deploy-package';
+        return 'targeted-update';
+    }
+
+    function validatePackage(selectedFiles, stagedFiles, appConfig, deployedVersion) {
+        const intent = getValidationIntent(selectedFiles);
+        if (intent === 'none' || intent === 'docs-only') return null;
+
+        const deployFiles = selectedFiles.filter(f => f.fileAction === 'deploy');
+        const docFiles = selectedFiles.filter(f => f.fileAction === 'push-doc');
+        const indexFile = deployFiles.find(f => f.name === 'index.html');
+        const swFile = deployFiles.find(f => f.name === 'sw.js');
+        const deployVersion = indexFile?.version || null;
+        const isPWA = appConfig?.hasServiceWorker === true;
+
+        const issues = [];
+
+        // --- Version not incremented ---
+        if ((intent === 'deploy-package' || intent === 'full-package') && deployVersion && deployedVersion) {
+            if (!isNewerVersion(deployVersion, deployedVersion)) {
+                const suggestedBump = bumpVersion(deployedVersion, 'patch');
+                const hasDocsSelected = docFiles.length > 0;
+                issues.push({
+                    id: 'version-not-incremented',
+                    severity: 'warning',
+                    category: 'versions',
+                    title: 'Version not incremented',
+                    detail: `v${deployVersion} is already on ${appConfig?.name || 'target'}`,
+                    fix: `Bump to v${suggestedBump}`,
+                    action: hasDocsSelected ? null : {
+                        type: 'bump-version',
+                        from: deployVersion,
+                        suggested: suggestedBump
+                    },
+                    useClaudePrompt: hasDocsSelected
+                });
             }
         }
-        if (result.missingDocs.length > 0) result.isValid = false;
-        
-        // 2. Check version alignment in each doc (only if we have a deploy version)
-        if (result.deployVersion) {
-            const ver = result.deployVersion;
-            
-            // CONTEXT.md — should have **vX.X.X** near the top
+
+        // --- Version mismatch: index.html vs sw.js ---
+        if (intent !== 'quick-deploy' && indexFile && swFile) {
+            if (indexFile.version && swFile.version && indexFile.version !== swFile.version) {
+                issues.push({
+                    id: 'version-mismatch',
+                    severity: 'error',
+                    category: 'versions',
+                    title: 'Version mismatch: index.html vs sw.js',
+                    detail: `index.html: v${indexFile.version}, sw.js: v${swFile.version}`,
+                    fix: `Update sw.js CACHE_VERSION to v${indexFile.version}`
+                });
+            }
+        }
+
+        // --- PWA completeness (check against STAGED files, not selected) ---
+        if ((intent === 'deploy-package' || intent === 'full-package') && isPWA) {
+            const allStagedDeploy = stagedFiles.filter(f => f.fileAction === 'deploy');
+            const missing = [];
+            if (!allStagedDeploy.some(f => f.name === 'sw.js')) missing.push('sw.js');
+            if (!allStagedDeploy.some(f => f.name === 'manifest.json')) missing.push('manifest.json');
+            if (!allStagedDeploy.some(f => f.targetPath?.startsWith('icons/'))) missing.push('icons/');
+
+            for (const m of missing) {
+                issues.push({
+                    id: `pwa-missing-${m.replace(/[/.]/g, '')}`,
+                    severity: m === 'icons/' ? 'warning' : 'error',
+                    category: 'pwa',
+                    title: `Missing: ${m}`,
+                    detail: `PWA package needs ${m}`,
+                    fix: `Include ${m} in deployment package`
+                });
+            }
+        }
+
+        // --- Missing docs (full-package only, check against STAGED) ---
+        if (intent === 'full-package') {
+            const stagedDocNames = new Set(
+                stagedFiles.filter(f => f.fileAction === 'push-doc').map(f => f.name)
+            );
+            for (const required of REQUIRED_DOCS) {
+                if (!stagedDocNames.has(required)) {
+                    issues.push({
+                        id: `docs-missing-${required.toLowerCase().replace(/\./g, '')}`,
+                        severity: 'warning',
+                        category: 'docs',
+                        title: `Missing: ${required}`,
+                        detail: `Full package should include ${required}`,
+                        fix: `Create ${required} following CLAUDE-PREP-STANDARD`
+                    });
+                }
+            }
+        }
+
+        // --- Doc version alignment (on selected docs) ---
+        if ((intent === 'targeted-update' || intent === 'full-package') && deployVersion && docFiles.length > 0) {
             const contextFile = docFiles.find(f => f.name === 'CONTEXT.md');
             if (contextFile?.content) {
-                const contextVersionMatch = contextFile.content.match(/\*\*v([^\s*]+)\*\*/);
-                if (contextVersionMatch) {
-                    if (contextVersionMatch[1] !== ver) {
-                        result.versionIssues.push({
-                            file: 'CONTEXT.md',
-                            expected: ver,
-                            found: contextVersionMatch[1],
-                            detail: `Header says v${contextVersionMatch[1]}, deploy is v${ver}`
-                        });
-                    }
-                } else {
-                    result.versionIssues.push({
-                        file: 'CONTEXT.md',
-                        expected: ver,
-                        found: null,
-                        detail: 'No version found in header (expected **vX.X.X**)'
+                const match = contextFile.content.match(/\*\*v([^\s*]+)\*\*/);
+                if (match && match[1] !== deployVersion) {
+                    issues.push({
+                        id: 'docs-context-version', severity: 'warning', category: 'docs',
+                        title: 'CONTEXT.md version mismatch',
+                        detail: `CONTEXT.md: v${match[1]}, deploy: v${deployVersion}`,
+                        fix: `Update CONTEXT.md header to v${deployVersion}`
                     });
                 }
             }
-            
-            // CHANGELOG.md — latest ## [X.X.X] should match
+
             const changelogFile = docFiles.find(f => f.name === 'CHANGELOG.md');
             if (changelogFile?.content) {
-                const changelogMatch = changelogFile.content.match(/## \[([^\]]+)\]/);
-                if (changelogMatch) {
-                    if (changelogMatch[1] !== ver) {
-                        result.versionIssues.push({
-                            file: 'CHANGELOG.md',
-                            expected: ver,
-                            found: changelogMatch[1],
-                            detail: `Latest entry is [${changelogMatch[1]}], deploy is v${ver}`
-                        });
-                    }
-                } else {
-                    result.versionIssues.push({
-                        file: 'CHANGELOG.md',
-                        expected: ver,
-                        found: null,
-                        detail: 'No version entry found (expected ## [X.X.X])'
+                const match = changelogFile.content.match(/## \[([^\]]+)\]/);
+                if (match && match[1] !== deployVersion) {
+                    issues.push({
+                        id: 'docs-changelog-version', severity: 'warning', category: 'docs',
+                        title: 'CHANGELOG.md version mismatch',
+                        detail: `CHANGELOG.md: [${match[1]}], deploy: v${deployVersion}`,
+                        fix: `Add CHANGELOG.md entry for v${deployVersion}`
                     });
                 }
             }
-            
-            // RELEASE_NOTES.txt — first version line should match
+
             const rnFile = docFiles.find(f => f.name === 'RELEASE_NOTES.txt');
             if (rnFile?.content) {
-                const rnMatch = rnFile.content.match(/v?(\d+\.\d+[\d.]*)\s*[—–-]/);
-                if (rnMatch) {
-                    if (rnMatch[1] !== ver) {
-                        result.versionIssues.push({
-                            file: 'RELEASE_NOTES.txt',
-                            expected: ver,
-                            found: rnMatch[1],
-                            detail: `Latest entry is v${rnMatch[1]}, deploy is v${ver}`
-                        });
-                    }
-                } else {
-                    result.versionIssues.push({
-                        file: 'RELEASE_NOTES.txt',
-                        expected: ver,
-                        found: null,
-                        detail: 'No version entry found at top'
+                const match = rnFile.content.match(/v?(\d+\.\d+[\d.]*)\s*[—–-]/);
+                if (match && match[1] !== deployVersion) {
+                    issues.push({
+                        id: 'docs-releasenotes-version', severity: 'warning', category: 'docs',
+                        title: 'RELEASE_NOTES.txt version mismatch',
+                        detail: `RELEASE_NOTES.txt: v${match[1]}, deploy: v${deployVersion}`,
+                        fix: `Add RELEASE_NOTES.txt entry for v${deployVersion}`
                     });
                 }
             }
         }
-        
-        if (result.versionIssues.length > 0) result.isValid = false;
-        
-        // 3. Generate Claude fix prompt
-        if (!result.isValid) {
-            const lines = [];
-            lines.push('Please fix the following doc issues before I deploy:\n');
-            
-            if (result.missingDocs.length > 0) {
-                lines.push(`Missing docs: ${result.missingDocs.join(', ')}`);
-                lines.push(`Please create these files following the CLAUDE-PREP-STANDARD templates.`);
-                if (result.deployVersion) {
-                    lines.push(`Current version is v${result.deployVersion}.`);
-                }
-                lines.push('');
-            }
-            
-            if (result.versionIssues.length > 0) {
-                lines.push('Version mismatches in docs:');
-                for (const issue of result.versionIssues) {
-                    lines.push(`• ${issue.file}: ${issue.detail}`);
-                }
-                if (result.deployVersion) {
-                    lines.push(`\nPlease update all docs to reference v${result.deployVersion}.`);
-                }
-            }
-            
-            result.claudePrompt = lines.join('\n');
+
+        // --- Docs not included (info — deploy-package only) ---
+        if (intent === 'deploy-package' && deployVersion) {
+            issues.push({
+                id: 'docs-not-included',
+                severity: 'info',
+                category: 'docs',
+                title: 'Docs not included',
+                detail: `Repo docs will be out of sync after deploying v${deployVersion}`,
+                fix: null
+            });
         }
-        
-        // Also attach per-file validation status
-        result.fileStatus = {};
-        for (const doc of docFiles) {
-            const issues = result.versionIssues.filter(i => i.file === doc.name);
-            result.fileStatus[doc.name] = {
-                hasIssues: issues.length > 0,
-                issues
-            };
+
+        // --- Build result ---
+        if (issues.length === 0) return null;
+
+        const hasErrors = issues.some(i => i.severity === 'error');
+        const hasWarnings = issues.some(i => i.severity === 'warning');
+        const severity = hasErrors ? 'error' : hasWarnings ? 'warning' : 'info';
+
+        const errorCount = issues.filter(i => i.severity === 'error').length;
+        const warnCount = issues.filter(i => i.severity === 'warning').length;
+        const infoCount = issues.filter(i => i.severity === 'info').length;
+
+        const summaryParts = [];
+        if (errorCount) summaryParts.push(`${errorCount} error${errorCount !== 1 ? 's' : ''}`);
+        if (warnCount) summaryParts.push(`${warnCount} warning${warnCount !== 1 ? 's' : ''}`);
+        if (infoCount) summaryParts.push(`${infoCount} info`);
+
+        const needsClaudePrompt = issues.some(i =>
+            i.useClaudePrompt ||
+            i.category === 'pwa' ||
+            (i.category === 'docs' && i.id !== 'docs-not-included') ||
+            i.id === 'version-mismatch'
+        );
+
+        return {
+            issues,
+            intent,
+            severity,
+            summary: summaryParts.join(', '),
+            claudePrompt: needsClaudePrompt
+                ? generateClaudeFixPrompt(issues, deployVersion, deployedVersion, appConfig)
+                : null,
+            deployVersion
+        };
+    }
+
+    function generateClaudeFixPrompt(issues, deployVersion, deployedVersion, appConfig) {
+        const lines = [];
+        lines.push('Please fix the following issues in my deployment package:\n');
+
+        const notIncremented = issues.find(i => i.id === 'version-not-incremented');
+        if (notIncremented) {
+            const suggested = bumpVersion(deployedVersion || deployVersion, 'patch');
+            lines.push('Version not incremented:');
+            lines.push(`• Code is v${deployVersion} — same as deployed`);
+            lines.push(`• Bump to v${suggested} (or appropriate version)`);
+            lines.push('• Update ALL version locations in index.html');
+            lines.push('• Update sw.js CACHE_VERSION to match');
+            lines.push('');
         }
-        
-        return result;
+
+        const mismatch = issues.find(i => i.id === 'version-mismatch');
+        if (mismatch) {
+            lines.push('Version mismatch:');
+            lines.push(`• ${mismatch.detail}`);
+            lines.push(`• ${mismatch.fix}`);
+            lines.push('');
+        }
+
+        const pwaIssues = issues.filter(i => i.category === 'pwa');
+        if (pwaIssues.length > 0) {
+            const missingFiles = pwaIssues.map(i => i.title.replace('Missing: ', ''));
+            lines.push('PWA package incomplete:');
+            lines.push(`• Missing: ${missingFiles.join(', ')}`);
+            lines.push('• Include all PWA files in the deployment package');
+            lines.push('');
+        }
+
+        const missingDocs = issues.filter(i => i.id.startsWith('docs-missing'));
+        if (missingDocs.length > 0) {
+            const names = missingDocs.map(i => i.title.replace('Missing: ', ''));
+            lines.push(`Missing docs: ${names.join(', ')}`);
+            lines.push('Please create these following CLAUDE-PREP-STANDARD.');
+            lines.push('');
+        }
+
+        const docVersions = issues.filter(i =>
+            i.category === 'docs' &&
+            !i.id.startsWith('docs-missing') &&
+            i.id !== 'docs-not-included'
+        );
+        if (docVersions.length > 0) {
+            lines.push('Doc version updates:');
+            for (const issue of docVersions) {
+                lines.push(`• ${issue.detail}`);
+            }
+            const targetV = notIncremented
+                ? bumpVersion(deployedVersion || deployVersion, 'patch')
+                : deployVersion;
+            lines.push(`Please update all docs to reference v${targetV}.`);
+            lines.push('');
+        }
+
+        if (deployVersion) lines.push(`Current version: v${deployVersion}`);
+        if (appConfig?.name) lines.push(`App: ${appConfig.name}`);
+
+        return lines.join('\n');
     }
     
     // Detect config ↔ code drift when deploying CC itself.
@@ -24790,7 +25050,7 @@ The developer uses Claude for iterative development — each session should:
     // =========================================================================
     
     // =========================================================================
-    // DOMAIN REGISTRAR SETTINGS (v8.34.0)
+    // DOMAIN REGISTRAR SETTINGS (v8.35.0)
     // =========================================================================
     
     function DomainRegistrarSettings() {
@@ -24960,7 +25220,7 @@ The developer uses Claude for iterative development — each session should:
     }
 
     // =========================================================================
-    // DOMAINS VIEW — DNS management and domain health (v8.34.0)
+    // DOMAINS VIEW — DNS management and domain health (v8.35.0)
     // =========================================================================
     
     function DomainsView({ apps, config, showAlert, showConfirm }) {
@@ -25792,7 +26052,7 @@ The developer uses Claude for iterative development — each session should:
                     <FirebaseAdminSettings />
                 </div>
                 
-                {/* Domain Registrar (v8.34.0) */}
+                {/* Domain Registrar (v8.35.0) */}
                 <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
                     <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
                         🌐 Domain Registrar
