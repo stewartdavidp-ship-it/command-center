@@ -6,6 +6,39 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [8.36.0] — 2026-02-10
+
+### Added
+- **Unified Package Validation Engine** — `validatePackage()` consolidates 4 separate validation mechanisms into a single selection-driven system with intent detection
+- **`getValidationIntent()`** — classifies uploads as `quick-deploy`, `targeted-update`, `deploy-package`, `full-package`, or `docs-only` based on selected file composition
+- **Inline validation panel** — three-tier visual display (grey info / amber warning / red error) inside deploy controls, replaces all modal/alert-based validation
+- **Version bump in CC** — code-only deploys get a bump button in the validation panel; updates all version strings in index.html and sw.js CACHE_VERSION in one click
+- **Claude fix prompt generation** — `generateClaudeFixPrompt()` builds contextual prompt with grouped sections for version issues, PWA completeness, missing docs, and doc version alignment
+- **Deploy button state machine** — button disabled on errors (with override checkbox), amber on warnings, normal on clean/info
+- **Top-level `bumpVersion()` utility** — extracted from VersionBumpModal to module scope for use by validation engine
+
+### Removed
+- **`validateDocPackage()`** and associated `useMemo` / amber banner UI
+- **Post-extraction `showAlert()` calls** for version mismatch and PWA incompleteness
+- **Deploy-time `showConfirm()` dialogs** for version issues and same-version deploys
+- **`VersionWarningModal` trigger** in single-file deploy handler (component retained, trigger removed)
+- **Per-file doc version alignment indicators** (green/amber on file cards)
+
+### Changed
+- `handleBatchDeploy` no longer checks version validation or version increment at deploy time — handled pre-deploy by validation panel
+- `handleDeploy` no longer triggers VersionWarningModal — handled pre-deploy by validation panel
+- Deploy controls IIFE now computes validation and passes result to both panel and deploy button
+
+## [8.35.0] — 2026-02-10
+
+### Changed
+- **App Files view** — Dropdown now shows apps by name (not repo) with PROD/TEST labels; apps sharing repos (Game Shelf, Quotle, etc.) are individually selectable
+- **SubPath-aware file browser** — Selecting an app shows only that app's files (e.g., Game Shelf shows `app/` contents, not repo root)
+- **Expandable folders** — Directories show as 📁 with click-to-expand; files within folders are visible with full view/download/delete actions
+- **Download Package** — Correctly scopes to app's subPath; zip paths are relative (no `app/` prefix in zip structure)
+- **Version Audit** — Uses selected app's subPath to find the correct `index.html`
+- **Zip naming** — Uses app ID (`gameshelf-latest`) instead of repo name
+
 ## [8.34.0] — 2026-02-10
 
 ### Fixed
