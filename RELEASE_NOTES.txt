@@ -1,6 +1,21 @@
 Command Center — Release Notes
 ================================
 
+v8.29.3 — Firebase Admin Fix + Deploy UX
+-------------------------------------------------
+Date: February 9, 2026
+
+Fixes Firebase RTDB rules authentication (was returning 401) and improves single-file
+deploy experience.
+
+FIXES:
+• Firebase RTDB rules check now works — added missing `userinfo.email` OAuth scope
+• Reverted rules API to use `?access_token=` query param (Bearer not supported on this endpoint)
+• Console startup log now shows actual version instead of hardcoded v8.19.0
+
+IMPROVEMENTS:
+• Doc package validation no longer warns about missing docs when deploying a single HTML file
+
 v8.29.0 — Smart Artifact Generation (Phase 3.2)
 -------------------------------------------------
 Date: February 9, 2026
