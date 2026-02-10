@@ -1,6 +1,19 @@
 Command Center — Release Notes
 ================================
 
+v8.34.0 — Cleanup Guardrails
+-------------------------------------------------
+Prevents stale file cleanup from deleting critical CI/CD files:
+
+- Globally protected paths: .github/, package.json, firebase.json,
+  .firebaserc, .gitignore, LICENSE, README.md never flagged as stale
+- Firebase-functions package type: gameshelf-functions repo now correctly
+  recognized (functions/, .github/, config files treated as expected)
+- Critical file delete warning: extra confirmation dialog with file names
+  when selecting workflow, config, or build files for deletion
+- getAppType() recognizes firebase-functions and gameshelf-functions repos
+- isBaseFile() checks GLOBALLY_PROTECTED_PATHS before package rules
+
 v8.33.0 — Multi-Provider Domains + Firebase CORS Proxy
 -------------------------------------------------
 Multi-registrar support and CORS fix for domain management:
