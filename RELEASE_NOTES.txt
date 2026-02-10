@@ -1,6 +1,18 @@
 Command Center — Release Notes
 ================================
 
+v8.30.0 — Portfolio View + Cost Tracking (Phase 4.1)
+-------------------------------------------------
+New Portfolio view under Monitor with full cross-app analytics:
+- Maturity distribution bar chart showing seed/prototype/alpha/beta/production breakdown
+- Backlog health panel with status bars, aging item alerts, and per-app open item counts
+- Session velocity metrics: total, per-week average, type mix, sessions by app with cost
+- Deploy activity: test/prod split, weekly volume sparkline, deploys by app
+- Cost breakdown table: per-app estimated cost from token counts × engine pricing
+- App status overview table: maturity, target, open WIs, sessions, deploys, prod version
+- Time range filter (7d/30d/90d/All Time) for sessions and deploy metrics
+- Maturity badges on Dashboard app cards (colored by stage)
+
 v8.29.3 — Firebase Admin Fix + Deploy UX
 -------------------------------------------------
 Date: February 9, 2026
