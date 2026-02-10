@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Command Center</title>
-    <meta name="version" content="8.36.4">
+    <meta name="version" content="8.36.5">
     <meta name="gs-app-id" content="command-center">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -22884,16 +22884,19 @@ const pushIssueToCommandCenter = async (testResult) => {
         }
 
         // --- Doc version alignment (on selected docs) ---
-        if ((intent === 'targeted-update' || intent === 'full-package') && deployVersion && docFiles.length > 0) {
+        // Use the effective target version: if a bump is needed, docs should match the bumped version
+        const needsBump = issues.some(i => i.id === 'version-not-incremented');
+        const effectiveVersion = needsBump ? bumpVersion(deployedVersion || deployVersion, 'patch') : deployVersion;
+        if (effectiveVersion && docFiles.length > 0) {
             const contextFile = docFiles.find(f => f.name === 'CONTEXT.md');
             if (contextFile?.content) {
                 const match = contextFile.content.match(/\*\*v([^\s*]+)\*\*/);
-                if (match && match[1] !== deployVersion) {
+                if (match && match[1] !== effectiveVersion) {
                     issues.push({
                         id: 'docs-context-version', severity: 'warning', category: 'docs',
                         title: 'CONTEXT.md version mismatch',
-                        detail: `CONTEXT.md: v${match[1]}, deploy: v${deployVersion}`,
-                        fix: `Update CONTEXT.md header to v${deployVersion}`
+                        detail: `CONTEXT.md: v${match[1]}, deploy: v${effectiveVersion}`,
+                        fix: `Update CONTEXT.md header to v${effectiveVersion}`
                     });
                 }
             }
@@ -22901,12 +22904,12 @@ const pushIssueToCommandCenter = async (testResult) => {
             const changelogFile = docFiles.find(f => f.name === 'CHANGELOG.md');
             if (changelogFile?.content) {
                 const match = changelogFile.content.match(/## \[([^\]]+)\]/);
-                if (match && match[1] !== deployVersion) {
+                if (match && match[1] !== effectiveVersion) {
                     issues.push({
                         id: 'docs-changelog-version', severity: 'warning', category: 'docs',
                         title: 'CHANGELOG.md version mismatch',
-                        detail: `CHANGELOG.md: [${match[1]}], deploy: v${deployVersion}`,
-                        fix: `Add CHANGELOG.md entry for v${deployVersion}`
+                        detail: `CHANGELOG.md: [${match[1]}], deploy: v${effectiveVersion}`,
+                        fix: `Add CHANGELOG.md entry for v${effectiveVersion}`
                     });
                 }
             }
@@ -22914,12 +22917,12 @@ const pushIssueToCommandCenter = async (testResult) => {
             const rnFile = docFiles.find(f => f.name === 'RELEASE_NOTES.txt');
             if (rnFile?.content) {
                 const match = rnFile.content.match(/v?(\d+\.\d+[\d.]*)\s*[—–-]/);
-                if (match && match[1] !== deployVersion) {
+                if (match && match[1] !== effectiveVersion) {
                     issues.push({
                         id: 'docs-releasenotes-version', severity: 'warning', category: 'docs',
                         title: 'RELEASE_NOTES.txt version mismatch',
-                        detail: `RELEASE_NOTES.txt: v${match[1]}, deploy: v${deployVersion}`,
-                        fix: `Add RELEASE_NOTES.txt entry for v${deployVersion}`
+                        detail: `RELEASE_NOTES.txt: v${match[1]}, deploy: v${effectiveVersion}`,
+                        fix: `Add RELEASE_NOTES.txt entry for v${effectiveVersion}`
                     });
                 }
             }
@@ -23032,7 +23035,10 @@ const pushIssueToCommandCenter = async (testResult) => {
             lines.push('');
         }
 
-        if (deployVersion) lines.push(`Current version: v${deployVersion}`);
+        const promptVersion = notIncremented
+            ? bumpVersion(deployedVersion || deployVersion, 'patch')
+            : deployVersion;
+        if (promptVersion) lines.push(`Current version: v${promptVersion}`);
         if (appConfig?.name) lines.push(`App: ${appConfig.name}`);
 
         return lines.join('\n');
