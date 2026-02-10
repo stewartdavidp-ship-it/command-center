@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Command Center</title>
-    <meta name="version" content="8.33.0">
+    <meta name="version" content="8.34.0">
     <meta name="gs-app-id" content="command-center">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -1738,7 +1738,7 @@
     // =========================================================================
     
     // =========================================================================
-    // PORKBUN SERVICE — Domain registrar API integration (v8.33.0)
+    // PORKBUN SERVICE — Domain registrar API integration (v8.34.0)
     // Handles: domain search, registration, DNS CRUD, GitHub Pages wiring
     // API docs: https://porkbun.com/api/json/v3/documentation
     // All calls are POST with JSON body. Auth via apiKey + secretApiKey in body.
@@ -2020,7 +2020,7 @@
     };
 
     // =========================================================================
-    // GODADDY SERVICE — Domain registrar DNS API integration (v8.33.0)
+    // GODADDY SERVICE — Domain registrar DNS API integration (v8.34.0)
     // Handles: domain listing, DNS CRUD for existing GoDaddy domains
     // API docs: https://developer.godaddy.com/doc/endpoint/domains
     // Auth: sso-key API_KEY:API_SECRET in Authorization header
@@ -2241,7 +2241,7 @@
     };
 
     // =========================================================================
-    // DOMAIN PROVIDER REGISTRY — Abstracts multiple registrar APIs (v8.33.0)
+    // DOMAIN PROVIDER REGISTRY — Abstracts multiple registrar APIs (v8.34.0)
     // All providers implement the same interface: ping, listDomains,
     // listDNSRecords, createDNSRecord, deleteDNSRecord, configureForGitHubPages
     // =========================================================================
@@ -4352,7 +4352,7 @@
             return { enabled: true };
         }
         
-        // v8.33.0: Custom domain configuration for GitHub Pages
+        // v8.34.0: Custom domain configuration for GitHub Pages
         async updatePagesConfig(repo, cname, enforceHttps = false) {
             const [owner, repoName] = repo.split('/');
             const response = await fetch(`${this.baseUrl}/repos/${owner}/${repoName}/pages`, {
@@ -4371,7 +4371,7 @@
             return await response.json();
         }
         
-        // v8.33.0: Check GitHub Pages health/DNS status
+        // v8.34.0: Check GitHub Pages health/DNS status
         async checkPagesHealth(repo) {
             const [owner, repoName] = repo.split('/');
             const response = await fetch(`${this.baseUrl}/repos/${owner}/${repoName}/pages/health`, {
@@ -12653,6 +12653,21 @@
         };
         
         // Define base package files for each app type
+        // Files/folders that should NEVER be flagged as stale in ANY repo
+        const GLOBALLY_PROTECTED_PATHS = [
+            '.github',           // GitHub Actions workflows, issue templates, etc.
+            '.gitignore',
+            'LICENSE',
+            'README.md',
+            'package.json',
+            'package-lock.json',
+            'node_modules',
+            'firebase.json',
+            '.firebaserc',
+            '.env',
+            '.env.example',
+        ];
+
         const BASE_PACKAGES = {
             pwa: {
                 required: ['index.html', 'sw.js', 'manifest.json'],
@@ -12669,6 +12684,11 @@
                 required: ['index.html'],
                 optional: ['RELEASE_NOTES.txt', 'README.md', 'CNAME'],
                 folders: []
+            },
+            'firebase-functions': {
+                required: ['package.json'],
+                optional: ['package-lock.json', 'firebase.json', '.firebaserc', '.env', '.env.example', 'README.md', '.gitignore'],
+                folders: ['functions', '.github', 'node_modules']
             }
         };
         
@@ -12700,6 +12720,7 @@
             const lower = repoName.toLowerCase();
             if (lower === 'gameshelf' || lower === 'gameshelftest') return 'gameshelf';
             if (lower.includes('command-center') || lower.includes('command') || lower.includes('testplan')) return 'simple';
+            if (lower.includes('firebase-functions') || lower.includes('gameshelf-functions')) return 'firebase-functions';
             return 'pwa';
         };
         
@@ -12708,6 +12729,9 @@
             const pkg = BASE_PACKAGES[appType] || BASE_PACKAGES.pwa;
             const fileName = filePath.split('/').pop();
             const topLevel = filePath.split('/')[0];
+            
+            // Globally protected — never flag as stale in any repo
+            if (GLOBALLY_PROTECTED_PATHS.includes(fileName) || GLOBALLY_PROTECTED_PATHS.includes(topLevel)) return true;
             
             // Check required files
             if (pkg.required.includes(fileName) && !filePath.includes('/')) return true;
@@ -12872,6 +12896,22 @@
         // Delete selected files
         const deleteSelectedFiles = async () => {
             if (selectedFiles.size === 0) return;
+            
+            // Check for critical files that could break deployments
+            const criticalPatterns = ['.github/', 'deploy.yml', 'package.json', 'firebase.json', '.firebaserc'];
+            const criticalFiles = [...selectedFiles].filter(fileKey => {
+                const path = fileKey.split(':').slice(1).join(':');
+                return criticalPatterns.some(p => path.includes(p));
+            });
+            
+            if (criticalFiles.length > 0) {
+                const criticalNames = criticalFiles.map(f => f.split(':').slice(1).join(':')).join('\n  • ');
+                const criticalConfirmed = await showConfirm(
+                    `⚠️ CRITICAL FILES DETECTED ⚠️\n\nThe following files are essential for CI/CD, builds, or deployments:\n  • ${criticalNames}\n\nDeleting these will break automated deployments. Are you SURE you want to proceed?`,
+                    '🚨 Critical File Warning'
+                );
+                if (!criticalConfirmed) return;
+            }
             
             const confirmed = await showConfirm(
                 `Delete ${selectedFiles.size} file(s)?\n\nFiles can be restored from the History tab.`,
@@ -24750,7 +24790,7 @@ The developer uses Claude for iterative development — each session should:
     // =========================================================================
     
     // =========================================================================
-    // DOMAIN REGISTRAR SETTINGS (v8.33.0)
+    // DOMAIN REGISTRAR SETTINGS (v8.34.0)
     // =========================================================================
     
     function DomainRegistrarSettings() {
@@ -24920,7 +24960,7 @@ The developer uses Claude for iterative development — each session should:
     }
 
     // =========================================================================
-    // DOMAINS VIEW — DNS management and domain health (v8.33.0)
+    // DOMAINS VIEW — DNS management and domain health (v8.34.0)
     // =========================================================================
     
     function DomainsView({ apps, config, showAlert, showConfirm }) {
@@ -25752,7 +25792,7 @@ The developer uses Claude for iterative development — each session should:
                     <FirebaseAdminSettings />
                 </div>
                 
-                {/* Domain Registrar (v8.33.0) */}
+                {/* Domain Registrar (v8.34.0) */}
                 <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
                     <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
                         🌐 Domain Registrar
