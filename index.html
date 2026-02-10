@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Command Center</title>
-    <meta name="version" content="8.28.0">
+    <meta name="version" content="8.29.0">
     <meta name="gs-app-id" content="command-center">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -15427,6 +15427,282 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
         return md;
     }
     
+    // =========================================================================
+    // CONTEXT.md GENERATOR (Phase 3.2)
+    // =========================================================================
+    
+    function generateContextMd(app, scopeData, config) {
+        const cat = SCOPE_CATEGORIES[scopeData?.category];
+        const answers = scopeData?.categoryAnswers || {};
+        const standards = scopeData?.startingStandards || [];
+        const prodRepo = app.repos?.prod || '';
+        const testRepo = app.repos?.test || '';
+        const ccVersion = document.querySelector('meta[name="version"]')?.content || '?';
+        
+        let md = `# ${app.name} — CONTEXT.md\n\n`;
+        md += `> **Read this first** at the start of every session.\n\n`;
+        
+        // Current Version
+        md += `## Current Version\n\n`;
+        md += `**v0.1.0** — Released ${new Date().toLocaleDateString()}\n\n`;
+        
+        // What It Is
+        md += `## What ${app.name} Is\n\n`;
+        md += `${scopeData?.description || app.description || app.name + ' is a web application.'}\n\n`;
+        
+        // Architecture
+        md += `## Architecture\n\n`;
+        md += `- **Single-file HTML app**: All CSS/JS inline in ${app.targetPath || 'index.html'}\n`;
+        
+        // Framework from category
+        if (scopeData?.category === 'game' || scopeData?.category === 'dashboard') {
+            md += `- **Framework**: React via CDN (development recommended, switch to production for deploy)\n`;
+        } else {
+            md += `- **Framework**: Vanilla JS (or React via CDN if complexity warrants)\n`;
+        }
+        
+        // Data layer from answers
+        const hasFirebase = standards.some(s => s.startsWith('firebase-'));
+        const usesLocalStorage = (answers.dataPersistence === 'localStorage') || 
+            (scopeData?.category === 'game' && !answers.multiplayer);
+        if (hasFirebase && usesLocalStorage) {
+            md += `- **Data**: Firebase RTDB + localStorage (Firebase for shared/social data, localStorage for local settings/stats)\n`;
+        } else if (hasFirebase) {
+            md += `- **Data**: Firebase RTDB\n`;
+        } else if (usesLocalStorage || scopeData?.category === 'game') {
+            md += `- **Data**: localStorage\n`;
+        } else {
+            md += `- **Data**: localStorage (or Firebase if persistence scope expands)\n`;
+        }
+        
+        // PWA
+        md += `- **PWA**: ${app.hasServiceWorker ? 'Yes — sw.js + manifest.json' : 'No'}\n`;
+        
+        // Deploy target
+        if (testRepo) {
+            md += `- **Deploy target**: Test: https://${(testRepo).split('/')[0]}.github.io/${(testRepo).split('/')[1]}/ → Prod: https://${(prodRepo).split('/')[0]}.github.io/${(prodRepo).split('/')[1]}/\n`;
+        } else if (prodRepo) {
+            md += `- **Deploy target**: https://${(prodRepo).split('/')[0]}.github.io/${(prodRepo).split('/')[1]}/\n`;
+        }
+        md += `\n`;
+        
+        // Key Technical Details
+        md += `## Key Technical Details\n\n`;
+        
+        // Meta Tags
+        md += `### Meta Tags (Required)\n`;
+        md += `\`\`\`html\n`;
+        md += `<meta name="version" content="X.Y.Z">\n`;
+        md += `<meta name="gs-app-id" content="${app.id}">\n`;
+        md += `\`\`\`\n\n`;
+        
+        // Data Schema stubs
+        md += `### Data Schema\n\n`;
+        if (hasFirebase) {
+            md += `Firebase paths (under \`word-boxing-default-rtdb\`):\n`;
+            md += `\`\`\`\n`;
+            if (standards.includes('firebase-auth')) {
+                md += `users/{uid}/\n`;
+                md += `  └── profile: { displayName, photoURL, lastLogin }\n`;
+            }
+            if (scopeData?.category === 'game') {
+                md += `${app.id}/\n`;
+                md += `  ├── puzzles/ (if server-driven puzzles)\n`;
+                if (answers.multiplayer) {
+                    md += `  ├── battles/ (matchmaking, results)\n`;
+                    md += `  ├── leaderboard/ (rankings)\n`;
+                }
+                md += `  └── stats/{uid}/ (per-user stats)\n`;
+            } else {
+                md += `${app.id}/\n`;
+                md += `  └── data/{uid}/ (per-user data)\n`;
+            }
+            md += `\`\`\`\n\n`;
+        }
+        
+        if (usesLocalStorage || scopeData?.category === 'game') {
+            md += `localStorage keys:\n`;
+            md += `\`\`\`\n`;
+            md += `${app.id}-settings    → { theme, ... }\n`;
+            if (scopeData?.category === 'game') {
+                md += `${app.id}-stats       → { gamesPlayed, gamesWon, streak, maxStreak, ... }\n`;
+                md += `${app.id}-gameState   → { puzzleNumber, guesses, status, ... }\n`;
+            } else {
+                md += `${app.id}-data        → { ... }\n`;
+            }
+            md += `\`\`\`\n\n`;
+        }
+        
+        // Key Components placeholder
+        md += `### Key Components / Functions\n\n`;
+        md += `*Update this section as the codebase develops. Map major components and what they do so Claude can navigate the code.*\n\n`;
+        
+        // Deployment
+        md += `## Deployment\n\n`;
+        md += `- **Prod Repo:** ${prodRepo || 'TBD'}\n`;
+        if (testRepo) md += `- **Test Repo:** ${testRepo}\n`;
+        if (app.subPath) md += `- **SubPath:** ${app.subPath}\n`;
+        md += `- **Structure:** ${testRepo ? 'Dual (test → prod)' : 'Single repo'}\n`;
+        md += `- **Deploy type:** ${app.hasServiceWorker ? 'PWA package (index.html + sw.js + manifest.json + icons/)' : 'Single HTML file'}\n`;
+        md += `- **Deploy tool:** Command Center — deploy to test, verify, promote to prod\n\n`;
+        
+        // Conventions from standards
+        md += `## Conventions\n\n`;
+        
+        // Pull key conventions from the starting standards
+        const themeStds = standards.filter(s => ['css-variables', 'dark-light-toggle', 'theme-persistence'].includes(s));
+        if (themeStds.length > 0) {
+            md += `- **Theming:** CSS variables on \`:root\` and \`[data-theme="dark"]\`. Dark mode default, light mode toggle. Theme persisted in localStorage.\n`;
+        }
+        
+        if (standards.includes('hamburger-menu')) {
+            md += `- **Navigation:** Hamburger menu (☰) with settings panel\n`;
+        }
+        
+        if (standards.includes('toast-system')) {
+            md += `- **Notifications:** Custom toast system — no native alert/confirm/prompt\n`;
+        }
+        
+        if (standards.includes('mobile-first')) {
+            md += `- **Layout:** Mobile-first responsive design\n`;
+        }
+        
+        // Category-specific conventions
+        if (scopeData?.category === 'game') {
+            md += `- **Game data:** Stats and game state in localStorage with daily reset at midnight UTC\n`;
+            if (answers.shareResults) md += `- **Sharing:** navigator.share with clipboard fallback, emoji grid format\n`;
+        }
+        
+        if (scopeData?.category === 'tool') {
+            if (answers.primaryDataType) md += `- **Primary data:** ${answers.primaryDataType}\n`;
+        }
+        
+        md += `\n`;
+        
+        // Recent Changes
+        md += `## Recent Changes\n\n`;
+        md += `**v0.1.0** — Initial seed generated by Command Center. App shell with placeholder content.\n`;
+        
+        md += `\n---\n`;
+        md += `*Generated ${new Date().toLocaleDateString()} by Command Center v${ccVersion}*\n`;
+        
+        return md;
+    }
+    
+    // =========================================================================
+    // PROJECT_PLAN.md GENERATOR (Phase 3.2)
+    // =========================================================================
+    
+    function generateProjectPlanMd(app, scopeData) {
+        const ccVersion = document.querySelector('meta[name="version"]')?.content || '?';
+        const coreFeatures = (scopeData?.v1Features || []).filter(f => f.priority === 'core');
+        const niceFeatures = (scopeData?.v1Features || []).filter(f => f.priority === 'nice-to-have');
+        const futureFeatures = scopeData?.futureFeatures || [];
+        const unresolvedDecisions = (scopeData?.keyDecisions || []).filter(d => !d.resolved);
+        const resolvedDecisions = (scopeData?.keyDecisions || []).filter(d => d.resolved);
+        const answers = scopeData?.categoryAnswers || {};
+        const cat = SCOPE_CATEGORIES[scopeData?.category];
+        
+        let md = `# ${app.name} — Project Plan\n\n`;
+        
+        // Mission
+        md += `## Mission\n\n`;
+        md += `${scopeData?.description || app.description || app.name + ' — purpose to be defined.'}\n\n`;
+        
+        // Completed Features
+        md += `## Completed Features\n\n`;
+        md += `*Nothing yet — this is a new project.*\n\n`;
+        
+        // In Progress
+        md += `## In Progress\n\n`;
+        md += `- [ ] Initial build from seed — implement core features from V1 scope below\n\n`;
+        
+        // Planned Features
+        md += `## Planned Features\n\n`;
+        
+        if (coreFeatures.length > 0) {
+            md += `### Phase 1: Core (V1 Must Build)\n\n`;
+            coreFeatures.forEach(f => {
+                md += `- [ ] **${f.title}**`;
+                if (f.description) md += ` — ${f.description}`;
+                if (f.effort) md += ` _(${f.effort})_`;
+                md += `\n`;
+            });
+            md += `\n`;
+        }
+        
+        if (niceFeatures.length > 0) {
+            md += `### Phase 2: Nice to Have\n\n`;
+            niceFeatures.forEach(f => {
+                md += `- [ ] **${f.title}**`;
+                if (f.description) md += ` — ${f.description}`;
+                md += `\n`;
+            });
+            md += `\n`;
+        }
+        
+        if (futureFeatures.length > 0) {
+            md += `### Future / Ideas\n\n`;
+            futureFeatures.forEach(f => {
+                md += `- [ ] **${f.title}**`;
+                if (f.description) md += ` — ${f.description}`;
+                md += `\n`;
+            });
+            md += `\n`;
+        }
+        
+        // Architecture Decisions
+        md += `## Architecture Decisions\n\n`;
+        
+        // Always-present decisions from the ecosystem
+        md += `- **Single-file HTML**: All CSS/JS inline — no build step, no bundler. This is a Game Shelf ecosystem convention.\n`;
+        md += `- **Deploy via Command Center**: GitHub Pages repos managed through CC. Test → prod promotion workflow.\n`;
+        
+        // Category-driven decisions
+        if (scopeData?.category === 'game') {
+            md += `- **Category: Game**: ${cat?.description || 'Game application'}\n`;
+            if (answers.dailyReset) md += `- **Daily reset**: Midnight UTC, puzzle number derived from epoch date\n`;
+            if (answers.scoringSystem && answers.scoringSystem !== 'none') md += `- **Scoring**: ${answers.scoringSystem}-based scoring with personal best tracking\n`;
+            if (answers.difficultyModes && answers.difficultyModes !== 'none') md += `- **Difficulty**: ${answers.difficultyModes === 'easy-hard' ? 'Easy/Hard' : 'Multiple'} modes with separate statistics\n`;
+        } else if (scopeData?.category === 'tool') {
+            md += `- **Category: Tool**: ${cat?.description || 'Utility application'}\n`;
+            if (answers.dataPersistence) md += `- **Data persistence**: ${answers.dataPersistence}\n`;
+        } else if (scopeData?.category === 'dashboard') {
+            md += `- **Category: Dashboard**: ${cat?.description || 'Data display application'}\n`;
+            if (answers.layout) md += `- **Layout**: ${answers.layout} pattern\n`;
+        } else if (scopeData?.category) {
+            md += `- **Category: ${cat?.label || scopeData.category}**: ${cat?.description || ''}\n`;
+        }
+        
+        // Resolved decisions from scoping
+        if (resolvedDecisions.length > 0) {
+            resolvedDecisions.forEach(d => {
+                md += `- **${d.title}**`;
+                if (d.description) md += ` — ${d.description}`;
+                md += ` ✅\n`;
+            });
+        }
+        
+        md += `\n`;
+        
+        // Open Questions
+        md += `## Open Questions\n\n`;
+        if (unresolvedDecisions.length > 0) {
+            unresolvedDecisions.forEach(d => {
+                md += `- **${d.title}**`;
+                if (d.description) md += ` — ${d.description}`;
+                md += `\n`;
+            });
+        } else {
+            md += `*No open questions from scoping. Add questions here as they arise during development.*\n`;
+        }
+        
+        md += `\n---\n`;
+        md += `*Generated ${new Date().toLocaleDateString()} by Command Center v${ccVersion}*\n`;
+        
+        return md;
+    }
+    
     // ProjectScopeModal — 4-step scoping flow
     function ProjectScopeModal({ app, apps, onSave, onCancel, showAlert }) {
         const [step, setStep] = React.useState(1);
@@ -21629,6 +21905,7 @@ ${repoStr || '- *No repos configured*'}
         const [promptGenerated, setPromptGenerated] = React.useState('');
         const [workItemsCreated, setWorkItemsCreated] = React.useState([]); // v8.28.0: Track created work items
         const [reviewData, setReviewData] = React.useState(null); // v8.28.0: Review summary for Step 5
+        const [activeDocTab, setActiveDocTab] = React.useState('instructions'); // v8.29.0: Doc viewer tab
 
         const addLog = (msg, type = 'info') => setCreationLog(prev => [...prev, { msg, type, time: new Date().toLocaleTimeString() }]);
 
@@ -21887,9 +22164,16 @@ ${repoStr || '- *No repos configured*'}
 
                 // Generate Claude prompt (use CLAUDE_INSTRUCTIONS.md if scope available)
                 let generatedPromptType = 'basic';
+                let generatedInstructions = null;
+                let generatedContextMd = null;
+                let generatedProjectPlanMd = null;
+                let generatedChangelogMd = null;
+                let generatedReleaseNotes = null;
+                
                 if (scopeData) {
                     const instructions = generateClaudeInstructions(appData, scopeData, config);
                     if (instructions) {
+                        generatedInstructions = instructions;
                         setPromptGenerated(instructions);
                         generatedPromptType = 'instructions';
                         addLog('🎯 Generated CLAUDE_INSTRUCTIONS.md from project scope', 'success');
@@ -21898,13 +22182,84 @@ ${repoStr || '- *No repos configured*'}
                         setPromptGenerated(prompt);
                         addLog('✅ Claude project prompt generated', 'success');
                     }
+                    
+                    // v8.29.0: Generate CONTEXT.md and PROJECT_PLAN.md
+                    generatedContextMd = generateContextMd(appData, scopeData, config);
+                    generatedProjectPlanMd = generateProjectPlanMd(appData, scopeData);
+                    addLog('📄 Generated CONTEXT.md and PROJECT_PLAN.md from scope', 'success');
+                    
+                    // Generate initial CHANGELOG.md and RELEASE_NOTES.txt
+                    const today = new Date().toLocaleDateString();
+                    generatedChangelogMd = `# ${appData.name} — Changelog\n\nAll notable changes to this project will be documented in this file.\n\n## [0.1.0] - ${today}\n\n### Added\n- Initial seed generated by Command Center\n- App shell with placeholder content\n`;
+                    generatedReleaseNotes = `${appData.name} — Release Notes\n${'='.repeat(40)}\n\nv0.1.0 (${today})\n${'─'.repeat(30)}\n- Initial seed generated by Command Center\n- App shell with placeholder content\n`;
+                    addLog('📝 Generated CHANGELOG.md and RELEASE_NOTES.txt', 'success');
+                    
                 } else {
                     const prompt = generateClaudePrompt(appData, prodFullName, testFullName);
                     setPromptGenerated(prompt);
                     addLog('✅ Claude project prompt generated', 'success');
                 }
+                
+                // v8.29.0: Commit generated docs to repo
+                let docsCommitted = 0;
+                if (scopeData && github) {
+                    addLog('📂 Committing generated docs to repository...');
+                    const docsToCommit = [];
+                    
+                    // Determine doc path based on subPath (consolidated vs standalone repo)
+                    const docPrefix = appData.subPath ? `${appData.subPath}/docs/` : '';
+                    
+                    if (generatedPromptType === 'instructions' && generatedInstructions) {
+                        docsToCommit.push({ path: `${docPrefix}CLAUDE_INSTRUCTIONS.md`, content: generatedInstructions });
+                    }
+                    if (generatedContextMd) docsToCommit.push({ path: `${docPrefix}CONTEXT.md`, content: generatedContextMd });
+                    if (generatedProjectPlanMd) docsToCommit.push({ path: `${docPrefix}PROJECT_PLAN.md`, content: generatedProjectPlanMd });
+                    if (generatedChangelogMd) docsToCommit.push({ path: `${docPrefix}CHANGELOG.md`, content: generatedChangelogMd });
+                    if (generatedReleaseNotes) docsToCommit.push({ path: `${docPrefix}RELEASE_NOTES.txt`, content: generatedReleaseNotes });
+                    
+                    for (const doc of docsToCommit) {
+                        try {
+                            // Check if file already exists
+                            try {
+                                await github.request(`/repos/${prodFullName}/contents/${doc.path}`);
+                                addLog(`  ⏭️ ${doc.path} already exists, skipping`, 'info');
+                            } catch {
+                                await github.createOrUpdateFile(prodFullName, doc.path, doc.content, `Add ${doc.path.split('/').pop()} — generated by Command Center setup`);
+                                docsCommitted++;
+                                addLog(`  ✅ ${doc.path}`, 'success');
+                            }
+                        } catch (e) {
+                            addLog(`  ⚠️ Could not commit ${doc.path}: ${e.message}`, 'warn');
+                        }
+                    }
+                    
+                    if (docsCommitted > 0) {
+                        addLog(`📂 ${docsCommitted} docs committed to ${prodFullName}`, 'success');
+                    }
+                }
+                
+                // v8.29.0: Auto-deploy seed to test environment
+                let seedDeployedToTest = false;
+                if (appData.structure === 'test-prod' && testFullName && github) {
+                    addLog('🚀 Auto-deploying seed to test environment...');
+                    try {
+                        // Check if test already has index.html
+                        try {
+                            await github.request(`/repos/${testFullName}/contents/${appData.subPath ? appData.subPath + '/' : ''}index.html`);
+                            addLog('  ⏭️ Test already has index.html, skipping seed deploy', 'info');
+                        } catch {
+                            const testPath = appData.subPath ? `${appData.subPath}/index.html` : 'index.html';
+                            const initialHTML = generateInitialHTML(appData);
+                            await github.createOrUpdateFile(testFullName, testPath, initialHTML, `Seed deploy: ${appData.name} v0.1.0`);
+                            seedDeployedToTest = true;
+                            addLog('✅ Seed deployed to test environment', 'success');
+                        }
+                    } catch (e) {
+                        addLog(`⚠️ Could not deploy seed to test: ${e.message}`, 'warn');
+                    }
+                }
 
-                // v8.28.0: Build review summary
+                // v8.29.0: Build review summary (enhanced with doc generation info)
                 setReviewData({
                     appName: appData.name,
                     appId: appData.id,
@@ -21921,7 +22276,14 @@ ${repoStr || '- *No repos configured*'}
                     promptType: generatedPromptType,
                     hasAdmin: appData.hasAdmin,
                     isPWA: appData.isPWA,
-                    lifecycleStored: !!scopeData
+                    lifecycleStored: !!scopeData,
+                    docsCommitted,
+                    docsGenerated: scopeData ? ['CLAUDE_INSTRUCTIONS.md', 'CONTEXT.md', 'PROJECT_PLAN.md', 'CHANGELOG.md', 'RELEASE_NOTES.txt'] : [],
+                    seedDeployedToTest,
+                    generatedContextMd,
+                    generatedProjectPlanMd,
+                    generatedChangelogMd,
+                    generatedReleaseNotes
                 });
 
                 addLog('🎉 Setup complete!', 'success');
@@ -22414,7 +22776,7 @@ The developer uses Claude for iterative development — each session should:
                     </div>
                 )}
 
-                {/* Step 5: Review & Launch (v8.28.0 — Phase 3.1) */}
+                {/* Step 5: Review & Launch (v8.29.0 — Phase 3.2 enhanced) */}
                 {step === 5 && (
                     <div className="bg-slate-800 rounded-xl p-6 border border-slate-700 space-y-6">
                         <div>
@@ -22445,15 +22807,20 @@ The developer uses Claude for iterative development — each session should:
                                     </div>
                                 )}
                                 <div className="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
-                                    <div className="text-xs text-slate-500 uppercase tracking-wide mb-1">Generated</div>
+                                    <div className="text-xs text-slate-500 uppercase tracking-wide mb-1">Generated Artifacts</div>
                                     <div className="text-sm space-y-0.5">
                                         {reviewData.workItemsCreated > 0 && (
                                             <div className="text-green-400">✅ {reviewData.workItemsCreated} work items</div>
                                         )}
-                                        {reviewData.lifecycleStored && (
-                                            <div className="text-green-400">✅ Lifecycle metadata</div>
+                                        {reviewData.docsGenerated?.length > 0 && (
+                                            <div className="text-green-400">✅ {reviewData.docsGenerated.length} docs generated</div>
                                         )}
-                                        <div className="text-green-400">✅ {reviewData.promptType === 'instructions' ? 'CLAUDE_INSTRUCTIONS.md' : 'Project brief'}</div>
+                                        {reviewData.docsCommitted > 0 && (
+                                            <div className="text-green-400">📂 {reviewData.docsCommitted} committed to repo</div>
+                                        )}
+                                        {reviewData.seedDeployedToTest && (
+                                            <div className="text-green-400">🚀 Seed deployed to test</div>
+                                        )}
                                         {reviewData.isPWA && <span className="text-xs text-slate-500">PWA</span>}
                                         {reviewData.hasAdmin && <span className="text-xs text-slate-500 ml-1">Admin</span>}
                                     </div>
@@ -22487,8 +22854,55 @@ The developer uses Claude for iterative development — each session should:
                             </div>
                         )}
 
-                        {/* Claude Instructions / Prompt */}
-                        {promptGenerated && (
+                        {/* Generated Docs Viewer (v8.29.0) */}
+                        {reviewData?.docsGenerated?.length > 0 && (() => {
+                            const docTabs = [
+                                { id: 'instructions', label: 'CLAUDE_INSTRUCTIONS', content: promptGenerated },
+                                { id: 'context', label: 'CONTEXT.md', content: reviewData.generatedContextMd },
+                                { id: 'plan', label: 'PROJECT_PLAN.md', content: reviewData.generatedProjectPlanMd },
+                                { id: 'changelog', label: 'CHANGELOG.md', content: reviewData.generatedChangelogMd },
+                                { id: 'release', label: 'RELEASE_NOTES.txt', content: reviewData.generatedReleaseNotes }
+                            ].filter(t => t.content);
+                            const activeContent = docTabs.find(t => t.id === activeDocTab)?.content || docTabs[0]?.content || '';
+                            const activeLabel = docTabs.find(t => t.id === activeDocTab)?.label || docTabs[0]?.label || '';
+                            
+                            return (
+                                <div>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <h3 className="text-sm font-semibold">📄 Generated Project Docs</h3>
+                                        <button onClick={() => { navigator.clipboard.writeText(activeContent); showAlert(`Copied ${activeLabel} to clipboard!`, 'Copied'); }}
+                                            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded text-sm font-medium transition-colors">
+                                            📋 Copy {activeLabel}
+                                        </button>
+                                    </div>
+                                    <p className="text-slate-400 text-xs mb-2">
+                                        {reviewData.docsCommitted > 0 
+                                            ? `These docs have been committed to your repo. They'll be included in Claude Prep packages.`
+                                            : `These docs were generated but not committed (no GitHub access). Copy and add to your repo manually.`
+                                        }
+                                    </p>
+                                    <div className="flex gap-1 mb-2 overflow-x-auto">
+                                        {docTabs.map(tab => (
+                                            <button key={tab.id}
+                                                onClick={() => setActiveDocTab(tab.id)}
+                                                className={`px-2 py-1 rounded text-xs font-medium whitespace-nowrap transition-colors ${
+                                                    activeDocTab === tab.id 
+                                                        ? 'bg-indigo-600 text-white' 
+                                                        : 'bg-slate-700 text-slate-400 hover:text-white'
+                                                }`}>
+                                                {tab.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <pre className="bg-slate-900 rounded-lg p-4 text-sm text-slate-300 max-h-64 overflow-y-auto whitespace-pre-wrap border border-slate-700">
+                                        {activeContent}
+                                    </pre>
+                                </div>
+                            );
+                        })()}
+
+                        {/* Fallback: Simple prompt viewer if no docs generated */}
+                        {(!reviewData?.docsGenerated?.length && promptGenerated) && (
                             <div>
                                 <div className="flex items-center justify-between mb-2">
                                     <h3 className="text-sm font-semibold">
@@ -22508,7 +22922,7 @@ The developer uses Claude for iterative development — each session should:
 
                         {/* Actions */}
                         <div className="flex justify-between items-center pt-2 border-t border-slate-700">
-                            <button onClick={() => { setStep(1); setAppData({ name:'',id:'',description:'',structure:'prod-only',isPWA:false,appType:'other',project:'',icon:'📦',hasAdmin:false,adminSubPath:'admin',customDomain:'' }); setScopeData(null); setSkipScope(false); setCreationLog([]); setPromptGenerated(''); setRepoStatus({checking:false,prodExists:null,testExists:null}); setWorkItemsCreated([]); setReviewData(null); }}
+                            <button onClick={() => { setStep(1); setAppData({ name:'',id:'',description:'',structure:'prod-only',isPWA:false,appType:'other',project:'',icon:'📦',hasAdmin:false,adminSubPath:'admin',customDomain:'' }); setScopeData(null); setSkipScope(false); setCreationLog([]); setPromptGenerated(''); setRepoStatus({checking:false,prodExists:null,testExists:null}); setWorkItemsCreated([]); setReviewData(null); setActiveDocTab('instructions'); }}
                                 className="px-4 py-2 text-slate-400 hover:text-white transition-colors">
                                 🆕 Setup Another App
                             </button>
