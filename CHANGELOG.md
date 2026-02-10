@@ -6,6 +6,29 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [8.38.0] — 2026-02-10
+
+### Changed — Phase 2: Rewrite (PM-First Language)
+- **Scoping questions rewritten as intent** — all 5 categories now use PM language, not developer language (e.g. "Data persistence: none / localStorage / Firebase" → "Should data save between sessions? No / On this device / Synced across devices")
+- **Select options show human labels** — dropdowns now display friendly labels (e.g. "Two modes (e.g. Easy/Hard)") via `optionLabels` while preserving original values for data compatibility
+- **"V1 Features" → "Launch Features"** — throughout scoping modal and CLAUDE_INSTRUCTIONS.md generator
+- **"Core" priority → "Must have"** — in work item edit modal and backlog PriorityBadge
+- **"Out of Scope" removed from work item modal** — kept only in scoping (as "Not now"); work items have only Must have / Nice to have
+- **Session effort clarified** — "Session (1-2 hrs)" → "Session (1–2 hrs, one Claude chat)"
+- **"Environment Optimization" → "Setup Guide"** — nav label and page title
+- **Engine cost: per-session instead of per-MTok** — Settings engine table shows ~$/Session (hover for per-MTok detail)
+- **Outcome statements on wizard steps** — scoping modal, session wizard Steps 1–3 now tell users what they'll get
+- **Acceptance criteria coaching** — placeholder text coaches testable behavior: "What should a user see or be able to do?"
+
+### Removed
+- **tool.settingsPersistence question** — redundant with dataPersistence; settings persistence now auto-derived
+- **dashboard.autoRefresh + dashboard.realtime** — merged into single `dataUpdates` question: "How should data stay current?" with Manual / Periodic / Live options
+
+### Added
+- **Answer migration** — existing scope data with old `autoRefresh`/`realtime` fields auto-migrates to `dataUpdates` on load
+
+---
+
 ## [8.36.5] — 2026-02-10
 
 ### Added
