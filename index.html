@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Command Center</title>
-    <meta name="version" content="8.36.3">
+    <meta name="version" content="8.36.4">
     <meta name="gs-app-id" content="command-center">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -690,7 +690,7 @@
         save(deployments) {
             try {
                 const history = deployments.slice(0, this.MAX_HISTORY);
-                localStorage.setItem(this.STORAGE_KEY, JSON.stringify(history));
+                StorageManager.safeSet(this.STORAGE_KEY, JSON.stringify(history));
                 if (FirebaseConfigSync.initialized) {
                     FirebaseConfigSync.pushDeployHistory(history).catch(() => {});
                 }
@@ -767,7 +767,7 @@
         // Save full session log (localStorage + Firebase)
         save(sessionLog) {
             try {
-                localStorage.setItem(this.STORAGE_KEY, JSON.stringify(sessionLog));
+                StorageManager.safeSet(this.STORAGE_KEY, JSON.stringify(sessionLog));
                 if (FirebaseConfigSync.initialized) {
                     FirebaseConfigSync.pushSessionLog(sessionLog).catch(() => {});
                 }
@@ -1015,7 +1015,7 @@
         // Save (localStorage + Firebase)
         save(snapshots) {
             try {
-                localStorage.setItem(this.STORAGE_KEY, JSON.stringify(snapshots));
+                StorageManager.safeSet(this.STORAGE_KEY, JSON.stringify(snapshots));
                 if (FirebaseConfigSync.initialized) {
                     FirebaseConfigSync.pushRollbackSnapshots(snapshots).catch(() => {});
                 }
@@ -1046,6 +1046,206 @@
             delete updated[key];
             this.save(updated);
             return updated;
+        }
+    };
+    
+    // =========================================================================
+    // STORAGE MANAGER — Intelligent localStorage cleanup
+    // Monitors usage, auto-prunes when approaching quota, provides diagnostics
+    // =========================================================================
+    
+    const StorageManager = {
+        // Approximate localStorage limit (5MB for most browsers)
+        QUOTA_LIMIT: 5 * 1024 * 1024,
+        // Trigger cleanup when usage exceeds this percentage
+        CLEANUP_THRESHOLD: 0.80,
+        // After cleanup, try to get down to this percentage
+        TARGET_AFTER_CLEANUP: 0.60,
+        
+        // Keys ordered by cleanup priority (first = safe to prune aggressively)
+        PRUNABLE_KEYS: [
+            { key: 'cc_rollback_snapshots', type: 'object', strategy: 'keep-latest', maxAge: 7 * 24 * 60 * 60 * 1000, label: 'Rollback Snapshots' },
+            { key: 'cc_history_v2', type: 'array', strategy: 'trim', keepCount: 30, label: 'Deploy History' },
+            { key: 'cc_session_log', type: 'object', strategy: 'trim-entries', keepCount: 10, label: 'Session Log' },
+            { key: 'cc_deletion_history', type: 'array', strategy: 'trim', keepCount: 20, label: 'Deletion History' },
+            { key: 'cc_rulesHistory', type: 'array', strategy: 'trim', keepCount: 10, label: 'Rules History' },
+            { key: 'cc_tld_prices', type: 'object', strategy: 'clear', label: 'TLD Price Cache' },
+            { key: 'cc_domain_health', type: 'object', strategy: 'clear', label: 'Domain Health Cache' },
+        ],
+        
+        // Keys that should never be pruned
+        PROTECTED_KEYS: ['cc_token', 'cc_token_expires', 'cc_apps_v6', 'commandCenterConfig', 'cc_firebase_sa', 'cc_firebase_uid', 'cc_collapsedProjects', 'cc_default_engine', 'cc_projectStates', 'cc_domain_config', 'cc_godaddy_config', 'cc_token_registry', 'cc_api_key', 'cc_repo_health_last', 'githubRepoAssignments'],
+        
+        // Get current storage usage in bytes
+        getUsage() {
+            let total = 0;
+            const breakdown = {};
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                const value = localStorage.getItem(key);
+                const size = (key.length + value.length) * 2; // UTF-16
+                total += size;
+                breakdown[key] = size;
+            }
+            return { total, breakdown, percent: (total / this.QUOTA_LIMIT * 100).toFixed(1) };
+        },
+        
+        // Get human-readable diagnostics
+        getDiagnostics() {
+            const { total, breakdown, percent } = this.getUsage();
+            const sorted = Object.entries(breakdown).sort((a, b) => b[1] - a[1]);
+            return {
+                totalBytes: total,
+                totalFormatted: this._formatBytes(total),
+                percent: parseFloat(percent),
+                quotaFormatted: this._formatBytes(this.QUOTA_LIMIT),
+                entries: sorted.map(([key, size]) => ({
+                    key,
+                    size,
+                    sizeFormatted: this._formatBytes(size),
+                    percent: (size / total * 100).toFixed(1),
+                    protected: this.PROTECTED_KEYS.includes(key)
+                }))
+            };
+        },
+        
+        // Intelligent cleanup — called automatically on QuotaExceededError or manually
+        cleanup(aggressive = false) {
+            const before = this.getUsage();
+            const target = this.QUOTA_LIMIT * (aggressive ? 0.40 : this.TARGET_AFTER_CLEANUP);
+            let freed = 0;
+            const actions = [];
+            
+            console.log(`[StorageManager] Cleanup started. Usage: ${this._formatBytes(before.total)} (${before.percent}%)`);
+            
+            for (const rule of this.PRUNABLE_KEYS) {
+                if (before.total - freed <= target) break;
+                
+                try {
+                    const raw = localStorage.getItem(rule.key);
+                    if (!raw) continue;
+                    const sizeBefore = (rule.key.length + raw.length) * 2;
+                    
+                    if (rule.strategy === 'clear') {
+                        localStorage.removeItem(rule.key);
+                        freed += sizeBefore;
+                        actions.push({ key: rule.key, action: 'cleared', freed: sizeBefore });
+                        continue;
+                    }
+                    
+                    const data = JSON.parse(raw);
+                    
+                    if (rule.strategy === 'keep-latest' && typeof data === 'object' && !Array.isArray(data)) {
+                        // Rollback snapshots: remove entries older than maxAge, keep only most recent per app
+                        const now = Date.now();
+                        const maxAge = aggressive ? 24 * 60 * 60 * 1000 : rule.maxAge;
+                        const pruned = {};
+                        for (const [k, v] of Object.entries(data)) {
+                            const savedAt = v.savedAt ? new Date(v.savedAt).getTime() : 0;
+                            if (now - savedAt < maxAge) {
+                                pruned[k] = v;
+                            }
+                        }
+                        // If still too big, strip content from oldest snapshots (keep metadata)
+                        if (aggressive) {
+                            const entries = Object.entries(pruned).sort((a, b) => 
+                                new Date(b[1].savedAt || 0) - new Date(a[1].savedAt || 0));
+                            // Keep only the 3 most recent with content
+                            entries.slice(3).forEach(([k, v]) => {
+                                pruned[k] = { ...v, content: '[pruned]', prunedAt: new Date().toISOString() };
+                            });
+                        }
+                        const newRaw = JSON.stringify(pruned);
+                        localStorage.setItem(rule.key, newRaw);
+                        const sizeAfter = (rule.key.length + newRaw.length) * 2;
+                        freed += sizeBefore - sizeAfter;
+                        actions.push({ key: rule.key, action: `pruned ${Object.keys(data).length - Object.keys(pruned).length} snapshots`, freed: sizeBefore - sizeAfter });
+                    }
+                    
+                    if (rule.strategy === 'trim' && Array.isArray(data)) {
+                        const keepCount = aggressive ? Math.floor(rule.keepCount / 2) : rule.keepCount;
+                        if (data.length > keepCount) {
+                            const trimmed = data.slice(0, keepCount);
+                            const newRaw = JSON.stringify(trimmed);
+                            localStorage.setItem(rule.key, newRaw);
+                            const sizeAfter = (rule.key.length + newRaw.length) * 2;
+                            freed += sizeBefore - sizeAfter;
+                            actions.push({ key: rule.key, action: `trimmed ${data.length} → ${keepCount}`, freed: sizeBefore - sizeAfter });
+                        }
+                    }
+                    
+                    if (rule.strategy === 'trim-entries' && typeof data === 'object') {
+                        // Session log: trim sessions and recentEntries arrays
+                        const keepCount = aggressive ? 5 : rule.keepCount;
+                        const pruned = { ...data };
+                        if (Array.isArray(pruned.sessions)) pruned.sessions = pruned.sessions.slice(-keepCount);
+                        if (Array.isArray(pruned.recentEntries)) pruned.recentEntries = pruned.recentEntries.slice(-keepCount);
+                        const newRaw = JSON.stringify(pruned);
+                        localStorage.setItem(rule.key, newRaw);
+                        const sizeAfter = (rule.key.length + newRaw.length) * 2;
+                        freed += sizeBefore - sizeAfter;
+                        actions.push({ key: rule.key, action: 'trimmed entries', freed: sizeBefore - sizeAfter });
+                    }
+                } catch (e) {
+                    console.warn(`[StorageManager] Error pruning ${rule.key}:`, e);
+                }
+            }
+            
+            // Remove any orphan cc_ keys not in protected or prunable lists
+            if (aggressive) {
+                const knownKeys = new Set([
+                    ...this.PROTECTED_KEYS,
+                    ...this.PRUNABLE_KEYS.map(r => r.key)
+                ]);
+                for (let i = localStorage.length - 1; i >= 0; i--) {
+                    const key = localStorage.key(i);
+                    if (key?.startsWith('cc_') && !knownKeys.has(key)) {
+                        const size = (key.length + localStorage.getItem(key).length) * 2;
+                        localStorage.removeItem(key);
+                        freed += size;
+                        actions.push({ key, action: 'removed orphan', freed: size });
+                    }
+                }
+            }
+            
+            const after = this.getUsage();
+            console.log(`[StorageManager] Cleanup complete. Freed: ${this._formatBytes(freed)}. Usage: ${this._formatBytes(after.total)} (${after.percent}%)`);
+            
+            return { before: before.total, after: after.total, freed, actions };
+        },
+        
+        // Wrap a localStorage.setItem call with auto-cleanup on quota error
+        safeSet(key, value) {
+            try {
+                localStorage.setItem(key, value);
+                return true;
+            } catch (e) {
+                if (e.name === 'QuotaExceededError') {
+                    console.warn(`[StorageManager] Quota exceeded on ${key}, running cleanup...`);
+                    this.cleanup(false);
+                    try {
+                        localStorage.setItem(key, value);
+                        return true;
+                    } catch {
+                        console.warn(`[StorageManager] Still full after cleanup, running aggressive cleanup...`);
+                        this.cleanup(true);
+                        try {
+                            localStorage.setItem(key, value);
+                            return true;
+                        } catch {
+                            console.error(`[StorageManager] Cannot save ${key} even after aggressive cleanup`);
+                            return false;
+                        }
+                    }
+                }
+                throw e;
+            }
+        },
+        
+        _formatBytes(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
         }
     };
     
@@ -5073,7 +5273,7 @@
         
         // Persist
         React.useEffect(() => { try { if (githubToken) localStorage.setItem('cc_token', githubToken); } catch {} }, [githubToken]);
-        React.useEffect(() => { try { localStorage.setItem('cc_apps_v6', JSON.stringify(apps)); } catch {} }, [apps]);
+        React.useEffect(() => { try { StorageManager.safeSet('cc_apps_v6', JSON.stringify(apps)); } catch {} }, [apps]);
         React.useEffect(() => { DeployService.save(deployments); }, [deployments]);
         React.useEffect(() => { SessionLogService.save(sessionLog); }, [sessionLog]);
         
@@ -8177,6 +8377,8 @@
         const [errorOverride, setErrorOverride] = React.useState(false);
         // Track if deploy button was clicked in this session (prevents history-based false positive)
         const deployClickedThisSession = React.useRef(false);
+        // Track if the full batch action (deploy + doc push) is still running
+        const [batchActionRunning, setBatchActionRunning] = React.useState(false);
         
         const [otherCollapsed, setOtherCollapsed] = React.useState(true); // v8.3.3: Collapse "Other" by default
         
@@ -8869,9 +9071,9 @@
                                     {(() => {
                                         const hasValidationError = validation?.severity === 'error' && !errorOverride;
                                         
-                                        const buttonDisabled = !github || isDeploying || hasValidationError;
+                                        const buttonDisabled = !github || isDeploying || batchActionRunning || hasValidationError;
                                         const buttonStyle = (() => {
-                                            if (isDeploying) return 'bg-emerald-700 cursor-wait';
+                                            if (isDeploying || batchActionRunning) return 'bg-emerald-700 cursor-wait';
                                             if (deployCompleted) return 'bg-orange-500 hover:bg-orange-600';
                                             if (hasValidationError) return 'bg-slate-600 cursor-not-allowed opacity-50';
                                             if (validation?.severity === 'error' && errorOverride) return 'bg-red-600 hover:bg-red-700';
@@ -8881,7 +9083,7 @@
                                         })();
                                         
                                         const buttonPrefix = (() => {
-                                            if (isDeploying || deployCompleted) return '';
+                                            if (isDeploying || deployCompleted || batchActionRunning) return '';
                                             if (hasValidationError) return '🚫 ';
                                             if (validation?.severity === 'error' && errorOverride) return '⚠️ ';
                                             if (validation?.severity === 'warning') return '⚠️ ';
@@ -8895,8 +9097,10 @@
                                             
                                             const executeBatchAction = async () => {
                                                 setIsDeploying(true);
+                                                setBatchActionRunning(true);
                                                 deployClickedThisSession.current = true;
                                                 
+                                                try {
                                                 if (selectedDeployFiles.length > 0) {
                                                     console.log('Deploying files:', selectedDeployFiles.map(f => ({ name: f.name, id: f.id, size: f.content?.length })));
                                                     await onBatchDeploy(selectedDeployFiles, deployTarget.appId, deployTarget.target);
@@ -8930,6 +9134,9 @@
                                                         }
                                                     }
                                                 }
+                                                } finally {
+                                                    setBatchActionRunning(false);
+                                                }
                                                 
                                                 // v8.36.1: Smart reset — use app's intelligent default, not always TEST
                                                 setDeployTarget(prev => ({ ...prev, target: getSmartTarget(prev.appId) }));
@@ -8947,10 +9154,10 @@
                                         }}
                                             disabled={buttonDisabled}
                                             className={`w-full p-3 rounded font-medium flex items-center justify-center gap-2 transition-all ${buttonStyle}`}>
-                                            {isDeploying ? (
+                                            {isDeploying || batchActionRunning ? (
                                                 <>
                                                     <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                                    Deploying...
+                                                    {batchActionRunning && !isDeploying ? 'Pushing docs...' : 'Deploying...'}
                                                 </>
                                             ) : deployCompleted ? (
                                                 <>
@@ -22772,11 +22979,14 @@ const pushIssueToCommandCenter = async (testResult) => {
         const notIncremented = issues.find(i => i.id === 'version-not-incremented');
         if (notIncremented) {
             const suggested = bumpVersion(deployedVersion || deployVersion, 'patch');
+            const isDowngrade = deployVersion && deployedVersion && compareVersions(deployVersion, deployedVersion) < 0;
             lines.push('Version not incremented:');
-            lines.push(`• Code is v${deployVersion} — same as deployed`);
+            lines.push(`• Code is v${deployVersion} — ${isDowngrade ? `OLDER than deployed v${deployedVersion}` : 'same as deployed'}`);
             lines.push(`• Bump to v${suggested} (or appropriate version)`);
-            lines.push('• Update ALL version locations in index.html');
-            lines.push('• Update sw.js CACHE_VERSION to match');
+            lines.push(`• Update <meta name="version"> in index.html`);
+            if (appConfig?.hasServiceWorker) {
+                lines.push('• Update sw.js CACHE_VERSION to match');
+            }
             lines.push('');
         }
 
@@ -25883,6 +26093,8 @@ The developer uses Claude for iterative development — each session should:
         const [show, setShow] = React.useState(false);
         const [testing, setTesting] = React.useState(false);
         const [result, setResult] = React.useState(null);
+        const [storageDiag, setStorageDiag] = React.useState(null);
+        const [cleanupResult, setCleanupResult] = React.useState(null);
         
         // Firebase Sync state
         const [syncAction, setSyncAction] = React.useState(null); // 'pushing' | 'pulling' | 'clearing'
@@ -26290,6 +26502,90 @@ The developer uses Claude for iterative development — each session should:
                             "Reset App Mappings" keeps your token but resets all app→repo mappings to defaults and re-runs auto-detection.
                         </p>
                     </div>
+                </div>
+                
+                {/* Storage Management */}
+                <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
+                    <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                        💾 Local Storage
+                    </h2>
+                    
+                    {!storageDiag ? (
+                        <button onClick={() => setStorageDiag(StorageManager.getDiagnostics())}
+                            className="px-4 py-2 bg-slate-700 rounded hover:bg-slate-600 text-sm">
+                            📊 Analyze Storage
+                        </button>
+                    ) : (
+                        <div className="space-y-3">
+                            {/* Usage bar */}
+                            <div>
+                                <div className="flex justify-between text-sm mb-1">
+                                    <span>{storageDiag.totalFormatted} / {storageDiag.quotaFormatted}</span>
+                                    <span className={storageDiag.percent > 80 ? 'text-red-400' : storageDiag.percent > 60 ? 'text-amber-400' : 'text-green-400'}>
+                                        {storageDiag.percent}%
+                                    </span>
+                                </div>
+                                <div className="w-full bg-slate-700 rounded-full h-3">
+                                    <div className={`h-3 rounded-full transition-all ${
+                                        storageDiag.percent > 80 ? 'bg-red-500' : storageDiag.percent > 60 ? 'bg-amber-500' : 'bg-green-500'
+                                    }`} style={{ width: `${Math.min(storageDiag.percent, 100)}%` }} />
+                                </div>
+                            </div>
+                            
+                            {/* Breakdown */}
+                            <div className="space-y-1 max-h-48 overflow-y-auto">
+                                {storageDiag.entries.map(e => (
+                                    <div key={e.key} className="flex items-center gap-2 text-xs">
+                                        <span className={`w-2 h-2 rounded-full ${e.protected ? 'bg-blue-400' : 'bg-slate-500'}`} />
+                                        <span className="flex-1 font-mono truncate text-slate-400">{e.key}</span>
+                                        <span className="text-slate-500">{e.sizeFormatted}</span>
+                                        <span className="text-slate-600 w-10 text-right">{e.percent}%</span>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="text-xs text-slate-500">
+                                <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-400 inline-block" /> Protected</span>
+                                {' · '}
+                                <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-slate-500 inline-block" /> Prunable</span>
+                            </div>
+                            
+                            {/* Actions */}
+                            <div className="flex gap-2 pt-2">
+                                <button onClick={() => {
+                                    const r = StorageManager.cleanup(false);
+                                    setCleanupResult(r);
+                                    setStorageDiag(StorageManager.getDiagnostics());
+                                }} className="px-3 py-1.5 bg-amber-700 rounded hover:bg-amber-600 text-sm">
+                                    🧹 Smart Cleanup
+                                </button>
+                                <button onClick={() => {
+                                    const r = StorageManager.cleanup(true);
+                                    setCleanupResult(r);
+                                    setStorageDiag(StorageManager.getDiagnostics());
+                                }} className="px-3 py-1.5 bg-red-700 rounded hover:bg-red-600 text-sm">
+                                    🗑️ Aggressive Cleanup
+                                </button>
+                                <button onClick={() => { setStorageDiag(StorageManager.getDiagnostics()); setCleanupResult(null); }}
+                                    className="px-3 py-1.5 bg-slate-700 rounded hover:bg-slate-600 text-sm">
+                                    🔄 Refresh
+                                </button>
+                            </div>
+                            
+                            {cleanupResult && (
+                                <div className="p-3 bg-slate-900 rounded text-xs space-y-1">
+                                    <div className="text-green-400">Freed {StorageManager._formatBytes(cleanupResult.freed)}</div>
+                                    {cleanupResult.actions.map((a, i) => (
+                                        <div key={i} className="text-slate-400">
+                                            {a.key}: {a.action} ({StorageManager._formatBytes(a.freed)})
+                                        </div>
+                                    ))}
+                                    {cleanupResult.actions.length === 0 && (
+                                        <div className="text-slate-500">Nothing to clean up</div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             </div>
         );
