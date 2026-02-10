@@ -1,6 +1,95 @@
 Command Center — Release Notes
 ================================
 
+v8.38.0 — Phase 2: Rewrite (PM-First Language), Session 1
+-------------------------------------------------
+Rewrites what Command Center says without changing what it does.
+Every scoping question, label, and wizard header now speaks product
+manager, not developer. Critical for making CC usable by someone
+who didn't build it.
+
+Scoping questions rewritten (all 5 categories):
+- Game: "Daily puzzle / reset mechanic?" → "Does the game reset
+  daily with a new puzzle?"
+- Tool: "Data persistence?" → "Should data save between sessions?"
+  with options "No / On this device / Synced across devices"
+- Tool: "Multi-item management?" → "Work with a list of items or
+  a single item?" (now a dropdown, not just a toggle)
+- Dashboard: "Data sources?" → "Where does the data come from?"
+  with labels "Database / External service / Browser storage / User input"
+- Content: "Static or dynamic?" → "Does the content change?"
+- Admin: "CRUD operations?" → "Can users create, edit, and delete records?"
+
+Redundant questions removed:
+- tool.settingsPersistence — redundant with dataPersistence
+- dashboard.autoRefresh + realtime — merged into "How should data
+  stay current?" (Manual / Periodic / Live)
+
+Labels updated:
+- "V1 Features" → "Launch Features" (scoping + generated docs)
+- "Core" priority → "Must have" (work items)
+- "Out of Scope" → removed from work item modal; kept in scoping
+  as "Not now" for feature triage only
+- "Session (1-2 hrs)" → "Session (1–2 hrs, one Claude chat)"
+- "Environment Optimization" → "Setup Guide" (nav + page title)
+- Engine cost table shows ~$/Session instead of $/MTok
+
+Outcome statements added:
+- Scoping: "Define what to build → get a prioritized feature list
+  and work items ready for Claude."
+- Session Step 1: "Build a Claude briefing package. Select work
+  items to focus on."
+- Session Step 2: "This shapes Claude's approach and the files
+  included."
+- Session Step 3: "Generate a zip package with source, docs, and
+  a session brief to upload to Claude."
+
+Acceptance criteria coaching:
+- Placeholder now reads: "What should a user see or be able to do?
+  e.g. 'Score updates immediately after each guess, displayed as ★ 450'"
+- Label hint: "describe what a user should experience"
+
+---
+
+v8.37.0 — Phase 1: Clean (Remove & Simplify)
+-------------------------------------------------
+First phase of the Unified Development Plan. Removes clutter, merges
+steps, hides implementation details. No new features, no architecture
+changes — just making CC leaner and easier to use.
+
+Scoping wizard (4 steps → 3):
+- Removed Step 4 (Standards Checkboxes) entirely. Standards are now
+  auto-assembled silently based on category and answers, then baked
+  into CLAUDE_INSTRUCTIONS.md during package generation. Users never
+  see or manage individual standards.
+- "Drives" text on scoping questions replaced with hover-only ⓘ icon
+  tooltip. Implementation details hidden unless you want them.
+- Removed "these drive feature pre-population & starting standards"
+  header from Step 2.
+
+Session wizard (4 steps → 3):
+- Merged Context Budget Preview (old Step 3) into Session Type (Step 2)
+  as a collapsible "What Claude will see" panel.
+- Replaced token budget bar ("53.3K / 160.0K tokens") with confidence
+  indicator: "Package fits — Claude will see everything needed."
+- File manifest collapsed by default — open only if you want details.
+- Generate step renumbered from Step 4 to Step 3.
+
+Quick Build bypass:
+- When session wizard opens with 0 work items, shows one-screen Quick
+  Build summary instead of making you click through empty steps.
+- One-click Generate Package from the summary view.
+- "Skip wizard — Quick package" still available when work items exist.
+
+Your Name (Settings):
+- New "Your Name" field in Settings (first section, above GitHub Token).
+- Persists to both localStorage config and Firebase sync.
+- Seeds `created_by` / `scopedBy` on all new records (work items,
+  scopes). Defaults to "Owner" when blank.
+- Foundation for multi-person access in Phase 5.
+
+---
+
 v8.36.5 — Storage Management
 -------------------------------------------------
 Adds intelligent localStorage cleanup to prevent QuotaExceededError
