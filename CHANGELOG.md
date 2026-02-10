@@ -6,6 +6,23 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [8.29.0] — 2026-02-09
+
+### Added
+- **`generateContextMd()`** — Generates pre-populated CONTEXT.md from scope data: architecture, data schema stubs, deployment info, conventions — no TODO placeholders for captured fields (Phase 3.2)
+- **`generateProjectPlanMd()`** — Generates pre-populated PROJECT_PLAN.md from scope: mission, V1 features as checkbox list, architecture decisions from category answers, open questions from unresolved decisions (Phase 3.2)
+- **Initial CHANGELOG.md + RELEASE_NOTES.txt generation** — Skeleton docs created with v0.1.0 seed entry during setup (Phase 3.2)
+- **Repo doc commit** — All 5 generated docs (CLAUDE_INSTRUCTIONS.md, CONTEXT.md, PROJECT_PLAN.md, CHANGELOG.md, RELEASE_NOTES.txt) committed to prod repo via GitHub API, respecting subPath for consolidated repos (Phase 3.2)
+- **Auto-deploy seed to test** — For test-prod apps, seed index.html is deployed to test environment after repo creation (Phase 3.2)
+- **Tabbed doc viewer in Step 5** — Review & Launch now shows all generated docs in a tabbed viewer with copy-per-doc support (Phase 3.2)
+- `activeDocTab` state in SetupNewAppView for doc viewer navigation
+- `generatedInstructions` local variable to avoid async state reference during commit
+
+### Changed
+- **Step 5 "Generated" panel** — Now shows docs committed count, seed deploy status, and links to generated artifact details
+- **`reviewData`** — Enhanced with `docsCommitted`, `docsGenerated`, `seedDeployedToTest`, and references to generated doc content for viewer
+- **Setup Another App** — Also resets `activeDocTab` state
+
 ## [8.28.0] — 2026-02-09
 
 ### Added
