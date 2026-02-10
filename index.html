@@ -266,7 +266,9 @@
         async getRules() {
             const token = await this.getAccessToken();
             const dbUrl = FIREBASE_CONFIG.databaseURL;
-            const response = await fetch(`${dbUrl}/.settings/rules.json?access_token=${token}`);
+            const response = await fetch(`${dbUrl}/.settings/rules.json`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
             if (!response.ok) {
                 const err = await response.text();
                 throw new Error(`Failed to fetch rules: ${response.status} — ${err}`);
@@ -279,8 +281,9 @@
             const token = await this.getAccessToken();
             const dbUrl = FIREBASE_CONFIG.databaseURL;
             const body = typeof rules === 'string' ? rules : JSON.stringify(rules);
-            const response = await fetch(`${dbUrl}/.settings/rules.json?access_token=${token}`, {
+            const response = await fetch(`${dbUrl}/.settings/rules.json`, {
                 method: 'PUT',
+                headers: { 'Authorization': `Bearer ${token}` },
                 body: body
             });
             if (!response.ok) {
