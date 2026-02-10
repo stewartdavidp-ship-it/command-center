@@ -1,6 +1,44 @@
 Command Center — Release Notes
 ================================
 
+v8.27.0 — Session Tracking + Deploy Close-the-Loop (Phase 2.3)
+---------------------------------------------------------------
+Date: February 9, 2026
+
+Closes the prep → deploy cycle. CC now knows when a session started (prep package)
+and when it ended (deploy), and connects the dots automatically.
+
+DEPLOY WORK ITEM COMPLETION:
+• After a successful deploy, if there are in-progress work items for that app,
+  CC shows a completion dialog: "Mark these as done?"
+• Confirming updates work items to "done" with completedInVersion set
+• Works alongside existing issue-linking (issues first, then work items)
+
+SESSION → DEPLOY LINKING:
+• Active (prep-status) sessions are automatically linked to deploys
+• Session status transitions from "prep" to "completed" on deploy
+• Deploy record enriched with sessionId, sessionType, workItemsCompleted
+
+SESSION HISTORY VIEW:
+• New "Session History" sub-tab on the Session Log page
+• Tab toggle between "Session Log" (existing) and "Session History" (new)
+• Stats row: total sessions, completed (deployed), active/prep
+• Filter by app and session type
+• Expandable session cards showing:
+  - Prep → Deploy flow visualization
+  - Session ID, token budget, engine, duration
+  - Package files list
+  - Linked work items with status
+  - Notes
+
+DEPLOY HISTORY ENRICHMENT:
+• HistoryView now shows linked session type and completed work items
+• Work item badges appear on deploys that completed items
+
+INFRASTRUCTURE:
+• globalSessions state at App level with SessionService.listen()
+• SessionService and WorkItemService fully wired into deploy flow
+
 v8.26.0 — Claude Session Wizard (Phase 2.2)
 --------------------------------------------
 Date: February 9, 2026
