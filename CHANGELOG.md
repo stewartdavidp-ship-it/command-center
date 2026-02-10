@@ -6,6 +6,18 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [8.36.4] — 2026-02-10
+
+### Added
+- **StorageManager** — intelligent localStorage cleanup system with auto-pruning on QuotaExceededError
+- **Storage diagnostics panel** in Settings — visual usage bar, per-key breakdown, smart/aggressive cleanup buttons
+- **`safeSet()` wrapper** — DeployService, SessionLogService, RollbackService now auto-cleanup when quota is exceeded
+
+### Fixed
+- **Doc push button lockout** — deploy button stays disabled with "Pushing docs..." spinner through entire batch action (deploy + doc push)
+
+---
+
 ## [8.36.3] — 2026-02-10
 
 ### Fixed
