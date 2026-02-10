@@ -6,6 +6,16 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [8.29.3] — 2026-02-09
+
+### Fixed
+- **Firebase RTDB rules 401** — Added missing `userinfo.email` OAuth scope required by Firebase RTDB REST management API
+- **Firebase RTDB auth method** — Reverted `getRules()`/`putRules()` to use `?access_token=` query param per Firebase docs (Bearer header not supported on `/.settings/rules.json`)
+- **Console version log** — Startup `console.log` now reads version dynamically from meta tag instead of hardcoded string (was stuck at v8.19.0)
+
+### Changed
+- **Doc package validation** — Skips missing-docs warning when only a single HTML file is staged (no longer flags non-package deploys)
+
 ## [8.29.0] — 2026-02-09
 
 ### Added
