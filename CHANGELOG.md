@@ -6,6 +6,57 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [8.26.0] — 2026-02-09
+
+### Added
+- **Claude Session Wizard** — 4-step wizard flow replacing single-phase ClaudePrepModal: Work Items → Session Type → Context Budget → Generate+Download (Phase 2.2)
+- **Wizard step indicator** — Visual progress bar with clickable completed steps and green checkmarks
+- **Context budget preview** — Step 3 shows pre-build file inclusion strategy based on session type (always/preferred/skipped files, source inclusion)
+- **Work item auto-transition** — Selected "ready" work items automatically move to "in-progress" on package generation
+- **Session record creation** — Creates SessionService record on package generation (app, type, work items, engine, tokens, files)
+- **Session-type-aware file filtering** — Build phase now skips docs in `skipWhenTight` and respects `includeSource` flag from context strategy
+- **Quick skip path** — "Skip wizard — Quick package" button on Step 1 for fast builds without session type
+
+### Changed
+- **ClaudePrepModal** — Rewritten from 2-phase (configure → build) to 4-step wizard + build phase
+- **firebaseUid prop threading** — Now flows App → ProjectsTab → ClaudePrepModal for Firebase write operations
+- **CLAUDE-PREP-STANDARD.md** — Now treated as optional during doc fetch (like ARCHITECTURE.md)
+
+## [8.25.0] — 2026-02-09
+
+### Added
+- **SESSION_TYPES** — 8 session type definitions (Build, Design, Fix, Test, Research, Review, Polish, Document) with role frames, scope rules, delivery requirements, context strategies, suggested engines, and auto-suggest mappings
+- **SessionBriefGenerator** — New module for session-type-aware brief generation; includes target work item details (criteria, files, dependencies), open items summary, maturity context
+- **ClaudePrepModal configure phase** — Session type selector grid, work item targeting (open items for app), context strategy preview before building package
+- **Auto-suggest session type** — Selecting a work item auto-suggests the appropriate session type (bugfix→Fix, feature→Build, research→Design)
+- **Context strategy preview** — Shows which files are always/prefer/skip for the selected session type
+
+### Changed
+- `ClaudePrepModal` now has a two-phase flow: configure (session type + work items) → build (fetch + package)
+- `generateSessionBrief()` delegates to `SessionBriefGenerator.generate()` for backward compatibility
+- Session type → engine grid in Settings now uses SESSION_TYPES with icons and descriptions
+- `globalWorkItems` prop threaded through App → ProjectsTab → ClaudePrepModal
+
+---
+
+## [8.24.0] — 2026-02-09
+
+### Added
+- **`generateClaudeInstructions()`** — New function that produces structured CLAUDE_INSTRUCTIONS.md from project scope data. Renders scope as requirement statements organized by section: Project Identity, V1 Scope (Must Build / Nice to Have / Out of Scope), Starting Standards (grouped by category with full descriptions), Key Decisions, Architecture Constraints, Command Center Integration, Session Protocol
+- **STANDARD_DESCRIPTIONS** — Comprehensive description map for all 38 standards (12 universal + 26 category-driven), each as a clear requirement statement suitable for AI consumption
+- **CLAUDE_INSTRUCTIONS.md in Claude Prep** — Added to `CLAUDE_PREP_DOCS` list; auto-generated from scope data during package building when not found in repo; treated as optional (won't flag as "missing" for apps without scope)
+- **Issue → Work Item promotion** — "Promote to Work Item" action on IssuesView issues: maps issue severity to priority, pre-fills description with steps/expected/actual, sets type to bugfix, source to 'promoted', links issue to work item via tags and relatedItems. Includes duplicate detection and issue back-link (`promotedTo` field)
+- **Promoted indicator on issues** — Issues show "📋 → WI-NNN" badge when promoted to a work item
+- **Setup wizard CLAUDE_INSTRUCTIONS.md** — Setup wizard now generates CLAUDE_INSTRUCTIONS.md (instead of generic prompt) when scope data is available from the scoping step
+- **Orchestrator Phase 1.3** — CLAUDE_INSTRUCTIONS.md + Backlog Polish
+
+### Changed
+- **IssuesView** — Now accepts `setView` and `globalWorkItems` props for cross-view integration
+- **CLAUDE_PREP_DOCS** — Extended from 6 to 7 standard docs (added CLAUDE_INSTRUCTIONS.md)
+- **Optional docs list** — Both ARCHITECTURE.md and CLAUDE_INSTRUCTIONS.md now treated as optional in Claude Prep packaging
+
+---
+
 ## [8.23.0] — 2026-02-09
 
 ### Added
