@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Command Center</title>
-    <meta name="version" content="8.26.0">
+    <meta name="version" content="8.27.0">
     <meta name="gs-app-id" content="command-center">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -4387,6 +4387,7 @@
         // Global issues state (synced with Firebase)
         const [globalIssues, setGlobalIssues] = React.useState([]);
         const [globalWorkItems, setGlobalWorkItems] = React.useState([]);
+        const [globalSessions, setGlobalSessions] = React.useState([]);
         const [firebaseUid, setFirebaseUid] = React.useState(null);
         const [firebaseUser, setFirebaseUser] = React.useState(null);
         
@@ -4396,6 +4397,7 @@
             
             let unsubscribeIssues = () => {};
             let unsubscribeWorkItems = () => {};
+            let unsubscribeSessions = () => {};
             
             const unsubscribe = firebaseAuth.onAuthStateChanged((u) => {
                 setFirebaseUser(u);
@@ -4405,10 +4407,13 @@
                     unsubscribeIssues = IssueService.listen(u.uid, setGlobalIssues);
                     // Listen for work items via WorkItemService (v8.22.0)
                     unsubscribeWorkItems = WorkItemService.listen(u.uid, setGlobalWorkItems);
+                    // Listen for sessions via SessionService (v8.27.0)
+                    unsubscribeSessions = SessionService.listen(u.uid, setGlobalSessions);
                 } else {
                     setFirebaseUid(null);
                     setGlobalIssues([]);
                     setGlobalWorkItems([]);
+                    setGlobalSessions([]);
                 }
             });
             
@@ -4416,6 +4421,7 @@
                 unsubscribe();
                 unsubscribeIssues();
                 unsubscribeWorkItems();
+                unsubscribeSessions();
             };
         }, []);
         
@@ -5492,6 +5498,47 @@
                             }
                         }
                     }, 500);
+                }
+                
+                // === Phase 2.3: Work Item Completion Dialog ===
+                // After successful deploy, check for in-progress work items for this app
+                if (firebaseUid) {
+                    const inProgressItems = WorkItemService.getInProgress(globalWorkItems, appId);
+                    
+                    if (inProgressItems.length > 0) {
+                        // Show completion dialog after a delay (after issue linking if any)
+                        const wiDelay = openIssues.length > 0 ? 1500 : 500;
+                        setTimeout(async () => {
+                            const itemList = inProgressItems.map(wi => `${wi.id}: ${wi.title}`).join('\n');
+                            const confirmed = await showConfirm(
+                                `This deploy (v${newVersion}) may complete these work items:\n\n${itemList}\n\nMark ${inProgressItems.length === 1 ? 'it' : 'them'} as done?`,
+                                `✅ Complete Work Items — ${app.name}`
+                            );
+                            
+                            if (confirmed) {
+                                for (const wi of inProgressItems) {
+                                    await WorkItemService.complete(firebaseUid, wi.id, newVersion);
+                                }
+                                console.log(`[Deploy] Completed ${inProgressItems.length} work items for ${appId} v${newVersion}`);
+                            }
+                        }, wiDelay);
+                    }
+                    
+                    // === Phase 2.3: Link Deploy to Active Session ===
+                    // Find the most recent active (prep status) session for this app and link it
+                    const activeSessions = SessionService.getActive(globalSessions, appId);
+                    if (activeSessions.length > 0) {
+                        const latestSession = activeSessions[0]; // Most recent prep session
+                        const deployId = `deploy-${deployment.id}`;
+                        await SessionService.linkDeploy(firebaseUid, latestSession.id, deployId);
+                        
+                        // Enrich deployment record with session + work item data
+                        deployment.sessionId = latestSession.id;
+                        deployment.sessionType = latestSession.type;
+                        deployment.workItemsCompleted = inProgressItems.map(wi => wi.id);
+                        
+                        console.log(`[Deploy] Linked to session ${latestSession.id} (${latestSession.type})`);
+                    }
                 }
                 
                 // Start monitoring for deployment completion
@@ -6712,6 +6759,8 @@
                         <HistoryView 
                             deployments={deployments} apps={apps}
                             onRollback={(d) => setModal({ type: 'rollback', data: d })}
+                            globalWorkItems={globalWorkItems}
+                            globalSessions={globalSessions}
                         />
                     )}
                     
@@ -6739,6 +6788,8 @@
                             github={github}
                             onFileDrop={handleFileDrop}
                             showAlert={showAlert}
+                            globalSessions={globalSessions}
+                            globalWorkItems={globalWorkItems}
                         />
                     )}
                     
@@ -13427,7 +13478,24 @@
     // HISTORY VIEW
     // =========================================================================
     
-    function HistoryView({ deployments, apps, onRollback }) {
+    function HistoryView({ deployments, apps, onRollback, globalWorkItems, globalSessions }) {
+        // Helper: find session linked to a deploy
+        const findLinkedSession = (deploy) => {
+            if (deploy.sessionId) {
+                return (globalSessions || []).find(s => s.id === deploy.sessionId);
+            }
+            // Try to find by deployId match
+            return (globalSessions || []).find(s => s.deployId === `deploy-${deploy.id}`);
+        };
+        
+        // Helper: find completed work items for a deploy
+        const findCompletedWIs = (deploy) => {
+            if (deploy.workItemsCompleted && deploy.workItemsCompleted.length > 0) {
+                return (globalWorkItems || []).filter(wi => deploy.workItemsCompleted.includes(wi.id));
+            }
+            return [];
+        };
+        
         return (
             <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
                 <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
@@ -13437,7 +13505,11 @@
                     <div className="text-slate-400 text-center py-8">No deployments yet</div>
                 ) : (
                     <div className="space-y-2">
-                        {deployments.map(d => (
+                        {deployments.map(d => {
+                            const linkedSession = findLinkedSession(d);
+                            const completedWIs = findCompletedWIs(d);
+                            
+                            return (
                             <div key={d.id} className={`p-3 rounded-lg border ${
                                 d.status === 'success' ? 'bg-green-900/20 border-green-800' :
                                 d.status === 'failed' ? 'bg-red-900/20 border-red-800' : 'border-slate-600'
@@ -13460,16 +13532,30 @@
                                         </button>
                                     )}
                                 </div>
-                                <div className="text-xs text-slate-500 mt-1 flex items-center gap-2">
+                                <div className="text-xs text-slate-500 mt-1 flex items-center gap-2 flex-wrap">
                                     {formatDate(d.completedAt || d.startedAt)}
                                     {d.commitSha && <span className="font-mono">• {d.commitSha.substring(0, 7)}</span>}
                                     {d.previousVersion && <span>• was {formatVersion(d.previousVersion)}</span>}
+                                    {linkedSession && (
+                                        <span className="text-indigo-400">• {linkedSession.type} session</span>
+                                    )}
                                 </div>
+                                {/* Work Items completed in this deploy (v8.27.0) */}
+                                {completedWIs.length > 0 && (
+                                    <div className="flex flex-wrap gap-1 mt-1.5">
+                                        {completedWIs.map(wi => (
+                                            <span key={wi.id} className="text-xs px-1.5 py-0.5 bg-green-900/30 text-green-300 rounded border border-green-800/30">
+                                                ✓ {wi.id}: {wi.title}
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
                                 {d.url && d.status === 'success' && (
                                     <a href={d.url} target="_blank" className="text-xs text-indigo-400 hover:underline">View ↗</a>
                                 )}
                             </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 )}
             </div>
@@ -13972,7 +14058,7 @@
     // SESSION LOG VIEW
     // =========================================================================
     
-    function SessionLogView({ apps, sessionLog, setSessionLog, deployments, github, onFileDrop, showAlert }) {
+    function SessionLogView({ apps, sessionLog, setSessionLog, deployments, github, onFileDrop, showAlert, globalSessions, globalWorkItems }) {
         const [newEntry, setNewEntry] = React.useState('');
         const [firebaseUser, setFirebaseUser] = React.useState(null);
         const [syncStatus, setSyncStatus] = React.useState('local');
@@ -13982,6 +14068,7 @@
         const [uploading, setUploading] = React.useState(false);
         const [downloading, setDownloading] = React.useState(false);
         const [pendingDeploys, setPendingDeploys] = React.useState([]);
+        const [activeSubTab, setActiveSubTab] = React.useState('log');
         const [apiKey, setApiKey] = React.useState(() => {
             try { return localStorage.getItem('cc_api_key') || ''; } catch { return ''; }
         });
@@ -14312,6 +14399,27 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
         
         return (
             <div className="space-y-6">
+                {/* Sub-tab Navigation (v8.27.0) */}
+                <div className="flex gap-1 bg-slate-800/50 rounded-lg p-1">
+                    {[
+                        { id: 'log', label: '📝 Session Log', count: null },
+                        { id: 'history', label: '🔄 Session History', count: (globalSessions || []).length || null }
+                    ].map(tab => (
+                        <button
+                            key={tab.id}
+                            onClick={() => setActiveSubTab(tab.id)}
+                            className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                                activeSubTab === tab.id
+                                    ? 'bg-indigo-600/40 text-indigo-200 border border-indigo-500/30'
+                                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'
+                            }`}>
+                            {tab.label}
+                            {tab.count ? <span className="ml-1.5 text-xs opacity-70">({tab.count})</span> : null}
+                        </button>
+                    ))}
+                </div>
+                
+                {activeSubTab === 'log' && (<React.Fragment>
                 {/* Pending Deploys from Claude */}
                 {pendingDeploys.length > 0 && (
                     <div className="bg-green-900/30 border border-green-600 rounded-xl p-6 animate-pulse-slow">
@@ -14588,6 +14696,295 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
                             <li>Re-test → Promote to PROD when passing</li>
                         </ol>
                     </div>
+                </div>
+                </React.Fragment>)}
+                
+                {/* === Session History Sub-Tab (v8.27.0 / Phase 2.3) === */}
+                {activeSubTab === 'history' && (
+                    <SessionHistoryPanel 
+                        sessions={globalSessions || []}
+                        workItems={globalWorkItems || []}
+                        apps={apps}
+                        deployments={deployments}
+                    />
+                )}
+            </div>
+        );
+    }
+    
+    // === Session History Panel Component (v8.27.0 / Phase 2.3) ===
+    function SessionHistoryPanel({ sessions, workItems, apps, deployments }) {
+        const [filterApp, setFilterApp] = React.useState('all');
+        const [filterType, setFilterType] = React.useState('all');
+        const [expandedSession, setExpandedSession] = React.useState(null);
+        
+        const SESSION_TYPE_META = {
+            build: { icon: '🔨', color: 'blue' },
+            design: { icon: '🎨', color: 'purple' },
+            fix: { icon: '🔧', color: 'orange' },
+            test: { icon: '🧪', color: 'green' },
+            research: { icon: '🔍', color: 'cyan' },
+            review: { icon: '📋', color: 'yellow' },
+            polish: { icon: '✨', color: 'pink' },
+            document: { icon: '📝', color: 'slate' }
+        };
+        
+        const filteredSessions = sessions.filter(s => {
+            if (filterApp !== 'all' && s.appId !== filterApp) return false;
+            if (filterType !== 'all' && s.type !== filterType) return false;
+            return true;
+        });
+        
+        const sessionAppIds = [...new Set(sessions.map(s => s.appId))];
+        const sessionTypes = [...new Set(sessions.map(s => s.type))];
+        
+        const findLinkedDeploy = (session) => {
+            if (!session.deployId) return null;
+            const deployTimestamp = parseInt(session.deployId.replace('deploy-', ''));
+            return deployments.find(d => d.id === deployTimestamp);
+        };
+        
+        const findSessionWorkItems = (session) => {
+            if (!session.workItemId) return [];
+            const ids = Array.isArray(session.workItemId) ? session.workItemId : [session.workItemId];
+            return workItems.filter(wi => ids.includes(wi.id));
+        };
+        
+        const totalSessions = sessions.length;
+        const completedSessions = sessions.filter(s => s.status === 'completed').length;
+        const activeSessions = sessions.filter(s => s.status === 'prep' || s.status === 'active').length;
+        
+        const typeColor = (type) => {
+            const meta = SESSION_TYPE_META[type] || { color: 'slate' };
+            const colors = {
+                blue: 'bg-blue-900/30 text-blue-300 border-blue-700',
+                purple: 'bg-purple-900/30 text-purple-300 border-purple-700',
+                orange: 'bg-orange-900/30 text-orange-300 border-orange-700',
+                green: 'bg-green-900/30 text-green-300 border-green-700',
+                cyan: 'bg-cyan-900/30 text-cyan-300 border-cyan-700',
+                yellow: 'bg-yellow-900/30 text-yellow-300 border-yellow-700',
+                pink: 'bg-pink-900/30 text-pink-300 border-pink-700',
+                slate: 'bg-slate-800 text-slate-300 border-slate-600'
+            };
+            return colors[meta.color] || colors.slate;
+        };
+        
+        if (sessions.length === 0) {
+            return (
+                <div className="bg-slate-800 rounded-xl border border-slate-700 p-8 text-center">
+                    <div className="text-4xl mb-3">🔄</div>
+                    <div className="text-lg font-medium text-slate-300 mb-2">No Session History Yet</div>
+                    <div className="text-sm text-slate-500 max-w-md mx-auto">
+                        Sessions are recorded when you generate a Claude Prep package via the wizard.
+                        Each session tracks the prep → build → deploy cycle.
+                    </div>
+                </div>
+            );
+        }
+        
+        return (
+            <div className="space-y-4">
+                {/* Stats Row */}
+                <div className="grid grid-cols-3 gap-3">
+                    <div className="bg-slate-800 rounded-lg border border-slate-700 p-3 text-center">
+                        <div className="text-2xl font-bold text-indigo-300">{totalSessions}</div>
+                        <div className="text-xs text-slate-400">Total Sessions</div>
+                    </div>
+                    <div className="bg-slate-800 rounded-lg border border-slate-700 p-3 text-center">
+                        <div className="text-2xl font-bold text-green-300">{completedSessions}</div>
+                        <div className="text-xs text-slate-400">Completed (Deployed)</div>
+                    </div>
+                    <div className="bg-slate-800 rounded-lg border border-slate-700 p-3 text-center">
+                        <div className="text-2xl font-bold text-amber-300">{activeSessions}</div>
+                        <div className="text-xs text-slate-400">Active / Prep</div>
+                    </div>
+                </div>
+                
+                {/* Filters */}
+                <div className="flex gap-3">
+                    <select
+                        value={filterApp}
+                        onChange={e => setFilterApp(e.target.value)}
+                        className="px-3 py-1.5 bg-slate-800 border border-slate-600 rounded text-sm text-slate-200 focus:border-indigo-500 outline-none">
+                        <option value="all">All Apps</option>
+                        {sessionAppIds.map(id => (
+                            <option key={id} value={id}>{apps[id]?.name || id}</option>
+                        ))}
+                    </select>
+                    <select
+                        value={filterType}
+                        onChange={e => setFilterType(e.target.value)}
+                        className="px-3 py-1.5 bg-slate-800 border border-slate-600 rounded text-sm text-slate-200 focus:border-indigo-500 outline-none">
+                        <option value="all">All Types</option>
+                        {sessionTypes.map(t => (
+                            <option key={t} value={t}>{(SESSION_TYPE_META[t]?.icon || '📋')} {t}</option>
+                        ))}
+                    </select>
+                    <div className="text-sm text-slate-400 ml-auto self-center">
+                        {filteredSessions.length} session{filteredSessions.length !== 1 ? 's' : ''}
+                    </div>
+                </div>
+                
+                {/* Session Cards */}
+                <div className="space-y-3">
+                    {filteredSessions.map(session => {
+                        const meta = SESSION_TYPE_META[session.type] || { icon: '📋', color: 'slate' };
+                        const linkedDeploy = findLinkedDeploy(session);
+                        const linkedWIs = findSessionWorkItems(session);
+                        const isExpanded = expandedSession === session.id;
+                        const appName = apps[session.appId]?.name || session.appId;
+                        
+                        return (
+                            <div key={session.id} 
+                                className={`bg-slate-800 rounded-lg border ${session.status === 'completed' ? 'border-green-800/50' : 'border-slate-700'} overflow-hidden`}>
+                                {/* Session Header */}
+                                <div 
+                                    className="p-4 cursor-pointer hover:bg-slate-750 transition-colors"
+                                    onClick={() => setExpandedSession(isExpanded ? null : session.id)}>
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-3">
+                                            <span className="text-xl">{meta.icon}</span>
+                                            <div>
+                                                <div className="font-medium text-slate-200">
+                                                    {appName}
+                                                    <span className={`ml-2 text-xs px-2 py-0.5 rounded border ${typeColor(session.type)}`}>
+                                                        {session.type}
+                                                    </span>
+                                                </div>
+                                                <div className="text-xs text-slate-400 mt-0.5">
+                                                    {new Date(session.createdAt).toLocaleDateString()} {new Date(session.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                                    {session.engineId && <span className="ml-2 opacity-70">• {session.engineId}</span>}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-3">
+                                            <span className={`text-xs px-2 py-1 rounded-full ${
+                                                session.status === 'completed' 
+                                                    ? 'bg-green-900/40 text-green-300' 
+                                                    : session.status === 'abandoned'
+                                                        ? 'bg-red-900/40 text-red-300'
+                                                        : 'bg-amber-900/40 text-amber-300'
+                                            }`}>
+                                                {session.status === 'completed' ? '✓ Deployed' 
+                                                    : session.status === 'abandoned' ? '✕ Abandoned' 
+                                                    : '⏳ ' + (session.status || 'prep')}
+                                            </span>
+                                            <span className={`text-slate-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`}>▾</span>
+                                        </div>
+                                    </div>
+                                    
+                                    {linkedDeploy && !isExpanded && (
+                                        <div className="flex items-center gap-2 mt-2 text-xs text-slate-500">
+                                            <span>📦 Prep</span>
+                                            <span className="flex-1 border-t border-dashed border-slate-600"></span>
+                                            <span>→</span>
+                                            <span className="flex-1 border-t border-dashed border-slate-600"></span>
+                                            <span>🚀 v{linkedDeploy.version} {linkedDeploy.target?.toUpperCase()}</span>
+                                        </div>
+                                    )}
+                                </div>
+                                
+                                {/* Expanded Details */}
+                                {isExpanded && (
+                                    <div className="border-t border-slate-700 p-4 bg-slate-900/40 space-y-3">
+                                        {/* Session Flow */}
+                                        <div className="flex items-center gap-2 text-sm">
+                                            <div className="flex items-center gap-1 px-2 py-1 bg-indigo-900/30 rounded border border-indigo-800/40">
+                                                <span>📦</span>
+                                                <span className="text-indigo-300">Prep Generated</span>
+                                            </div>
+                                            <span className="text-slate-600">→</span>
+                                            <div className={`flex items-center gap-1 px-2 py-1 rounded border ${
+                                                linkedDeploy 
+                                                    ? 'bg-green-900/30 border-green-800/40' 
+                                                    : 'bg-slate-800 border-slate-700 border-dashed'
+                                            }`}>
+                                                <span>{linkedDeploy ? '🚀' : '⏳'}</span>
+                                                <span className={linkedDeploy ? 'text-green-300' : 'text-slate-500'}>
+                                                    {linkedDeploy 
+                                                        ? `Deployed v${linkedDeploy.version} → ${linkedDeploy.target?.toUpperCase()}`
+                                                        : 'Awaiting deploy'}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        
+                                        {/* Details Grid */}
+                                        <div className="grid grid-cols-2 gap-3 text-sm">
+                                            <div>
+                                                <div className="text-xs text-slate-500 mb-1">Session ID</div>
+                                                <div className="text-slate-300 font-mono text-xs">{session.id}</div>
+                                            </div>
+                                            <div>
+                                                <div className="text-xs text-slate-500 mb-1">Token Budget</div>
+                                                <div className="text-slate-300">
+                                                    {session.packageTokens ? `${(session.packageTokens / 1000).toFixed(1)}K tokens` : '—'}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <div className="text-xs text-slate-500 mb-1">Engine</div>
+                                                <div className="text-slate-300">{session.engineId || '—'}</div>
+                                            </div>
+                                            <div>
+                                                <div className="text-xs text-slate-500 mb-1">Duration</div>
+                                                <div className="text-slate-300">
+                                                    {session.completedAt && session.createdAt 
+                                                        ? (() => {
+                                                            const mins = Math.round((new Date(session.completedAt) - new Date(session.createdAt)) / 60000);
+                                                            return mins < 60 ? `${mins}m` : `${Math.floor(mins/60)}h ${mins%60}m`;
+                                                        })()
+                                                        : '—'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        {/* Package Files */}
+                                        {session.packageFiles && session.packageFiles.length > 0 && (
+                                            <div>
+                                                <div className="text-xs text-slate-500 mb-1">Package Files ({session.packageFiles.length})</div>
+                                                <div className="flex flex-wrap gap-1">
+                                                    {session.packageFiles.slice(0, 8).map((f, i) => (
+                                                        <span key={i} className="text-xs px-1.5 py-0.5 bg-slate-700 rounded text-slate-300 font-mono">
+                                                            {typeof f === 'string' ? f : f.name || f}
+                                                        </span>
+                                                    ))}
+                                                    {session.packageFiles.length > 8 && (
+                                                        <span className="text-xs text-slate-500">+{session.packageFiles.length - 8} more</span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
+                                        
+                                        {/* Linked Work Items */}
+                                        {linkedWIs.length > 0 && (
+                                            <div>
+                                                <div className="text-xs text-slate-500 mb-1">Work Items</div>
+                                                <div className="space-y-1">
+                                                    {linkedWIs.map(wi => (
+                                                        <div key={wi.id} className="flex items-center gap-2 text-sm">
+                                                            <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                                                wi.status === 'done' ? 'bg-green-900/40 text-green-300' : 'bg-amber-900/40 text-amber-300'
+                                                            }`}>
+                                                                {wi.status === 'done' ? '✓' : '•'} {wi.id}
+                                                            </span>
+                                                            <span className="text-slate-300">{wi.title}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                        
+                                        {/* Notes */}
+                                        {session.notes && (
+                                            <div>
+                                                <div className="text-xs text-slate-500 mb-1">Notes</div>
+                                                <div className="text-sm text-slate-300">{session.notes}</div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
                 </div>
             </div>
         );
