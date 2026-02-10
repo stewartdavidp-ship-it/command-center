@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Command Center</title>
-    <meta name="version" content="8.27.0">
+    <meta name="version" content="8.28.0">
     <meta name="gs-app-id" content="command-center">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -6827,6 +6827,7 @@
                             showConfirm={showConfirm}
                             onRefreshRepos={refreshRepos}
                             githubOwner={availableRepos[0]?.owner || availableRepos[0]?.fullName?.split('/')[0] || 'stewartdavidp-ship-it'}
+                            firebaseUid={firebaseUid}
                         />
                     )}
                     
@@ -21604,7 +21605,7 @@ ${repoStr || '- *No repos configured*'}
     // =========================================================================
     // SETUP NEW APP VIEW (v8.7.7)
     // =========================================================================
-    function SetupNewAppView({ apps, github, config, updateConfig, showAlert, showConfirm, onRefreshRepos, githubOwner }) {
+    function SetupNewAppView({ apps, github, config, updateConfig, showAlert, showConfirm, onRefreshRepos, githubOwner, firebaseUid }) {
         const [step, setStep] = React.useState(1);
         const [appData, setAppData] = React.useState({
             name: '',
@@ -21626,6 +21627,8 @@ ${repoStr || '- *No repos configured*'}
         const [creating, setCreating] = React.useState(false);
         const [creationLog, setCreationLog] = React.useState([]);
         const [promptGenerated, setPromptGenerated] = React.useState('');
+        const [workItemsCreated, setWorkItemsCreated] = React.useState([]); // v8.28.0: Track created work items
+        const [reviewData, setReviewData] = React.useState(null); // v8.28.0: Review summary for Step 5
 
         const addLog = (msg, type = 'info') => setCreationLog(prev => [...prev, { msg, type, time: new Date().toLocaleTimeString() }]);
 
@@ -21780,6 +21783,102 @@ ${repoStr || '- *No repos configured*'}
                 updateConfig(newConfig);
                 addLog('✅ App added to Command Center', 'success');
 
+                // v8.28.0: Store lifecycle metadata with scope if available
+                if (scopeData) {
+                    const lifecycleData = {
+                        currentMaturity: 'seed',
+                        complexity: scopeData.v1Features?.length > 5 ? 'medium' : 'simple',
+                        scope: {
+                            description: scopeData.description || '',
+                            category: scopeData.category || '',
+                            categoryAnswers: scopeData.categoryAnswers || {},
+                            v1Features: scopeData.v1Features || [],
+                            futureFeatures: scopeData.futureFeatures || [],
+                            keyDecisions: scopeData.keyDecisions || [],
+                            startingStandards: scopeData.startingStandards || [],
+                            scopedAt: new Date().toISOString(),
+                            source: 'manual'
+                        }
+                    };
+                    // Update the config with lifecycle data on the app
+                    const configWithLifecycle = { ...newConfig, apps: { ...newConfig.apps } };
+                    configWithLifecycle.apps[appData.id] = {
+                        ...configWithLifecycle.apps[appData.id],
+                        lifecycle: lifecycleData
+                    };
+                    updateConfig(configWithLifecycle);
+                    addLog('📋 Lifecycle metadata stored with project scope', 'success');
+                }
+
+                // v8.28.0: Auto-create work items from scope
+                let createdItems = [];
+                if (scopeData && firebaseUid) {
+                    const itemsToCreate = [];
+                    let nextNum = 1;
+                    const padId = (n) => `WI-${String(n).padStart(3, '0')}`;
+
+                    // V1 features → work items (status: ready, source: scoped)
+                    (scopeData.v1Features || []).forEach(f => {
+                        itemsToCreate.push({
+                            id: padId(nextNum++),
+                            appId: appData.id,
+                            title: f.title,
+                            description: f.description || '',
+                            type: 'feature',
+                            priority: f.priority || 'core',
+                            status: 'ready',
+                            effort: f.effort || 'session',
+                            source: 'scoped',
+                            tags: ['v1', scopeData.category || '']
+                        });
+                    });
+
+                    // Future features → work items (status: idea, source: scoped)
+                    (scopeData.futureFeatures || []).forEach(f => {
+                        itemsToCreate.push({
+                            id: padId(nextNum++),
+                            appId: appData.id,
+                            title: f.title,
+                            description: f.description || '',
+                            type: 'feature',
+                            priority: 'nice-to-have',
+                            status: 'idea',
+                            effort: f.effort || 'session',
+                            source: 'scoped',
+                            tags: ['future']
+                        });
+                    });
+
+                    // Key decisions → work items (type: research, status: ready, source: scoped)
+                    (scopeData.keyDecisions || []).filter(d => !d.resolved).forEach(d => {
+                        itemsToCreate.push({
+                            id: padId(nextNum++),
+                            appId: appData.id,
+                            title: d.title,
+                            description: d.description || '',
+                            type: 'research',
+                            priority: 'core',
+                            status: 'ready',
+                            effort: 'quick',
+                            source: 'scoped',
+                            tags: ['decision']
+                        });
+                    });
+
+                    if (itemsToCreate.length > 0) {
+                        try {
+                            addLog(`Creating ${itemsToCreate.length} work items from scope...`);
+                            createdItems = await WorkItemService.createBatch(firebaseUid, itemsToCreate);
+                            addLog(`✅ ${createdItems.length} work items created in backlog`, 'success');
+                        } catch (e) {
+                            addLog(`⚠️ Could not create work items: ${e.message}`, 'warn');
+                        }
+                    }
+                } else if (scopeData && !firebaseUid) {
+                    addLog('⚠️ Sign in to Firebase to auto-create work items from scope', 'warn');
+                }
+                setWorkItemsCreated(createdItems);
+
                 if (onRefreshRepos) {
                     addLog('Refreshing repo list...');
                     await onRefreshRepos();
@@ -21787,10 +21886,12 @@ ${repoStr || '- *No repos configured*'}
                 }
 
                 // Generate Claude prompt (use CLAUDE_INSTRUCTIONS.md if scope available)
+                let generatedPromptType = 'basic';
                 if (scopeData) {
                     const instructions = generateClaudeInstructions(appData, scopeData, config);
                     if (instructions) {
                         setPromptGenerated(instructions);
+                        generatedPromptType = 'instructions';
                         addLog('🎯 Generated CLAUDE_INSTRUCTIONS.md from project scope', 'success');
                     } else {
                         const prompt = generateClaudePrompt(appData, prodFullName, testFullName);
@@ -21802,6 +21903,27 @@ ${repoStr || '- *No repos configured*'}
                     setPromptGenerated(prompt);
                     addLog('✅ Claude project prompt generated', 'success');
                 }
+
+                // v8.28.0: Build review summary
+                setReviewData({
+                    appName: appData.name,
+                    appId: appData.id,
+                    repos: {
+                        prod: prodFullName,
+                        test: appData.structure === 'test-prod' ? testFullName : null
+                    },
+                    hasScope: !!scopeData,
+                    category: scopeData?.category ? (SCOPE_CATEGORIES[scopeData.category]?.icon + ' ' + SCOPE_CATEGORIES[scopeData.category]?.label) : null,
+                    v1FeatureCount: scopeData?.v1Features?.length || 0,
+                    futureFeatureCount: scopeData?.futureFeatures?.length || 0,
+                    standardsCount: scopeData?.startingStandards?.length || 0,
+                    workItemsCreated: createdItems.length,
+                    promptType: generatedPromptType,
+                    hasAdmin: appData.hasAdmin,
+                    isPWA: appData.isPWA,
+                    lifecycleStored: !!scopeData
+                });
+
                 addLog('🎉 Setup complete!', 'success');
 
             } catch (e) {
@@ -21998,7 +22120,7 @@ The developer uses Claude for iterative development — each session should:
                         { n: 2, label: 'Scope' },
                         { n: 3, label: 'Check Repos' },
                         { n: 4, label: 'Create & Configure' },
-                        { n: 5, label: 'Claude Prompt' }
+                        { n: 5, label: 'Review & Launch' }
                     ].map(s => (
                         <React.Fragment key={s.n}>
                             <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium ${
@@ -22292,22 +22414,101 @@ The developer uses Claude for iterative development — each session should:
                     </div>
                 )}
 
-                {/* Step 5: Claude Prompt */}
+                {/* Step 5: Review & Launch (v8.28.0 — Phase 3.1) */}
                 {step === 5 && (
-                    <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
-                        <h2 className="text-lg font-semibold mb-2">🤖 Claude Project Prompt</h2>
-                        <p className="text-slate-400 text-sm mb-4">Copy this into a Claude Project or use as a session starter. It contains everything Claude needs to build and deploy your app.</p>
-                        <div className="relative">
-                            <pre className="bg-slate-900 rounded-lg p-4 text-sm text-slate-300 max-h-96 overflow-y-auto whitespace-pre-wrap border border-slate-700">
-                                {promptGenerated}
-                            </pre>
-                            <button onClick={() => { navigator.clipboard.writeText(promptGenerated); showAlert('Prompt copied to clipboard!', 'Copied'); }}
-                                className="absolute top-3 right-3 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded text-sm font-medium transition-colors">
-                                📋 Copy
-                            </button>
+                    <div className="bg-slate-800 rounded-xl p-6 border border-slate-700 space-y-6">
+                        <div>
+                            <h2 className="text-lg font-semibold mb-1">🚀 Review & Launch</h2>
+                            <p className="text-slate-400 text-sm">Everything has been set up. Review what was created and grab your Claude instructions.</p>
                         </div>
-                        <div className="mt-6 flex justify-between items-center">
-                            <button onClick={() => { setStep(1); setAppData({ name:'',id:'',description:'',structure:'prod-only',isPWA:false,appType:'other',project:'',icon:'📦',hasAdmin:false,adminSubPath:'admin',customDomain:'' }); setScopeData(null); setSkipScope(false); setCreationLog([]); setPromptGenerated(''); setRepoStatus({checking:false,prodExists:null,testExists:null}); }}
+
+                        {/* Setup Summary */}
+                        {reviewData && (
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
+                                    <div className="text-xs text-slate-500 uppercase tracking-wide mb-1">App</div>
+                                    <div className="font-medium">{appData.icon} {reviewData.appName}</div>
+                                    <div className="text-xs text-slate-400 mt-1 font-mono">{reviewData.appId}</div>
+                                </div>
+                                <div className="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
+                                    <div className="text-xs text-slate-500 uppercase tracking-wide mb-1">Repositories</div>
+                                    <div className="text-sm font-mono text-slate-300 truncate">{reviewData.repos?.prod}</div>
+                                    {reviewData.repos?.test && <div className="text-xs font-mono text-slate-400 mt-1 truncate">{reviewData.repos.test}</div>}
+                                </div>
+                                {reviewData.hasScope && (
+                                    <div className="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
+                                        <div className="text-xs text-slate-500 uppercase tracking-wide mb-1">Scope</div>
+                                        <div className="text-sm">{reviewData.category || 'Scoped'}</div>
+                                        <div className="text-xs text-slate-400 mt-1">
+                                            {reviewData.v1FeatureCount} V1 features · {reviewData.standardsCount} standards
+                                        </div>
+                                    </div>
+                                )}
+                                <div className="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
+                                    <div className="text-xs text-slate-500 uppercase tracking-wide mb-1">Generated</div>
+                                    <div className="text-sm space-y-0.5">
+                                        {reviewData.workItemsCreated > 0 && (
+                                            <div className="text-green-400">✅ {reviewData.workItemsCreated} work items</div>
+                                        )}
+                                        {reviewData.lifecycleStored && (
+                                            <div className="text-green-400">✅ Lifecycle metadata</div>
+                                        )}
+                                        <div className="text-green-400">✅ {reviewData.promptType === 'instructions' ? 'CLAUDE_INSTRUCTIONS.md' : 'Project brief'}</div>
+                                        {reviewData.isPWA && <span className="text-xs text-slate-500">PWA</span>}
+                                        {reviewData.hasAdmin && <span className="text-xs text-slate-500 ml-1">Admin</span>}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Work Items Summary */}
+                        {workItemsCreated.length > 0 && (
+                            <div className="bg-slate-900/40 rounded-lg p-4 border border-slate-700">
+                                <div className="flex items-center justify-between mb-3">
+                                    <h3 className="text-sm font-semibold">📋 Work Items Created</h3>
+                                    <span className="text-xs text-slate-500">{workItemsCreated.length} items in backlog</span>
+                                </div>
+                                <div className="space-y-1 max-h-40 overflow-y-auto">
+                                    {workItemsCreated.map((wi, i) => (
+                                        <div key={i} className="flex items-center gap-2 text-sm py-1">
+                                            <span className={`text-xs px-1.5 py-0.5 rounded font-mono ${
+                                                wi.status === 'ready' ? 'bg-blue-600/20 text-blue-400' : 'bg-slate-700 text-slate-400'
+                                            }`}>{wi.status}</span>
+                                            <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                                wi.type === 'feature' ? 'bg-purple-600/20 text-purple-400' : 'bg-amber-600/20 text-amber-400'
+                                            }`}>{wi.type}</span>
+                                            <span className="text-slate-300 truncate">{wi.title}</span>
+                                            <span className={`text-xs ml-auto ${
+                                                wi.priority === 'core' ? 'text-red-400' : 'text-slate-500'
+                                            }`}>{wi.priority}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Claude Instructions / Prompt */}
+                        {promptGenerated && (
+                            <div>
+                                <div className="flex items-center justify-between mb-2">
+                                    <h3 className="text-sm font-semibold">
+                                        🤖 {reviewData?.promptType === 'instructions' ? 'CLAUDE_INSTRUCTIONS.md' : 'Claude Project Prompt'}
+                                    </h3>
+                                    <button onClick={() => { navigator.clipboard.writeText(promptGenerated); showAlert('Copied to clipboard!', 'Copied'); }}
+                                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded text-sm font-medium transition-colors">
+                                        📋 Copy
+                                    </button>
+                                </div>
+                                <p className="text-slate-400 text-xs mb-2">Copy this into a Claude Project or use as a session starter.</p>
+                                <pre className="bg-slate-900 rounded-lg p-4 text-sm text-slate-300 max-h-64 overflow-y-auto whitespace-pre-wrap border border-slate-700">
+                                    {promptGenerated}
+                                </pre>
+                            </div>
+                        )}
+
+                        {/* Actions */}
+                        <div className="flex justify-between items-center pt-2 border-t border-slate-700">
+                            <button onClick={() => { setStep(1); setAppData({ name:'',id:'',description:'',structure:'prod-only',isPWA:false,appType:'other',project:'',icon:'📦',hasAdmin:false,adminSubPath:'admin',customDomain:'' }); setScopeData(null); setSkipScope(false); setCreationLog([]); setPromptGenerated(''); setRepoStatus({checking:false,prodExists:null,testExists:null}); setWorkItemsCreated([]); setReviewData(null); }}
                                 className="px-4 py-2 text-slate-400 hover:text-white transition-colors">
                                 🆕 Setup Another App
                             </button>
