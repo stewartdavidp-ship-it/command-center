@@ -6,6 +6,18 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [8.36.3] — 2026-02-10
+
+### Fixed
+- **Version downgrade protection** — version validation now applies to ALL deploy intents (quick-deploy, targeted-update), not just full packages
+- **Downgrade vs same-version distinction** — deploying an older version shows error severity; same version shows warning
+- **Smart deploy target selection** — dropdown intelligently defaults based on app repo config (two-repo → TEST, prod-only → PROD)
+- **Target dropdown filtering** — only shows valid environments for selected app
+- **Post-deploy reset** — resets to app's smart default instead of always TEST
+- **Version extraction for renamed files** — handles `targetPath === 'index.html'` and single-file fallback
+
+---
+
 ## [8.36.0] — 2026-02-10
 
 ### Added
