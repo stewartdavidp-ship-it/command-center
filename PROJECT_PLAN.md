@@ -109,11 +109,31 @@ Single-file web application for managing deployment, monitoring, and configurati
 - [x] Snapshot viewer with raw JSON and line-by-line diff against current rules
 - [x] Rollback — restore any snapshot to editor, then deploy
 
+### Orchestrator Phase 0: Foundation (v8.20.0–8.21.1)
+- [x] WorkItemService — Firebase CRUD for backlog work items
+- [x] SessionService — Claude session tracking
+- [x] TokenRegistryService — Heuristic token estimation
+- [x] EngineRegistryService — AI engine profiles, session type recommendations
+- [x] App lifecycle metadata on schema
+- [x] AI Engines settings UI (comparison table, default selector)
+- [x] Token estimation + context budget bar in Claude Prep
+
+### Orchestrator Phase 1.1: Backlog View (v8.22.0)
+- [x] BacklogView — top-level nav, work item list with grouping/filtering/search/sort
+- [x] WorkItemEditModal — full CRUD with all fields, acceptance criteria, tags, context
+- [x] Status transitions — idea → ready → in-progress → done → deferred with quick buttons
+- [x] Bulk operations — multi-select + bulk status update
+- [x] Dashboard integration — work item badges on app cards, backlog summary widget
+- [x] WorkItemService.createBatch() — bulk create for scoping flow
+- [x] WorkItemService.delete() — individual item deletion
+- [x] Copy for Claude — formatted context generation per work item
+- [x] source field — manual | scoped | imported | promoted
+
 ---
 
 ## In Progress
 
-_(Nothing actively in progress — last session completed v8.13.1.5)_
+_(Phase 1.1 complete — next: Phase 1.2 Project Scoping Flow)_
 
 ---
 
