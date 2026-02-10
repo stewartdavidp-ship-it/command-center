@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Command Center</title>
-    <meta name="version" content="8.32.0">
+    <meta name="version" content="8.33.0">
     <meta name="gs-app-id" content="command-center">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -1738,7 +1738,7 @@
     // =========================================================================
     
     // =========================================================================
-    // PORKBUN SERVICE — Domain registrar API integration (v8.32.0)
+    // PORKBUN SERVICE — Domain registrar API integration (v8.33.0)
     // Handles: domain search, registration, DNS CRUD, GitHub Pages wiring
     // API docs: https://porkbun.com/api/json/v3/documentation
     // All calls are POST with JSON body. Auth via apiKey + secretApiKey in body.
@@ -1750,6 +1750,7 @@
         PRICE_CACHE_KEY: 'cc_tld_prices',
         HEALTH_CACHE_KEY: 'cc_domain_health',
         BASE_URL: 'https://api.porkbun.com/api/json/v3',
+        PROXY_URL: 'https://us-central1-word-boxing.cloudfunctions.net/domainProxy',
         
         // GitHub Pages IP addresses (current as of 2025)
         GITHUB_PAGES_IPS: [
@@ -1778,7 +1779,7 @@
             return !!(cfg.apiKey && cfg.secretApiKey);
         },
         
-        // ─── Core API Call ───
+        // ─── Core API Call (via Firebase proxy to avoid CORS) ───
         
         async _call(endpoint, extraBody = {}) {
             const cfg = this.getConfig();
@@ -1786,13 +1787,18 @@
                 throw new Error('Porkbun API keys not configured. Go to Settings → Domain Registrar.');
             }
             
-            const response = await fetch(`${this.BASE_URL}${endpoint}`, {
+            const response = await fetch(this.PROXY_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    apikey: cfg.apiKey,
-                    secretapikey: cfg.secretApiKey,
-                    ...extraBody
+                    provider: 'porkbun',
+                    endpoint: endpoint,
+                    method: 'POST',
+                    body: {
+                        apikey: cfg.apiKey,
+                        secretapikey: cfg.secretApiKey,
+                        ...extraBody
+                    }
                 })
             });
             
@@ -1894,7 +1900,8 @@
             });
         },
         
-        async deleteDNSRecord(domain, recordId) {
+        async deleteDNSRecord(domain, recordId, allRecords) {
+            // allRecords param unused — Porkbun supports individual record delete by ID
             return await this._call(`/dns/delete/${domain}/${recordId}`);
         },
         
@@ -1918,11 +1925,16 @@
                 } catch {}
             }
             
-            // Pricing endpoint doesn't require auth
-            const response = await fetch(`${this.BASE_URL}/pricing/get`, {
+            // Pricing endpoint via proxy (no auth needed but still has CORS issues)
+            const response = await fetch(this.PROXY_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: '{}'
+                body: JSON.stringify({
+                    provider: 'porkbun',
+                    endpoint: '/pricing/get',
+                    method: 'POST',
+                    body: {}
+                })
             });
             const data = await response.json();
             
@@ -2004,6 +2016,312 @@
         formatPrice(price) {
             const num = typeof price === 'string' ? parseFloat(price) : price;
             return isNaN(num) ? '—' : `$${num.toFixed(2)}`;
+        }
+    };
+
+    // =========================================================================
+    // GODADDY SERVICE — Domain registrar DNS API integration (v8.33.0)
+    // Handles: domain listing, DNS CRUD for existing GoDaddy domains
+    // API docs: https://developer.godaddy.com/doc/endpoint/domains
+    // Auth: sso-key API_KEY:API_SECRET in Authorization header
+    // Note: GoDaddy API requires 10+ domains or Domain Pro Plan
+    // Note: GoDaddy uses GET/PUT/PATCH (not POST like Porkbun)
+    // Note: Records identified by type+name, NOT unique IDs
+    // =========================================================================
+    
+    const GoDaddyService = {
+        CONFIG_KEY: 'cc_godaddy_config',
+        BASE_URL: 'https://api.godaddy.com/v1',
+        PROXY_URL: 'https://us-central1-word-boxing.cloudfunctions.net/domainProxy',
+        
+        GITHUB_PAGES_IPS: [
+            '185.199.108.153',
+            '185.199.109.153',
+            '185.199.110.153',
+            '185.199.111.153'
+        ],
+        
+        // ─── Configuration ───
+        
+        getConfig() {
+            try { return JSON.parse(localStorage.getItem(this.CONFIG_KEY) || '{}'); }
+            catch { return {}; }
+        },
+        
+        saveConfig(config) {
+            localStorage.setItem(this.CONFIG_KEY, JSON.stringify(config));
+        },
+        
+        isConfigured() {
+            const cfg = this.getConfig();
+            return !!(cfg.apiKey && cfg.apiSecret);
+        },
+        
+        // ─── Core API Call (via Firebase proxy to avoid CORS) ───
+        
+        async _call(endpoint, method = 'GET', body = null) {
+            const cfg = this.getConfig();
+            if (!cfg.apiKey || !cfg.apiSecret) {
+                throw new Error('GoDaddy API keys not configured. Go to Settings → Domain Registrar.');
+            }
+            
+            const proxyBody = {
+                provider: 'godaddy',
+                endpoint: endpoint,
+                method: method,
+                headers: {
+                    'Authorization': `sso-key ${cfg.apiKey}:${cfg.apiSecret}`
+                }
+            };
+            if (body && ['POST', 'PUT', 'PATCH'].includes(method)) {
+                proxyBody.body = body;
+            }
+            
+            const response = await fetch(this.PROXY_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(proxyBody)
+            });
+            
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                throw new Error(data.message || `GoDaddy API error (${response.status})`);
+            }
+            
+            const text = await response.text();
+            return text ? JSON.parse(text) : { status: 'SUCCESS' };
+        },
+        
+        // ─── Connection Test ───
+        
+        async ping() {
+            // GoDaddy has no explicit ping — we list domains as a test
+            const domains = await this._call('/domains?limit=1');
+            return { status: 'SUCCESS', yourIp: 'N/A', domainCount: domains.length };
+        },
+        
+        // ─── Domain Operations ───
+        
+        async listDomains() {
+            const data = await this._call('/domains');
+            // Normalize to match PorkbunService format
+            return data.map(d => ({
+                domain: d.domain,
+                status: d.status,
+                tld: d.domain.split('.').pop(),
+                createDate: d.createdAt,
+                expireDate: d.expires,
+                autoRenew: d.renewAuto,
+                provider: 'godaddy'
+            }));
+        },
+        
+        // ─── DNS Record Management ───
+        // GoDaddy uses type+name to identify records, NOT unique IDs
+        // Records have: type, name, data (not content), ttl, priority
+        
+        async listDNSRecords(domain) {
+            const data = await this._call(`/domains/${domain}/records`);
+            // Normalize to match Porkbun format
+            return data.map((r, i) => ({
+                id: `${r.type}-${r.name}-${i}`,  // Synthetic ID (GoDaddy has none)
+                name: r.name === '@' ? domain : `${r.name}.${domain}`,
+                type: r.type,
+                content: r.data,
+                ttl: String(r.ttl),
+                prio: r.priority ? String(r.priority) : '0',
+                notes: '',
+                _gdName: r.name,  // Keep original GoDaddy name for API calls
+                _gdData: r.data
+            }));
+        },
+        
+        async createDNSRecord(domain, type, name, content, ttl = 600, prio = null) {
+            // GoDaddy uses PATCH to add records (append)
+            const record = {
+                type,
+                name: name || '@',
+                data: content,
+                ttl: parseInt(ttl) || 600
+            };
+            if (prio !== null) record.priority = parseInt(prio);
+            
+            await this._call(`/domains/${domain}/records`, 'PATCH', [record]);
+            return { id: `${type}-${name || '@'}-new`, type, name: name || '@', content };
+        },
+        
+        async deleteDNSRecord(domain, recordId, allRecords) {
+            // GoDaddy has no individual delete — we must replace all records of that type/name
+            // OR replace ALL records minus the one we want to remove
+            // We need the full record list to do this
+            if (!allRecords) {
+                allRecords = await this.listDNSRecords(domain);
+            }
+            
+            const toKeep = allRecords.filter(r => r.id !== recordId);
+            
+            // Rebuild in GoDaddy's format
+            const gdRecords = toKeep
+                .filter(r => !['NS', 'SOA'].includes(r.type)) // Can't replace NS/SOA
+                .map(r => ({
+                    type: r.type,
+                    name: r._gdName || (r.name === domain ? '@' : r.name.replace(`.${domain}`, '')),
+                    data: r._gdData || r.content,
+                    ttl: parseInt(r.ttl) || 600,
+                    ...(r.prio && r.prio !== '0' ? { priority: parseInt(r.prio) } : {})
+                }));
+            
+            if (gdRecords.length === 0) {
+                throw new Error('Cannot delete all records. At least one record must remain.');
+            }
+            
+            await this._call(`/domains/${domain}/records`, 'PUT', gdRecords);
+            return { status: 'SUCCESS' };
+        },
+        
+        // ─── GitHub Pages DNS Configuration ───
+        
+        async configureForGitHubPages(domain, githubUsername) {
+            const log = [];
+            
+            // Step 1: Get existing records
+            log.push('Fetching existing DNS records...');
+            const existing = await this.listDNSRecords(domain);
+            
+            // Step 2: Build new record set — keep non-conflicting, replace A/CNAME
+            const keepRecords = existing
+                .filter(r => !['NS', 'SOA'].includes(r.type))
+                .filter(r => {
+                    const isRoot = r._gdName === '@' || r.name === domain;
+                    const isWww = r._gdName === 'www';
+                    if (isRoot && (r.type === 'A' || r.type === 'AAAA' || r.type === 'CNAME' || r.type === 'ALIAS')) {
+                        log.push(`Removing conflicting ${r.type} record: ${r.content}`);
+                        return false;
+                    }
+                    if (isWww && r.type === 'CNAME') {
+                        log.push(`Removing conflicting CNAME www record: ${r.content}`);
+                        return false;
+                    }
+                    return true;
+                })
+                .map(r => ({
+                    type: r.type,
+                    name: r._gdName || '@',
+                    data: r._gdData || r.content,
+                    ttl: parseInt(r.ttl) || 600,
+                    ...(r.prio && r.prio !== '0' ? { priority: parseInt(r.prio) } : {})
+                }));
+            
+            // Step 3: Add GitHub Pages records
+            const ghRecords = this.GITHUB_PAGES_IPS.map(ip => {
+                log.push(`Adding A record → ${ip}`);
+                return { type: 'A', name: '@', data: ip, ttl: 600 };
+            });
+            
+            log.push(`Adding CNAME www → ${githubUsername}.github.io`);
+            ghRecords.push({ type: 'CNAME', name: 'www', data: `${githubUsername}.github.io`, ttl: 600 });
+            
+            // Step 4: Replace all records at once (GoDaddy's approach)
+            const allRecords = [...keepRecords, ...ghRecords];
+            await this._call(`/domains/${domain}/records`, 'PUT', allRecords);
+            
+            return {
+                success: true,
+                recordsCreated: ghRecords.length,
+                records: ghRecords.map(r => ({ type: r.type, name: r.name, content: r.data })),
+                log
+            };
+        },
+        
+        // ─── Utility ───
+        formatPrice(price) {
+            const num = typeof price === 'string' ? parseFloat(price) : price;
+            return isNaN(num) ? '—' : `$${num.toFixed(2)}`;
+        }
+    };
+
+    // =========================================================================
+    // DOMAIN PROVIDER REGISTRY — Abstracts multiple registrar APIs (v8.33.0)
+    // All providers implement the same interface: ping, listDomains,
+    // listDNSRecords, createDNSRecord, deleteDNSRecord, configureForGitHubPages
+    // =========================================================================
+    
+    const DomainProviderRegistry = {
+        PROVIDERS: {
+            porkbun: {
+                id: 'porkbun',
+                name: 'Porkbun',
+                icon: '🐷',
+                service: PorkbunService,
+                configKey: PorkbunService.CONFIG_KEY,
+                keyFields: [
+                    { key: 'apiKey', label: 'API Key', placeholder: 'pk1_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' },
+                    { key: 'secretApiKey', label: 'Secret API Key', placeholder: 'sk1_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' }
+                ],
+                setupUrl: 'https://porkbun.com/account/api',
+                setupNote: 'Generate API keys, then enable API access per domain in Domain Management → Details.',
+                hasRegistration: true
+            },
+            godaddy: {
+                id: 'godaddy',
+                name: 'GoDaddy',
+                icon: '🟢',
+                service: GoDaddyService,
+                configKey: GoDaddyService.CONFIG_KEY,
+                keyFields: [
+                    { key: 'apiKey', label: 'API Key', placeholder: 'Your GoDaddy API Key' },
+                    { key: 'apiSecret', label: 'API Secret', placeholder: 'Your GoDaddy API Secret' }
+                ],
+                setupUrl: 'https://developer.godaddy.com/keys',
+                setupNote: 'Requires 10+ domains or Domain Pro Plan. Create a Production API key (not OTE/Test).',
+                hasRegistration: false
+            }
+        },
+        
+        getAll() {
+            return Object.values(this.PROVIDERS);
+        },
+        
+        get(providerId) {
+            return this.PROVIDERS[providerId] || null;
+        },
+        
+        getService(providerId) {
+            const provider = this.get(providerId);
+            return provider ? provider.service : null;
+        },
+        
+        // Get all configured providers
+        getConfigured() {
+            return this.getAll().filter(p => p.service.isConfigured());
+        },
+        
+        // Get all domains across all configured providers
+        async getAllDomains() {
+            const results = [];
+            for (const provider of this.getConfigured()) {
+                try {
+                    const domains = await provider.service.listDomains();
+                    domains.forEach(d => {
+                        d.provider = provider.id;
+                        d.providerName = provider.name;
+                        d.providerIcon = provider.icon;
+                    });
+                    results.push(...domains);
+                } catch (e) {
+                    console.warn(`Failed to fetch domains from ${provider.name}:`, e);
+                }
+            }
+            return results;
+        },
+        
+        // Get the service for a specific domain (by checking which provider owns it)
+        getServiceForDomain(domain, allDomains) {
+            const match = allDomains.find(d => d.domain === domain);
+            if (match) return this.getService(match.provider);
+            // Default to first configured
+            const configured = this.getConfigured();
+            return configured.length > 0 ? configured[0].service : null;
         }
     };
 
@@ -4034,7 +4352,7 @@
             return { enabled: true };
         }
         
-        // v8.32.0: Custom domain configuration for GitHub Pages
+        // v8.33.0: Custom domain configuration for GitHub Pages
         async updatePagesConfig(repo, cname, enforceHttps = false) {
             const [owner, repoName] = repo.split('/');
             const response = await fetch(`${this.baseUrl}/repos/${owner}/${repoName}/pages`, {
@@ -4053,7 +4371,7 @@
             return await response.json();
         }
         
-        // v8.32.0: Check GitHub Pages health/DNS status
+        // v8.33.0: Check GitHub Pages health/DNS status
         async checkPagesHealth(repo) {
             const [owner, repoName] = repo.split('/');
             const response = await fetch(`${this.baseUrl}/repos/${owner}/${repoName}/pages/health`, {
@@ -24432,11 +24750,41 @@ The developer uses Claude for iterative development — each session should:
     // =========================================================================
     
     // =========================================================================
-    // DOMAIN REGISTRAR SETTINGS (v8.32.0)
+    // DOMAIN REGISTRAR SETTINGS (v8.33.0)
     // =========================================================================
     
     function DomainRegistrarSettings() {
-        const [config, setConfig] = React.useState(PorkbunService.getConfig());
+        const [activeProvider, setActiveProvider] = React.useState('porkbun');
+        const providers = DomainProviderRegistry.getAll();
+        
+        return (
+            <div className="space-y-4">
+                {/* Provider Tabs */}
+                <div className="flex gap-2 mb-4">
+                    {providers.map(p => (
+                        <button key={p.id} onClick={() => setActiveProvider(p.id)}
+                            className={`px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-all ${
+                                activeProvider === p.id 
+                                    ? 'bg-indigo-600 text-white ring-1 ring-indigo-400' 
+                                    : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                            }`}>
+                            <span>{p.icon}</span>
+                            <span>{p.name}</span>
+                            {p.service.isConfigured() && <span className="text-green-400 text-xs">✓</span>}
+                        </button>
+                    ))}
+                </div>
+                
+                {/* Active Provider Settings */}
+                {providers.filter(p => p.id === activeProvider).map(provider => (
+                    <ProviderConfigPanel key={provider.id} provider={provider} />
+                ))}
+            </div>
+        );
+    }
+    
+    function ProviderConfigPanel({ provider }) {
+        const [config, setConfig] = React.useState(provider.service.getConfig());
         const [showKeys, setShowKeys] = React.useState(false);
         const [testing, setTesting] = React.useState(false);
         const [testResult, setTestResult] = React.useState(null);
@@ -24446,16 +24794,18 @@ The developer uses Claude for iterative development — each session should:
         const updateConfig = (field, value) => {
             const updated = { ...config, [field]: value };
             setConfig(updated);
-            PorkbunService.saveConfig(updated);
+            provider.service.saveConfig(updated);
         };
         
         const handleTest = async () => {
             setTesting(true);
             setTestResult(null);
             try {
-                const result = await PorkbunService.ping();
-                setTestResult({ ok: true, msg: `Connected! Your IP: ${result.yourIp}` });
-                // Also fetch domains on successful connection
+                const result = await provider.service.ping();
+                const msg = result.yourIp && result.yourIp !== 'N/A' 
+                    ? `Connected! Your IP: ${result.yourIp}`
+                    : `Connected! ${result.domainCount !== undefined ? `${result.domainCount}+ domains found` : 'API responding'}`;
+                setTestResult({ ok: true, msg });
                 await handleFetchDomains();
             } catch (e) {
                 setTestResult({ ok: false, msg: e.message });
@@ -24466,50 +24816,44 @@ The developer uses Claude for iterative development — each session should:
         const handleFetchDomains = async () => {
             setLoadingDomains(true);
             try {
-                const domainList = await PorkbunService.listDomains();
+                const domainList = await provider.service.listDomains();
                 setDomains(domainList);
             } catch (e) {
-                console.error('Failed to fetch domains:', e);
+                console.error(`Failed to fetch domains from ${provider.name}:`, e);
             }
             setLoadingDomains(false);
         };
         
-        // Load domains on mount if configured
         React.useEffect(() => {
-            if (PorkbunService.isConfigured() && !domains) {
+            if (provider.service.isConfigured() && !domains) {
                 handleFetchDomains();
             }
-        }, []);
+        }, [provider.id]);
+        
+        const allKeysPresent = provider.keyFields.every(f => config[f.key]);
         
         return (
             <div className="space-y-4">
-                {/* API Key Input */}
-                <div>
-                    <label className="text-xs text-slate-400 block mb-1.5">API Key</label>
-                    <div className="flex gap-2">
-                        <input 
-                            type={showKeys ? 'text' : 'password'}
-                            value={config.apiKey || ''}
-                            onChange={e => updateConfig('apiKey', e.target.value.trim())}
-                            placeholder="pk1_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                            className="flex-1 p-2 bg-slate-700 border border-slate-600 rounded text-sm font-mono"
-                        />
-                    </div>
-                </div>
+                <p className="text-sm text-slate-400">
+                    {provider.setupNote}{' '}
+                    <a href={provider.setupUrl} target="_blank" className="text-indigo-400 hover:underline">
+                        Get API keys →
+                    </a>
+                </p>
                 
-                {/* Secret API Key Input */}
-                <div>
-                    <label className="text-xs text-slate-400 block mb-1.5">Secret API Key</label>
-                    <div className="flex gap-2">
+                {/* Key Fields (dynamic per provider) */}
+                {provider.keyFields.map(field => (
+                    <div key={field.key}>
+                        <label className="text-xs text-slate-400 block mb-1.5">{field.label}</label>
                         <input 
                             type={showKeys ? 'text' : 'password'}
-                            value={config.secretApiKey || ''}
-                            onChange={e => updateConfig('secretApiKey', e.target.value.trim())}
-                            placeholder="sk1_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                            className="flex-1 p-2 bg-slate-700 border border-slate-600 rounded text-sm font-mono"
+                            value={config[field.key] || ''}
+                            onChange={e => updateConfig(field.key, e.target.value.trim())}
+                            placeholder={field.placeholder}
+                            className="w-full p-2 bg-slate-700 border border-slate-600 rounded text-sm font-mono"
                         />
                     </div>
-                </div>
+                ))}
                 
                 {/* Action Buttons */}
                 <div className="flex items-center gap-3 flex-wrap">
@@ -24517,11 +24861,11 @@ The developer uses Claude for iterative development — each session should:
                         className="text-xs px-3 py-1.5 bg-slate-700 rounded hover:bg-slate-600">
                         {showKeys ? '🔒 Hide' : '👁️ Show'} Keys
                     </button>
-                    <button onClick={handleTest} disabled={testing || !config.apiKey || !config.secretApiKey}
+                    <button onClick={handleTest} disabled={testing || !allKeysPresent}
                         className="text-xs px-3 py-1.5 bg-indigo-600 rounded hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600">
                         {testing ? '⏳ Testing...' : '🔌 Test Connection'}
                     </button>
-                    {PorkbunService.isConfigured() && (
+                    {provider.service.isConfigured() && (
                         <button onClick={handleFetchDomains} disabled={loadingDomains}
                             className="text-xs px-3 py-1.5 bg-slate-700 rounded hover:bg-slate-600 disabled:opacity-40">
                             {loadingDomains ? '⏳ Loading...' : '🔄 Refresh Domains'}
@@ -24529,7 +24873,6 @@ The developer uses Claude for iterative development — each session should:
                     )}
                 </div>
                 
-                {/* Test Result */}
                 {testResult && (
                     <div className={`p-3 rounded-lg border text-sm ${testResult.ok ? 'bg-green-900/30 border-green-700 text-green-300' : 'bg-red-900/30 border-red-700 text-red-300'}`}>
                         {testResult.ok ? '✅' : '❌'} {testResult.msg}
@@ -24539,7 +24882,7 @@ The developer uses Claude for iterative development — each session should:
                 {/* Domain List */}
                 {domains && domains.length > 0 && (
                     <div className="mt-4">
-                        <div className="text-xs text-slate-400 mb-2">Domains on Account ({domains.length})</div>
+                        <div className="text-xs text-slate-400 mb-2">{provider.icon} {provider.name} Domains ({domains.length})</div>
                         <div className="space-y-1.5">
                             {domains.map(d => {
                                 const isExpiringSoon = d.expireDate && new Date(d.expireDate) - Date.now() < 60 * 24 * 60 * 60 * 1000;
@@ -24569,7 +24912,7 @@ The developer uses Claude for iterative development — each session should:
                 
                 {domains && domains.length === 0 && (
                     <div className="text-sm text-slate-500 p-4 text-center bg-slate-900/50 rounded-lg">
-                        No domains found on this account. Purchase a domain at <a href="https://porkbun.com" target="_blank" className="text-indigo-400 hover:underline">porkbun.com</a>.
+                        No domains found on this {provider.name} account.
                     </div>
                 )}
             </div>
@@ -24577,7 +24920,7 @@ The developer uses Claude for iterative development — each session should:
     }
 
     // =========================================================================
-    // DOMAINS VIEW — DNS management and domain health (v8.32.0)
+    // DOMAINS VIEW — DNS management and domain health (v8.33.0)
     // =========================================================================
     
     function DomainsView({ apps, config, showAlert, showConfirm }) {
@@ -24593,15 +24936,20 @@ The developer uses Claude for iterative development — each session should:
         const [wireLog, setWireLog] = React.useState([]);
         const [wireProgress, setWireProgress] = React.useState(false);
         
-        // Load domains
+        // Get the service for the currently selected domain
+        const getServiceForDomain = (domain) => {
+            return DomainProviderRegistry.getServiceForDomain(domain, domains || []);
+        };
+        
+        // Load domains from all configured providers
         const fetchDomains = async () => {
             setLoading(true);
             setError(null);
             try {
-                const domainList = await PorkbunService.listDomains();
-                setDomains(domainList);
-                if (domainList.length > 0 && !selectedDomain) {
-                    setSelectedDomain(domainList[0].domain);
+                const allDomains = await DomainProviderRegistry.getAllDomains();
+                setDomains(allDomains);
+                if (allDomains.length > 0 && !selectedDomain) {
+                    setSelectedDomain(allDomains[0].domain);
                 }
             } catch (e) {
                 setError(e.message);
@@ -24613,7 +24961,9 @@ The developer uses Claude for iterative development — each session should:
         const fetchDNS = async (domain) => {
             setLoadingDNS(true);
             try {
-                const records = await PorkbunService.listDNSRecords(domain);
+                const service = getServiceForDomain(domain);
+                if (!service) throw new Error('No provider found for this domain');
+                const records = await service.listDNSRecords(domain);
                 setDnsRecords(records);
             } catch (e) {
                 showAlert(`Failed to load DNS: ${e.message}`, 'error');
@@ -24623,7 +24973,7 @@ The developer uses Claude for iterative development — each session should:
         
         // Fetch on mount
         React.useEffect(() => {
-            if (PorkbunService.isConfigured()) fetchDomains();
+            if (DomainProviderRegistry.getConfigured().length > 0) fetchDomains();
         }, []);
         
         // Fetch DNS when domain changes
@@ -24636,7 +24986,9 @@ The developer uses Claude for iterative development — each session should:
             if (!newRecord.type || !newRecord.content) return;
             setAddingRecord(true);
             try {
-                await PorkbunService.createDNSRecord(
+                const service = getServiceForDomain(selectedDomain);
+                if (!service) throw new Error('No provider found for this domain');
+                await service.createDNSRecord(
                     selectedDomain, newRecord.type, newRecord.name, 
                     newRecord.content, parseInt(newRecord.ttl) || 600,
                     newRecord.type === 'MX' ? parseInt(newRecord.prio) || 10 : null
@@ -24655,7 +25007,10 @@ The developer uses Claude for iterative development — each session should:
             const confirmed = await showConfirm(`Delete ${recordDesc}?`, 'Delete DNS Record');
             if (!confirmed) return;
             try {
-                await PorkbunService.deleteDNSRecord(selectedDomain, recordId);
+                const service = getServiceForDomain(selectedDomain);
+                if (!service) throw new Error('No provider found for this domain');
+                // GoDaddy needs all records to do a replace-minus-one
+                await service.deleteDNSRecord(selectedDomain, recordId, dnsRecords);
                 showAlert('Record deleted', 'success');
                 await fetchDNS(selectedDomain);
             } catch (e) {
@@ -24669,10 +25024,15 @@ The developer uses Claude for iterative development — each session should:
             setWireLog(['🚀 Starting GitHub Pages configuration...']);
             
             try {
-                // Step 1: Configure DNS at Porkbun
-                setWireLog(prev => [...prev, '📡 Configuring DNS records at Porkbun...']);
+                const service = getServiceForDomain(domain);
+                if (!service) throw new Error('No provider found for this domain');
+                const domainEntry = (domains || []).find(d => d.domain === domain);
+                const providerName = domainEntry?.providerName || 'registrar';
+                
+                // Step 1: Configure DNS at registrar
+                setWireLog(prev => [...prev, `📡 Configuring DNS records at ${providerName}...`]);
                 const githubUsername = repo.split('/')[0];
-                const dnsResult = await PorkbunService.configureForGitHubPages(domain, githubUsername);
+                const dnsResult = await service.configureForGitHubPages(domain, githubUsername);
                 dnsResult.log.forEach(l => setWireLog(prev => [...prev, `  ${l}`]));
                 setWireLog(prev => [...prev, `✅ ${dnsResult.recordsCreated} DNS records created`]);
                 
@@ -24701,7 +25061,7 @@ The developer uses Claude for iterative development — each session should:
         };
         
         // Not configured
-        if (!PorkbunService.isConfigured()) {
+        if (DomainProviderRegistry.getConfigured().length === 0) {
             return (
                 <div className="max-w-4xl mx-auto">
                     <div className="flex items-center gap-3 mb-6">
@@ -24710,8 +25070,8 @@ The developer uses Claude for iterative development — each session should:
                     </div>
                     <div className="bg-slate-800 rounded-xl border border-slate-700 p-8 text-center">
                         <span className="text-4xl block mb-4">🔑</span>
-                        <h3 className="text-lg font-semibold mb-2">Domain Registrar Not Configured</h3>
-                        <p className="text-slate-400 text-sm mb-4">Add your Porkbun API keys in Settings to manage domains from Command Center.</p>
+                        <h3 className="text-lg font-semibold mb-2">No Domain Registrars Configured</h3>
+                        <p className="text-slate-400 text-sm mb-4">Add API keys for Porkbun, GoDaddy, or both in Settings to manage domains from Command Center.</p>
                         <p className="text-slate-500 text-xs">Configure → Settings → 🌐 Domain Registrar</p>
                     </div>
                 </div>
@@ -24734,8 +25094,9 @@ The developer uses Claude for iterative development — each session should:
         // Check if domain is already wired for GitHub Pages
         const isGitHubPagesWired = (records) => {
             if (!records) return false;
+            const ghIPs = PorkbunService.GITHUB_PAGES_IPS; // Same IPs regardless of provider
             const aRecords = records.filter(r => r.type === 'A').map(r => r.content);
-            const hasGHIPs = PorkbunService.GITHUB_PAGES_IPS.every(ip => aRecords.includes(ip));
+            const hasGHIPs = ghIPs.every(ip => aRecords.includes(ip));
             const hasCNAME = records.some(r => r.type === 'CNAME' && r.content.includes('.github.io'));
             return hasGHIPs && hasCNAME;
         };
@@ -24775,12 +25136,13 @@ The developer uses Claude for iterative development — each session should:
                         {domains.map(d => (
                             <button key={d.domain}
                                 onClick={() => setSelectedDomain(d.domain)}
-                                className={`px-4 py-2 rounded-lg text-sm font-mono transition-all ${
+                                className={`px-4 py-2 rounded-lg text-sm font-mono transition-all flex items-center gap-2 ${
                                     selectedDomain === d.domain 
                                         ? 'bg-indigo-600 text-white ring-1 ring-indigo-400' 
                                         : 'bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700'
                                 }`}>
-                                🌐 {d.domain}
+                                <span>{d.providerIcon || '🌐'}</span>
+                                <span>{d.domain}</span>
                             </button>
                         ))}
                     </div>
@@ -24960,7 +25322,7 @@ The developer uses Claude for iterative development — each session should:
                     <div className="bg-slate-800 rounded-xl border border-slate-700 p-8 text-center">
                         <span className="text-4xl block mb-4">🌐</span>
                         <h3 className="text-lg font-semibold mb-2">No Domains Found</h3>
-                        <p className="text-slate-400 text-sm">Purchase a domain at <a href="https://porkbun.com" target="_blank" className="text-indigo-400 hover:underline">porkbun.com</a>, then manage it here.</p>
+                        <p className="text-slate-400 text-sm">No domains found across your configured registrars. Purchase a domain at your registrar, then manage it here.</p>
                     </div>
                 )}
             </div>
@@ -25390,15 +25752,14 @@ The developer uses Claude for iterative development — each session should:
                     <FirebaseAdminSettings />
                 </div>
                 
-                {/* Domain Registrar (v8.32.0) */}
+                {/* Domain Registrar (v8.33.0) */}
                 <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
                     <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
                         🌐 Domain Registrar
                     </h2>
                     <p className="text-sm text-slate-400 mb-4">
-                        Porkbun API credentials enable domain management, DNS configuration, and automated GitHub Pages domain wiring from Command Center. 
-                        Generate API keys at <a href="https://porkbun.com/account/api" target="_blank" className="text-indigo-400 hover:underline">porkbun.com/account/api</a>. 
-                        Don't forget to <strong className="text-slate-300">enable API access</strong> for each domain in Domain Management → Details.
+                        Connect one or more domain registrars to manage DNS, wire custom domains to GitHub Pages, and monitor domain health from Command Center.
+                        You can configure multiple providers — domains from all connected registrars appear together in Monitor → Domains.
                     </p>
                     
                     <DomainRegistrarSettings />
