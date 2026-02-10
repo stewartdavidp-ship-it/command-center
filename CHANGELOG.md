@@ -6,6 +6,24 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [8.23.0] — 2026-02-09
+
+### Added
+- **ProjectScopeModal** — 4-step scoping wizard (Describe → Clarify → Features → Standards) that captures project intent through category-driven questions and produces structured scope data, auto-generated work items, and assembled starting standards
+- **Category-driven question sets** — Static question definitions for 5 categories (Game, Tool, Dashboard, Content, Admin) with toggles, selects, multi-selects, and text inputs. Each question includes default values and "drives" descriptions
+- **Feature pre-population** — `generateFeaturesFromScope()` auto-generates V1 feature list from category + question answers (different generators per category)
+- **Starting standards assembly** — `assembleStartingStandards()` combines 12 universal standards with 24 conditional category-driven standards based on scoping answers
+- **Scope → Work Items** — On scope save, auto-generates work items from V1 features (status: ready), future features (status: idea), and key decisions (type: research) via `WorkItemService.createBatch()`
+- **Firebase scope storage** — Scope data stored at `command-center/{uid}/appScopes/{appId}` path
+- **BacklogView "Scope Work" button** — Dropdown in header with per-app scope initiation
+- **SetupNewAppView Step 2 (Scope)** — New scoping step inserted between Define and Check Repos in setup wizard (now 5 steps total), with "quick setup" option to skip scoping
+- **Orchestrator Phase 1.2** — Project Scoping Flow
+
+### Changed
+- **SetupNewAppView** — Expanded from 4-step to 5-step wizard: Define → Scope → Check Repos → Create & Configure → Claude Prompt
+
+---
+
 ## [8.22.0] — 2026-02-09
 
 ### Added
