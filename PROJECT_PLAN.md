@@ -60,6 +60,15 @@ Single-file web application for managing deployment, monitoring, and configurati
 - [x] Dynamic app detection — configurable patterns from app config scored by specificity
 - [x] `window.__CC_APPS` exposure for detection function access
 
+### Unified Package Validation (v8.36.0)
+- [x] `getValidationIntent()` — intent detection from selected files (quick-deploy, targeted-update, deploy-package, full-package, docs-only)
+- [x] `validatePackage()` — single unified validator replacing 4 separate mechanisms
+- [x] Inline validation panel — three-tier severity (grey/amber/red) in deploy controls
+- [x] Version bump in CC — code-only deploys get patch bump button + custom version input
+- [x] `generateClaudeFixPrompt()` — contextual Claude fix prompt for full packages
+- [x] Deploy button state machine — disabled on errors, amber on warnings, override checkbox for force deploy
+- [x] Removed: `validateDocPackage()`, extraction-time showAlerts, deploy-time confirms, VersionWarningModal trigger, per-file doc indicators
+
 ### App Configuration Improvements (v8.13.0.4–0.8)
 - [x] Sub Path field in AppEditModal for subdirectory apps
 - [x] Repository Assignment dropdowns — select from real GitHub repos
