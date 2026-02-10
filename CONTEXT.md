@@ -4,7 +4,7 @@
 
 ## Current Version
 
-**v8.23.0** — Released 2026-02-09
+**v8.26.0** — Released 2026-02-09
 
 ## What Command Center Is
 
@@ -161,7 +161,9 @@ Configure
 | `DashboardView` | Main deploy dashboard with project-grouped apps |
 | `SmartDeployView` | Batch deploy from gs-active archives |
 | `ProjectsTab` | Project & app management |
-| `ClaudePrepModal` | Fetch source+docs from repo, generate session brief, build zip for Claude sessions (NEW v8.13.0) |
+| `ClaudePrepModal` | 4-step Claude Session Wizard: Work Items → Session Type → Context Budget → Generate+Download. Session-type-aware file filtering, work item auto-transition, session record creation (Phase 2.2, v8.26.0) |
+| `SESSION_TYPES` | 8 session type definitions with role frames, scope rules, delivery requirements, context strategies (NEW v8.25.0) |
+| `SessionBriefGenerator` | Session-type-aware brief generation with work item context, maturity constraints (NEW v8.25.0) |
 | `WorkItemService` | Backlog work item CRUD via Firebase, status transitions, batch create, milestone filtering (NEW v8.20.0, enhanced v8.22.0) |
 | `BacklogView` | Work item list with grouping, filtering, search, sort, bulk actions, status transitions, scope work button (NEW v8.22.0, enhanced v8.23.0) |
 | `WorkItemEditModal` | Create/edit work items — all fields including acceptance criteria, tags, context (NEW v8.22.0) |
@@ -182,6 +184,29 @@ Configure
 | `ConfigManager` | Config load/save/migrate with backward compatibility |
 
 ## Recent Changes (This Session)
+
+### v8.26.0 — Claude Session Wizard (Phase 2.2)
+- **4-step wizard flow** — ClaudePrepModal rewritten from single-phase configure-and-build into guided wizard: Step 1 (Work Items) → Step 2 (Session Type) → Step 3 (Context Budget Preview) → Step 4 (Generate+Download)
+- **Visual step indicator** — Clickable progress bar with green checkmarks for completed steps
+- **Context budget preview (Step 3)** — Pre-build preview showing which files will be included/preferred/skipped based on session type context strategy and engine context window
+- **Work item auto-transition** — On package generation, selected work items with status "ready" automatically transition to "in-progress" via WorkItemService
+- **Session record creation** — On package generation, creates session record via SessionService with app ID, session type, work item IDs, engine, token count, file list
+- **Session-type-aware file filtering** — During build, respects contextStrategy: skips docs in `skipWhenTight`, omits source files when `includeSource: false`, logs all filtering decisions
+- **Quick skip** — "Skip wizard — Quick package" button on Step 1 preserves fast path for quick builds
+- **firebaseUid prop threading** — App → ProjectsTab → ClaudePrepModal for Firebase write operations
+
+### v8.25.0 — Session Types + Enhanced Brief Generator (Phase 2.1)
+- **SESSION_TYPES** — 8 session type definitions (Build, Design, Fix, Test, Research, Review, Polish, Document) each with: description, suggested engine, role frame, scope rules, delivery requirements, context strategy (which files to include/skip), work item focus, auto-suggest mapping
+- **SessionBriefGenerator** — New module replacing `generateSessionBrief()`. Produces session-type-aware briefs with role frame, scope rules, delivery requirements, target work item details (criteria, files, dependencies), other open items summary, maturity context. Old function is now a thin wrapper for backward compatibility.
+- **ClaudePrepModal enhanced** — New configure phase before building: session type grid selector (8 types), work item targeting (checkbox list of open items for app), context strategy preview (always/prefer/skip file lists), auto-suggest session type from first selected work item. "Skip — Quick package" option preserved for fast use.
+- **Settings enhanced** — Session type → engine recommendation grid now uses SESSION_TYPES with icons and descriptions
+- **Props threading** — `globalWorkItems` now passed through App → ProjectsTab → ClaudePrepModal
+
+### v8.24.0 — CLAUDE_INSTRUCTIONS.md + Backlog Polish (Phase 1.3)
+- **generateClaudeInstructions()** — Produces CLAUDE_INSTRUCTIONS.md from scope data with sections: Project Identity, V1 Scope, Starting Standards (grouped), Key Decisions, Architecture Constraints, CC Integration, Session Protocol
+- **STANDARD_DESCRIPTIONS** — Map of 38 standard IDs to full requirement-statement descriptions
+- **CLAUDE_INSTRUCTIONS.md in Claude Prep** — Generated from Firebase scope data when not in repo (Step 3.25)
+- **Issue → Work Item promotion** — Promote button in IssuesView creates work items from issues
 
 ### v8.23.0 — Project Scoping Flow (Phase 1.2)
 - **ProjectScopeModal** — 4-step scoping wizard (Describe → Clarify → Features → Standards) captures project intent through category-driven questions
