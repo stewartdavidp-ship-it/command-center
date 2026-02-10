@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Command Center</title>
-    <meta name="version" content="8.36.0">
+    <meta name="version" content="8.36.1">
     <meta name="gs-app-id" content="command-center">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -8195,6 +8195,31 @@
             });
         };
         
+        // v8.36.1: Intelligent deploy target selection
+        // Two-repo apps → TEST (safe default), prod-only → PROD, test-only → TEST
+        const getSmartTarget = (appId) => {
+            const app = apps[appId];
+            if (!app) return 'test';
+            const hasTest = !!(app.testRepo || app.repos?.test || (app.repoPatterns?.test?.length > 0));
+            const hasProd = !!(app.prodRepo || app.repos?.prod || (app.repoPatterns?.prod?.length > 0));
+            if (hasTest && hasProd) return 'test';   // Two-repo: safe default to TEST
+            if (hasProd && !hasTest) return 'prod';   // Prod-only: must be PROD
+            if (hasTest && !hasProd) return 'test';   // Test-only: must be TEST
+            return 'test'; // Fallback
+        };
+        
+        // Get available environments for an app (for dropdown filtering)
+        const getAvailableTargets = (appId) => {
+            const app = apps[appId];
+            if (!app) return ['test', 'prod'];
+            const hasTest = !!(app.testRepo || app.repos?.test || (app.repoPatterns?.test?.length > 0));
+            const hasProd = !!(app.prodRepo || app.repos?.prod || (app.repoPatterns?.prod?.length > 0));
+            const targets = [];
+            if (hasTest) targets.push('test');
+            if (hasProd) targets.push('prod');
+            return targets.length > 0 ? targets : ['test', 'prod']; // Fallback to both
+        };
+        
         // Compatibility: get first deployment for legacy code
         const activeDeployment = activeDeployments?.[0] || null;
         
@@ -8249,15 +8274,10 @@
             if (filesWithDetection.length > 0) {
                 const detected = filesWithDetection[filesWithDetection.length - 1].suggestedApp;
                 if (detected && apps[detected]) {
-                    // Determine default environment:
-                    // - Firebase Functions: always prod
-                    // - Apps with no test repo patterns: prod (e.g., Beta Hub)
-                    // - Otherwise: test (safer default)
-                    const appRepoPatterns = apps[detected]?.repoPatterns?.test || [];
-                    const hasTestPatterns = appRepoPatterns.length > 0;
-                    const targetEnv = (detected === 'firebase-functions' || !hasTestPatterns) ? 'prod' : 'test';
+                    // v8.36.1: Intelligently select target based on app's repo configuration
+                    const targetEnv = getSmartTarget(detected);
                     setDeployTarget(prev => ({ ...prev, appId: detected, target: targetEnv }));
-                    console.log('🎯 Auto-selected app:', detected, 'target:', targetEnv, hasTestPatterns ? '(has test)' : '(prod only)');
+                    console.log(`🎯 Auto-selected app: ${detected}, target: ${targetEnv} (smart default)`);
                     
                     // If app has no repo assigned, try to auto-assign from available repos
                     const app = apps[detected];
@@ -8644,12 +8664,8 @@
                                     <div className="grid grid-cols-2 gap-3 mb-3">
                                         <select value={deployTarget.appId} onChange={e => {
                                             const newAppId = e.target.value;
-                                            const selectedApp = apps[newAppId];
-                                            // Auto-switch to prod for apps that only have prod repo
-                                            const defaultTarget = (newAppId === 'firebase-functions' || (selectedApp?.prodRepo && !selectedApp?.testRepo)) 
-                                                ? 'prod' 
-                                                : deployTarget.target;
-                                            setDeployTarget({ appId: newAppId, target: defaultTarget });
+                                            // v8.36.1: Smart default based on app's repo configuration
+                                            setDeployTarget({ appId: newAppId, target: getSmartTarget(newAppId) });
                                         }}
                                             className={`p-2 border rounded text-sm ${
                                                 hasMismatch 
@@ -8660,8 +8676,9 @@
                                         </select>
                                         <select value={deployTarget.target} onChange={e => setDeployTarget(p => ({ ...p, target: e.target.value }))}
                                             className="p-2 bg-slate-700 border border-slate-600 rounded text-sm">
-                                            <option value="test">🧪 TEST</option>
-                                            <option value="prod">🚀 PROD</option>
+                                            {getAvailableTargets(deployTarget.appId).map(t => (
+                                                <option key={t} value={t}>{t === 'test' ? '🧪 TEST' : '🚀 PROD'}</option>
+                                            ))}
                                         </select>
                                     </div>
                                     
@@ -8914,10 +8931,8 @@
                                                     }
                                                 }
                                                 
-                                                const currentApp = apps[deployTarget.appId];
-                                                if (currentApp?.testRepo) {
-                                                    setDeployTarget(prev => ({ ...prev, target: 'test' }));
-                                                }
+                                                // v8.36.1: Smart reset — use app's intelligent default, not always TEST
+                                                setDeployTarget(prev => ({ ...prev, target: getSmartTarget(prev.appId) }));
                                             };
                                             
                                             if (hasMismatch) {
@@ -15578,14 +15593,16 @@
         const [archiveName, setArchiveName] = React.useState(null);
         const fileInputRef = React.useRef(null);
         
-        // Get safe default target for an app based on type
-        // Public apps → TEST (safe), Internal apps → PROD (only option)
+        // v8.36.1: Smart default target based on repo configuration
+        // Two-repo apps → TEST (safe), prod-only → PROD, test-only → TEST
         const getDefaultTarget = (appId) => {
             const appConfig = apps[appId];
             if (!appConfig) return 'test';
-            // Internal apps only have prod
-            if (appConfig.appType === 'internal') return 'prod';
-            // Public apps default to test for safety
+            const hasTest = !!(appConfig.testRepo || appConfig.repos?.test || (appConfig.repoPatterns?.test?.length > 0));
+            const hasProd = !!(appConfig.prodRepo || appConfig.repos?.prod || (appConfig.repoPatterns?.prod?.length > 0));
+            if (hasTest && hasProd) return 'test';   // Two-repo: safe default
+            if (hasProd && !hasTest) return 'prod';   // Prod-only
+            if (hasTest && !hasProd) return 'test';   // Test-only
             return 'test';
         };
         
