@@ -1,40 +1,70 @@
 Command Center — Release Notes
 ================================
 
-v8.32.0 — Domain Manager Session 1: Porkbun Integration + DNS Management
+v8.33.0 — Multi-Provider Domains + Firebase CORS Proxy
 -------------------------------------------------
-New domain management capabilities powered by Porkbun API:
+Multi-registrar support and CORS fix for domain management:
 
-Service Layer:
-- PorkbunService with full API wrapper: ping, domain listing, DNS CRUD, availability
-  check, domain registration, TLD pricing (cached 24hr), GitHub Pages auto-config
-- Rate limit handling (10.5s between availability checks, 1.1s between DNS ops)
-- Credential storage in localStorage (same pattern as GitHub PAT / Firebase SA)
+Multi-Provider Architecture:
+- GoDaddyService: REST API wrapper with sso-key auth, record delete via
+  replace-all-minus-one (GoDaddy has no individual record delete)
+- DomainProviderRegistry: aggregates domains from all configured registrars,
+  routes DNS operations to correct service per domain
+- Extensible: new providers = service module + registry entry
+
+Settings UI:
+- Provider tabs (🐷 Porkbun / 🟢 GoDaddy) with dynamic key fields
+- ProviderConfigPanel: reusable component adapts to any provider
+- Connection test, domain list, expiry/auto-renew per provider
+
+DomainsView Updates:
+- Domain pills show provider icons
+- DNS operations route to correct provider automatically
+- GitHub Pages wiring works with any provider
+
+Firebase CORS Proxy:
+- domainProxy Cloud Function added to functions/index.js (v2.5.0)
+- PorkbunService and GoDaddyService route through proxy
+- Stateless — API keys sent per-request, not stored in function
+- Whitelisted to porkbun.com and godaddy.com only
+- Fixes: "Preflight response is not successful. Status code: 400"
+
+Deploy: Push index.js to gameshelf-functions repo first, then deploy CC.
+
+---
+
+v8.32.0 — Domain Manager Session 1: Multi-Provider DNS Management
+-------------------------------------------------
+New domain management with multi-registrar support:
+
+Provider Architecture:
+- DomainProviderRegistry: abstraction layer that aggregates domains from 
+  all configured registrars (Porkbun + GoDaddy) into a unified interface
+- Each provider implements: ping, listDomains, listDNSRecords, 
+  createDNSRecord, deleteDNSRecord, configureForGitHubPages
+- Provider-aware: DNS operations route to the correct API per domain
+- Extensible: new providers just need a service module + registry entry
+
+Service Modules:
+- PorkbunService: POST-based JSON API, individual record delete by ID
+- GoDaddyService: REST API with sso-key auth header, record delete via 
+  replace-all-minus-one (GoDaddy has no individual record delete)
 
 DNS Management (Monitor → Domains):
-- Domain selector for all domains on Porkbun account
-- DNS records table with colored type badges (A, AAAA, CNAME, MX, TXT, etc.)
-- Add records with type/name/content/TTL inputs
-- Delete records with confirmation dialog
-- Auto-detects if domain is already wired for GitHub Pages (green badge)
+- Multi-provider domain selector with provider icons (🐷/🟢)
+- DNS records table with colored type badges (A, CNAME, MX, TXT, etc.)
+- Add/delete records — routed to correct provider automatically
+- GitHub Pages detection badge per domain
 
-One-Click GitHub Pages Wiring:
-- "Wire for GitHub Pages" button on any unwired domain
-- 3-step orchestrated flow with progress log:
-  1. DNS: deletes conflicting records, creates 4 A records + 1 CNAME at Porkbun
-  2. Git: commits CNAME file to selected repo
-  3. GitHub: updates Pages config with custom domain
-- Select which app/repo to wire from list of configured apps
+One-Click GitHub Pages Wiring (works with ANY provider):
+- 3-step: DNS config → CNAME commit → GitHub Pages API update
+- Provider-aware logging in progress panel
 
 Settings (Configure → Settings → Domain Registrar):
-- Porkbun API key + secret key inputs with show/hide toggle
-- Connection test (ping endpoint)
-- Domain list showing status, expiry dates, auto-renew status
-- Link to Porkbun API key generation page
-
-GitHub API additions:
-- updatePagesConfig() — set custom domain + HTTPS enforcement
-- checkPagesHealth() — verify DNS propagation and cert status
+- Provider tabs: switch between Porkbun and GoDaddy
+- Dynamic key fields per provider (Porkbun: apiKey+secretApiKey, GoDaddy: apiKey+apiSecret)
+- Connection test, domain list, expiry dates, auto-renew status
+- Provider-specific setup notes (e.g., GoDaddy 10+ domain requirement)
 
 v8.31.0 — Environment Optimization Guide (Phase 4.2) — ORCHESTRATOR COMPLETE
 -------------------------------------------------
