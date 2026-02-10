@@ -4,7 +4,7 @@
 
 ## Current Version
 
-**v8.34.0** — Released 2026-02-10
+**v8.36.0** — Released 2026-02-10
 
 ## What Command Center Is
 
@@ -34,7 +34,7 @@ Command Center is an internal tool for managing the Game Shelf ecosystem of web 
 
 ### Meta Tags (Required)
 ```html
-<meta name="version" content="8.34.0">
+<meta name="version" content="8.36.0">
 <meta name="gs-app-id" content="management">
 ```
 
@@ -336,11 +336,27 @@ Configure
 - **Doc files inherit primaryApp** — post-extraction step assigns the detected app (from index.html) to all doc files in the same zip, so doc files correctly associate with the right app.
 - **Batch action refactored** — single `executeBatchAction()` handles both deploy-to-Pages and push-docs-to-repo in one button click, with proper logging.
 
-### v8.14.1 — Doc Package Validation
-- **`validateDocPackage()`** — analyzes staged files for doc completeness and version alignment. Checks: (1) missing required docs (CONTEXT.md, PROJECT_PLAN.md, CHANGELOG.md, RELEASE_NOTES.txt), (2) version header in CONTEXT.md matches deploy version, (3) latest CHANGELOG.md entry matches, (4) latest RELEASE_NOTES.txt entry matches.
-- **Validation banner** — amber "⚠️ Doc Package Issues" banner appears above staged files when issues detected. Shows missing docs and version mismatches. Expandable "Show Claude fix prompt" section with pre-written prompt.
-- **Copy Fix Prompt button** — copies a ready-to-paste prompt for Claude describing exactly what needs fixing, including specific version numbers and file names.
-- **Per-file indicators** — each doc file card shows green "✓ Version aligned with vX.X.X" or amber "⚠️ detail" inline below the target path.
+### v8.36.0 — Unified Package Validation Engine
+- **Selection-driven validation** — `validatePackage()` replaces 4 separate validation mechanisms (post-extraction alerts, doc validation banner, deploy-time confirms, version warning modal). Validation runs on selected files via intent detection.
+- **Intent detection** — `getValidationIntent()` classifies uploads as `quick-deploy`, `targeted-update`, `deploy-package`, `full-package`, or `docs-only` based on selected file composition. Only checks relevant to the intent are run.
+- **Inline validation panel** — replaces all modals/alerts. Three visual tiers: grey (info, collapsed), amber (warning, expanded), red (error, expanded). Panel sits in deploy controls between app selector and deploy button.
+- **Version bump in CC** — code-only deploys (no docs) get a bump button directly in the panel. Updates all version strings in index.html and sw.js CACHE_VERSION in one click. Custom version input also available.
+- **Claude prompt for full packages** — when docs are included, version bumps and doc updates are sent back to Claude via copyable prompt. No in-CC bump offered (Claude handles everything together).
+- **Deploy button state machine** — button styling driven by validation severity: normal (clean/info), amber (warnings), disabled+greyed (errors). Error override via checkbox re-enables as red "Force Deploy".
+- **`generateClaudeFixPrompt()`** — builds contextual fix prompt with grouped sections (version issues, PWA completeness, missing docs, doc version alignment).
+
+#### Removed
+- `validateDocPackage()` and its `useMemo` / amber banner UI
+- Post-extraction `showAlert()` calls for version mismatch and PWA incompleteness
+- Deploy-time `showConfirm()` dialogs for version issues and same-version deploys
+- `VersionWarningModal` trigger (component retained but dead code)
+- Per-file doc version alignment indicators (green/amber on file cards)
+
+### v8.14.1 — Doc Package Validation (replaced by v8.36.0)
+- ~~`validateDocPackage()`~~ — replaced by unified `validatePackage()` with intent-based validation.
+- ~~Validation banner~~ — replaced by inline panel in deploy controls.
+- ~~Copy Fix Prompt button~~ — preserved in new unified panel.
+- ~~Per-file indicators~~ — removed (redundant with unified panel).
 
 ### v8.14.0 — Unified Deploy + Push Docs
 - **File action classification** — files dropped on the deploy dashboard are auto-classified: `.html/.js/.json/.css` → deploy to GitHub Pages; `.md/.txt` → push to source repo. Classification uses `classifyFileAction()` which checks against `CLAUDE_PREP_DOCS` list and file extensions.
