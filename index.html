@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Command Center</title>
-    <meta name="version" content="8.23.0">
+    <meta name="version" content="8.26.0">
     <meta name="gs-app-id" content="command-center">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -1729,6 +1729,410 @@
                 totalCost: Math.round((inputCost + outputCost) * 100) / 100,
                 engine: engine.name
             };
+        }
+    };
+    
+    // =========================================================================
+    // SESSION TYPES + SESSION BRIEF GENERATOR (v8.25.0 — Phase 2.1)
+    // =========================================================================
+    
+    const SESSION_TYPES = {
+        build: {
+            id: 'build',
+            label: 'Build',
+            icon: '🔨',
+            description: 'Implement new features or significant functionality',
+            suggestedEngine: 'claude-sonnet-4.5',
+            roleFrame: 'You are building new functionality for this app. Focus on clean implementation that follows established patterns. Deliver working, tested code.',
+            scopeRules: [
+                'Implement the specified feature(s) completely',
+                'Follow existing code patterns and conventions',
+                'Include error handling and edge cases',
+                'Update version number (minor bump for new features)'
+            ],
+            deliveryRequirements: [
+                'Working implementation of specified features',
+                'Updated version number in all locations',
+                'RELEASE_NOTES.txt entry describing what was built',
+                'Deploy package (if PWA: include sw.js, manifest, icons)'
+            ],
+            contextStrategy: {
+                alwaysInclude: ['CONTEXT.md', 'CLAUDE_INSTRUCTIONS.md', 'CLAUDE-PREP-STANDARD.md'],
+                preferInclude: ['PROJECT_PLAN.md', 'ARCHITECTURE.md'],
+                skipWhenTight: ['CHANGELOG.md', 'RELEASE_NOTES.txt'],
+                includeSource: true
+            },
+            workItemFocus: 'Targets work items with status "ready" or "in-progress". Prefer items matching: feature, enhancement.',
+            autoSuggestFrom: ['feature', 'enhancement', 'chore']
+        },
+        design: {
+            id: 'design',
+            label: 'Design',
+            icon: '🎨',
+            description: 'Plan architecture, design UI/UX, or create technical specifications',
+            suggestedEngine: 'claude-opus-4.5',
+            roleFrame: 'You are designing a feature or system for this app. Focus on clear specifications, architecture decisions, and tradeoff analysis. Do NOT implement — design only.',
+            scopeRules: [
+                'Produce design documents, not code',
+                'Consider multiple approaches and recommend one',
+                'Document tradeoffs and constraints',
+                'Define clear acceptance criteria for implementation'
+            ],
+            deliveryRequirements: [
+                'Design document or specification',
+                'Architecture diagrams (described in text/markdown)',
+                'List of work items for implementation',
+                'Key decisions with rationale'
+            ],
+            contextStrategy: {
+                alwaysInclude: ['CONTEXT.md', 'ARCHITECTURE.md', 'PROJECT_PLAN.md'],
+                preferInclude: ['CLAUDE_INSTRUCTIONS.md'],
+                skipWhenTight: ['CHANGELOG.md', 'RELEASE_NOTES.txt', 'CLAUDE-PREP-STANDARD.md'],
+                includeSource: true
+            },
+            workItemFocus: 'Targets research items or complex features that need design before implementation.',
+            autoSuggestFrom: ['research']
+        },
+        fix: {
+            id: 'fix',
+            label: 'Fix',
+            icon: '🔧',
+            description: 'Fix bugs, resolve issues, or correct broken behavior',
+            suggestedEngine: 'claude-sonnet-4.5',
+            roleFrame: 'You are fixing a specific bug or issue. Focus ONLY on the reported problem. Do NOT refactor unrelated code, do NOT add features, do NOT reorganize unless directly required by the fix.',
+            scopeRules: [
+                'Fix ONLY the reported issue — nothing else',
+                'Do not refactor unrelated code',
+                'Do not add features or enhancements',
+                'Minimize changes to reduce regression risk',
+                'Verify the fix addresses the root cause, not just symptoms'
+            ],
+            deliveryRequirements: [
+                'Targeted fix with minimal code changes',
+                'Updated version number (patch bump)',
+                'RELEASE_NOTES.txt entry describing what was fixed',
+                'Deploy package'
+            ],
+            contextStrategy: {
+                alwaysInclude: ['CONTEXT.md', 'CLAUDE-PREP-STANDARD.md'],
+                preferInclude: ['CLAUDE_INSTRUCTIONS.md'],
+                skipWhenTight: ['CHANGELOG.md', 'RELEASE_NOTES.txt', 'PROJECT_PLAN.md', 'ARCHITECTURE.md'],
+                includeSource: true
+            },
+            workItemFocus: 'Targets bugfix items. Include issue details and reproduction steps.',
+            autoSuggestFrom: ['bugfix']
+        },
+        test: {
+            id: 'test',
+            label: 'Test',
+            icon: '🧪',
+            description: 'Write tests, create test plans, or validate functionality',
+            suggestedEngine: 'claude-sonnet-4.5',
+            roleFrame: 'You are creating tests or a test plan for this app. Focus on coverage of critical paths, edge cases, and regression prevention.',
+            scopeRules: [
+                'Focus on test coverage for specified areas',
+                'Include both happy path and edge cases',
+                'Document manual testing steps if automated testing is not possible',
+                'Prioritize tests for recently changed or bug-prone areas'
+            ],
+            deliveryRequirements: [
+                'Test cases or test plan document',
+                'Automated tests if test framework is available',
+                'Manual testing checklist for areas that cannot be automated',
+                'Coverage assessment'
+            ],
+            contextStrategy: {
+                alwaysInclude: ['CONTEXT.md', 'CLAUDE_INSTRUCTIONS.md'],
+                preferInclude: ['ARCHITECTURE.md', 'PROJECT_PLAN.md'],
+                skipWhenTight: ['CHANGELOG.md', 'RELEASE_NOTES.txt', 'CLAUDE-PREP-STANDARD.md'],
+                includeSource: true
+            },
+            workItemFocus: 'Targets areas needing test coverage. Can complement any work item type.',
+            autoSuggestFrom: []
+        },
+        research: {
+            id: 'research',
+            label: 'Research',
+            icon: '🔍',
+            description: 'Investigate options, evaluate approaches, or answer technical questions',
+            suggestedEngine: 'claude-haiku-4.5',
+            roleFrame: 'You are researching a specific question or evaluating options for this project. Focus on clear comparisons, concrete recommendations, and actionable findings.',
+            scopeRules: [
+                'Answer the specific research question(s)',
+                'Compare alternatives with pros/cons',
+                'Provide a concrete recommendation',
+                'Do NOT implement — research only'
+            ],
+            deliveryRequirements: [
+                'Research findings document',
+                'Comparison of alternatives (if applicable)',
+                'Concrete recommendation with rationale',
+                'Next steps or implementation plan'
+            ],
+            contextStrategy: {
+                alwaysInclude: ['CONTEXT.md'],
+                preferInclude: ['ARCHITECTURE.md', 'PROJECT_PLAN.md'],
+                skipWhenTight: ['CHANGELOG.md', 'RELEASE_NOTES.txt', 'CLAUDE-PREP-STANDARD.md', 'CLAUDE_INSTRUCTIONS.md'],
+                includeSource: false
+            },
+            workItemFocus: 'Targets research items and unresolved key decisions.',
+            autoSuggestFrom: []
+        },
+        review: {
+            id: 'review',
+            label: 'Review',
+            icon: '👁️',
+            description: 'Code review, architecture review, or quality assessment',
+            suggestedEngine: 'claude-sonnet-4.5',
+            roleFrame: 'You are reviewing this app for quality, correctness, and adherence to standards. Provide specific, actionable feedback organized by severity.',
+            scopeRules: [
+                'Review code for bugs, security issues, and performance problems',
+                'Check adherence to stated conventions and standards',
+                'Prioritize findings by severity (critical → minor)',
+                'Suggest fixes but do NOT implement them'
+            ],
+            deliveryRequirements: [
+                'Review findings organized by severity',
+                'Specific line/function references for each finding',
+                'Suggested fixes (described, not implemented)',
+                'Overall quality assessment'
+            ],
+            contextStrategy: {
+                alwaysInclude: ['CONTEXT.md', 'CLAUDE_INSTRUCTIONS.md', 'CLAUDE-PREP-STANDARD.md'],
+                preferInclude: ['ARCHITECTURE.md'],
+                skipWhenTight: ['CHANGELOG.md', 'RELEASE_NOTES.txt', 'PROJECT_PLAN.md'],
+                includeSource: true
+            },
+            workItemFocus: 'Not typically tied to specific work items. Reviews the overall codebase or recent changes.',
+            autoSuggestFrom: []
+        },
+        polish: {
+            id: 'polish',
+            label: 'Polish',
+            icon: '✨',
+            description: 'UI refinement, UX improvements, accessibility, performance tuning',
+            suggestedEngine: 'claude-haiku-4.5',
+            roleFrame: 'You are polishing this app — improving UI details, UX flow, accessibility, and visual consistency. Focus on refinement, not new features.',
+            scopeRules: [
+                'Improve visual consistency and polish',
+                'Fix alignment, spacing, color consistency issues',
+                'Improve accessibility (ARIA, contrast, keyboard nav)',
+                'Do NOT add new features',
+                'Keep changes scoped to UI/UX layer'
+            ],
+            deliveryRequirements: [
+                'Polished code with UI/UX improvements',
+                'Updated version number (patch bump)',
+                'RELEASE_NOTES.txt entry describing improvements',
+                'Deploy package'
+            ],
+            contextStrategy: {
+                alwaysInclude: ['CONTEXT.md', 'CLAUDE_INSTRUCTIONS.md'],
+                preferInclude: ['CLAUDE-PREP-STANDARD.md'],
+                skipWhenTight: ['CHANGELOG.md', 'RELEASE_NOTES.txt', 'PROJECT_PLAN.md', 'ARCHITECTURE.md'],
+                includeSource: true
+            },
+            workItemFocus: 'Targets enhancement items focused on UX/UI. Can also address chore items.',
+            autoSuggestFrom: []
+        },
+        document: {
+            id: 'document',
+            label: 'Document',
+            icon: '📝',
+            description: 'Write or update documentation, changelogs, or project plans',
+            suggestedEngine: 'claude-haiku-4.5',
+            roleFrame: 'You are writing or updating documentation for this project. Focus on accuracy, clarity, and completeness. Reference the actual codebase to ensure docs match reality.',
+            scopeRules: [
+                'Update documentation to match current codebase',
+                'Fill in TODO placeholders with accurate information',
+                'Keep documentation concise and scannable',
+                'Do NOT modify code — documentation only'
+            ],
+            deliveryRequirements: [
+                'Updated documentation files',
+                'No TODO placeholders remaining (where possible)',
+                'Accurate version references',
+                'CHANGELOG.md updated if documenting a release'
+            ],
+            contextStrategy: {
+                alwaysInclude: ['CONTEXT.md'],
+                preferInclude: ['PROJECT_PLAN.md', 'CHANGELOG.md', 'RELEASE_NOTES.txt', 'ARCHITECTURE.md'],
+                skipWhenTight: ['CLAUDE-PREP-STANDARD.md', 'CLAUDE_INSTRUCTIONS.md'],
+                includeSource: true
+            },
+            workItemFocus: 'Targets chore items related to documentation. Also useful after feature sprints.',
+            autoSuggestFrom: []
+        }
+    };
+    
+    // Session Brief Generator — session-type-aware brief production (Phase 2.1)
+    const SessionBriefGenerator = {
+        
+        // Main entry point: generate a session brief with optional session type and work item context
+        generate(app, config, deployments, options = {}) {
+            const { sessionType, targetWorkItems, allWorkItems } = options;
+            const now = new Date();
+            const projectDef = config.projects?.[app.project] || {};
+            const typeInfo = sessionType ? SESSION_TYPES[sessionType] : null;
+            
+            let brief = '';
+            
+            // === Header ===
+            brief += `# Session Brief — ${app.name}\n`;
+            brief += `Generated by Command Center on ${now.toLocaleString()}\n\n`;
+            
+            // === Session Type Banner (if specified) ===
+            if (typeInfo) {
+                brief += `## Session Type: ${typeInfo.icon} ${typeInfo.label}\n\n`;
+                brief += `**Role:** ${typeInfo.roleFrame}\n\n`;
+                brief += `### Scope Rules\n`;
+                typeInfo.scopeRules.forEach(rule => {
+                    brief += `- ${rule}\n`;
+                });
+                brief += `\n### Delivery Requirements\n`;
+                typeInfo.deliveryRequirements.forEach(req => {
+                    brief += `- ${req}\n`;
+                });
+                brief += '\n';
+            }
+            
+            // === Target Work Items (if specified) ===
+            if (targetWorkItems && targetWorkItems.length > 0) {
+                brief += `## Target Work Items\n\n`;
+                targetWorkItems.forEach(wi => {
+                    brief += `### ${wi.id}: ${wi.title}\n`;
+                    brief += `- **Type:** ${wi.type} | **Priority:** ${wi.priority} | **Effort:** ${wi.effort || '—'}\n`;
+                    if (wi.description) brief += `- **Description:** ${wi.description}\n`;
+                    if (wi.criteria && wi.criteria.length > 0) {
+                        brief += `- **Acceptance Criteria:**\n`;
+                        wi.criteria.forEach(c => {
+                            brief += `  - [ ] ${typeof c === 'string' ? c : c.text || c}\n`;
+                        });
+                    }
+                    if (wi.context?.filesAffected?.length > 0) {
+                        brief += `- **Files Affected:** ${wi.context.filesAffected.join(', ')}\n`;
+                    }
+                    if (wi.context?.dependencies?.length > 0) {
+                        brief += `- **Dependencies:** ${wi.context.dependencies.join(', ')}\n`;
+                    }
+                    if (wi.context?.notes) {
+                        brief += `- **Notes:** ${wi.context.notes}\n`;
+                    }
+                    brief += '\n';
+                });
+            }
+            
+            // === Current Status ===
+            brief += this._generateStatusSection(app, deployments);
+            
+            // === Open Work Items Summary (if available and not already targeted) ===
+            if (allWorkItems && allWorkItems.length > 0) {
+                const appItems = allWorkItems.filter(wi => wi.appId === app.id);
+                const openItems = appItems.filter(wi => wi.status === 'ready' || wi.status === 'in-progress');
+                const targetIds = new Set((targetWorkItems || []).map(wi => wi.id));
+                const otherOpen = openItems.filter(wi => !targetIds.has(wi.id));
+                
+                if (otherOpen.length > 0) {
+                    brief += `## Other Open Work Items (${otherOpen.length})\n`;
+                    brief += `| ID | Title | Type | Priority | Status |\n|-----|-------|------|----------|--------|\n`;
+                    otherOpen.slice(0, 10).forEach(wi => {
+                        brief += `| ${wi.id} | ${wi.title} | ${wi.type} | ${wi.priority} | ${wi.status} |\n`;
+                    });
+                    if (otherOpen.length > 10) {
+                        brief += `\n*...and ${otherOpen.length - 10} more open items*\n`;
+                    }
+                    brief += '\n';
+                }
+            }
+            
+            // === App Config ===
+            brief += this._generateAppConfigSection(app, projectDef);
+            
+            // === Maturity Context ===
+            if (app.lifecycle?.currentMaturity) {
+                brief += `## Maturity Context\n`;
+                brief += `- **Current:** ${app.lifecycle.currentMaturity}\n`;
+                if (app.lifecycle.maturityTarget) {
+                    brief += `- **Target:** ${app.lifecycle.maturityTarget}\n`;
+                }
+                brief += `- **Build quality to:** ${app.lifecycle.maturityTarget || app.lifecycle.currentMaturity} standards\n\n`;
+            }
+            
+            return brief;
+        },
+        
+        _generateStatusSection(app, deployments) {
+            const appDeploys = (deployments || [])
+                .filter(d => d.appId === app.id && d.status === 'success')
+                .slice(0, 5);
+            
+            const deployRows = appDeploys.length > 0
+                ? appDeploys.map(d => {
+                    const date = new Date(d.completedAt || d.startedAt);
+                    return `| ${date.toLocaleDateString()} | ${d.version || '—'} | ${(d.target || '').toUpperCase()} | ${d.isPromotion ? 'Promoted' : d.isRollback ? 'Rollback' : ''} |`;
+                }).join('\n')
+                : '| — | — | — | No recent deploys |';
+            
+            const testVer = app.versions?.test || '—';
+            const prodVer = app.versions?.prod || '—';
+            const lastTestDeploy = appDeploys.find(d => d.target === 'test');
+            const lastProdDeploy = appDeploys.find(d => d.target === 'prod');
+            const fmtDate = (d) => d ? new Date(d.completedAt || d.startedAt).toLocaleDateString() : '—';
+            
+            let section = `## Current Status\n`;
+            section += `| Environment | Version | Last Deploy |\n`;
+            section += `|-------------|---------|-------------|\n`;
+            section += `| Test        | ${testVer} | ${fmtDate(lastTestDeploy)} |\n`;
+            section += `| Prod        | ${prodVer} | ${fmtDate(lastProdDeploy)} |\n\n`;
+            
+            section += `## Recent Deploys (Last 5)\n`;
+            section += `| Date | Version | Target | Notes |\n`;
+            section += `|------|---------|--------|-------|\n`;
+            section += deployRows + '\n\n';
+            
+            return section;
+        },
+        
+        _generateAppConfigSection(app, projectDef) {
+            let section = `## App Config\n`;
+            section += `- **Project:** ${projectDef.name || app.project || '—'}\n`;
+            section += `- **Type:** ${app.appType || 'other'}\n`;
+            section += `- **PWA:** ${app.hasServiceWorker ? 'Yes (sw.js + manifest.json)' : 'No'}\n`;
+            section += `- **Repos:** ${Object.entries(app.repos || {}).filter(([,v]) => v).map(([k,v]) => `${k}: ${v}`).join(', ') || '—'}\n`;
+            section += `- **SubPath:** ${app.subPath || '(root)'}\n`;
+            section += `- **Target:** ${app.targetPath || 'index.html'}\n`;
+            section += `- **Detection patterns:** ${(app.detectionPatterns || []).join(', ') || '—'}\n\n`;
+            return section;
+        },
+        
+        // Get recommended file inclusion list based on session type
+        getFileStrategy(sessionType) {
+            const typeInfo = SESSION_TYPES[sessionType];
+            if (!typeInfo) return { alwaysInclude: [], preferInclude: [], skipWhenTight: [], includeSource: true };
+            return typeInfo.contextStrategy;
+        },
+        
+        // Suggest session type from a work item
+        suggestFromWorkItem(workItem) {
+            if (!workItem) return 'build';
+            // Check each session type's autoSuggestFrom list
+            for (const [typeId, typeDef] of Object.entries(SESSION_TYPES)) {
+                if (typeDef.autoSuggestFrom.includes(workItem.type)) {
+                    return typeId;
+                }
+            }
+            // Fallback to the EngineRegistryService mapping
+            return EngineRegistryService.WORK_ITEM_SESSION_MAP[workItem.type] || 'build';
+        },
+        
+        // Get all session types for UI display
+        getAll() {
+            return Object.values(SESSION_TYPES);
+        },
+        
+        // Get a specific session type
+        get(typeId) {
+            return SESSION_TYPES[typeId] || null;
         }
     };
     
@@ -6298,6 +6702,8 @@
                                 showConfirm={showConfirm}
                                 onRefreshRepos={refreshRepos}
                                 deployments={deployments}
+                                globalWorkItems={globalWorkItems}
+                                firebaseUid={firebaseUid}
                             />
                         </div>
                     )}
@@ -6337,7 +6743,7 @@
                     )}
                     
                     {view === 'issues' && (
-                        <IssuesView apps={apps} deployments={deployments} showAlert={showAlert} showConfirm={showConfirm} showPrompt={showPrompt} />
+                        <IssuesView apps={apps} deployments={deployments} showAlert={showAlert} showConfirm={showConfirm} showPrompt={showPrompt} setView={setView} globalWorkItems={globalWorkItems} />
                     )}
                     
                     {view === 'backlog' && (
@@ -14362,6 +14768,267 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
         return standards;
     }
     
+    // =========================================================================
+    // CLAUDE_INSTRUCTIONS.md GENERATOR
+    // =========================================================================
+    
+    // Standard descriptions for each standard ID — requirement statements, not code
+    const STANDARD_DESCRIPTIONS = {
+        // Universal
+        'css-variables': 'All colors defined as CSS variables in :root and [data-theme="dark"]. Never hardcode color values anywhere.',
+        'dark-light-toggle': 'Dark mode is the default theme. Support light mode toggle using data-theme attribute on <html>.',
+        'theme-persistence': 'Persist theme preference in localStorage. Restore on page load.',
+        'mobile-first': 'Mobile-first responsive design. Base styles target 375px viewport. Minimum 44px touch targets for all interactive elements.',
+        'safe-areas': 'Support safe areas for notched devices using env(safe-area-inset-*) padding.',
+        'toast-system': 'Toast notification system for all user messages. No native alert(), confirm(), or prompt(). Toasts positioned bottom-center, auto-dismiss after 3s, support success/error/warning types.',
+        'confirm-dialog': 'Custom confirm dialog for destructive actions. Returns a Promise<boolean>. Styled consistently with the app theme.',
+        'hamburger-menu': 'Hamburger menu (☰) in top-right corner with slide-out or modal settings panel.',
+        'meta-tags': 'Required meta tags in <head>: <meta name="version" content="X.Y.Z"> and <meta name="gs-app-id" content="{appId}">.',
+        'version-display': 'Display current version in settings panel or footer.',
+        'loading-spinner': 'Loading spinner for all async operations. Prevent interaction during loading.',
+        'empty-states': 'Empty state pattern for all list/data views: icon + descriptive message + action button.',
+        // Game
+        'daily-reset': 'Daily puzzle reset at midnight UTC. Track puzzle number from a fixed epoch date. Detect new day on load and on visibility change.',
+        'streak-tracking': 'Track current streak and max streak in localStorage. Daily play detection — a missed day breaks the streak.',
+        'share-results': 'Share button using navigator.share() with clipboard.writeText() fallback. Generate share text with emoji grid representation of results.',
+        'difficulty-modes': 'Difficulty mode selector accessible from settings. Separate statistics tracking per mode.',
+        'stats-tracking': 'Stats tracking object in localStorage: games played, win rate, score distribution, personal bests. Display in a stats modal.',
+        'celebration-effects': 'Celebration effects (confetti, animation) on special achievements like perfect scores or streak milestones.',
+        'tutorial-onboarding': 'Tutorial flow: welcome modal on first visit → guided walkthrough of key features → replayable from settings menu.',
+        'sound-manager': 'Audio manager with sound effects on key game events. Mute toggle in settings, persisted in localStorage.',
+        // Tool
+        'tab-nav': 'Tab navigation pattern for switching between app sections. Active tab indicator, smooth transitions.',
+        'settings-storage': 'Settings persistence using a single localStorage key with JSON object. Settings UI in hamburger menu.',
+        'import-export': 'Import function (file input with format validation) and export function (JSON or CSV download).',
+        'print-css': 'Print-friendly CSS with @media print rules. Hide navigation and non-essential UI. Proper page breaks.',
+        'keyboard-shortcuts': 'Keyboard shortcuts for common actions. Shortcut reference panel accessible from settings or ? key.',
+        'undo-redo': 'Undo/redo system with state history stack. Ctrl+Z / Ctrl+Y (Cmd on Mac) keyboard shortcuts.',
+        // Firebase
+        'firebase-auth': 'Firebase Authentication with Google sign-in. Auth state listener for UI updates. Sign in/out flow in settings.',
+        'firebase-rtdb': 'Firebase Realtime Database read/write helpers. Structured paths under the app namespace. Error handling for offline/permission errors.',
+        'firebase-connection': 'Firebase connection status indicator. Show online/offline state. Handle reconnection gracefully.',
+        // Dashboard
+        'auto-refresh': 'Auto-refresh data on a configurable interval. Display last-updated timestamp. Manual refresh button.',
+        'date-range': 'Date range selector for time-scoped data queries. Preset ranges (today, last 7 days, last 30 days, custom).',
+        'data-export': 'Export current view data to CSV or JSON format via download.',
+        'realtime-updates': 'Firebase real-time listeners with live update indicators. Show when data refreshes automatically.',
+        // Content
+        'seo-tags': 'SEO meta tags (title, description), Open Graph tags, semantic HTML structure.',
+        // Admin
+        'role-access': 'Role-based access control. Define roles with permissions. Gate UI elements by role. Check permissions on data operations.',
+        'audit-logging': 'Audit logging: record user actions with timestamps and user attribution. Audit log viewer in admin interface.',
+        'bulk-actions': 'Multi-select with batch operations: select all, select range, batch status changes, bulk delete with confirmation.',
+        'data-charts': 'Data visualization with charts (bar, line, pie) and summary cards with trend indicators.'
+    };
+    
+    // Group labels for standard sections
+    const STANDARD_GROUP_LABELS = {
+        'theme': 'Theme & Display',
+        'layout': 'Layout & Responsiveness',
+        'feedback': 'User Feedback',
+        'nav': 'Navigation',
+        'infra': 'Infrastructure',
+        'game': 'Game Mechanics',
+        'tool': 'Tool Patterns',
+        'firebase': 'Firebase Integration',
+        'dashboard': 'Dashboard Patterns',
+        'content': 'Content Management',
+        'admin': 'Admin Patterns'
+    };
+    
+    /**
+     * Generate CLAUDE_INSTRUCTIONS.md from app scope data.
+     * Produces a structured AI briefing document with requirement statements.
+     * 
+     * @param {Object} app - App definition from CC
+     * @param {Object} scopeData - Scope data (from Firebase appScopes/{appId})
+     * @param {Object} config - CC config (for project info)
+     * @returns {string} Markdown content for CLAUDE_INSTRUCTIONS.md
+     */
+    function generateClaudeInstructions(app, scopeData, config) {
+        if (!scopeData) return null;
+        
+        const cat = SCOPE_CATEGORIES[scopeData.category];
+        const projectDef = config?.projects?.[app.project] || {};
+        
+        // === Section: Project Identity ===
+        let md = `# ${app.name} — AI Development Instructions\n\n`;
+        md += `> Generated by Command Center from project scope. This document travels with every Claude Prep package.\n`;
+        md += `> Edit freely — manual changes take precedence over regeneration.\n\n`;
+        
+        md += `## Project Identity\n\n`;
+        md += `${scopeData.description || app.description || app.name + ' is a web application.'}\n\n`;
+        md += `- **Category:** ${cat?.icon || '📦'} ${cat?.label || scopeData.category || 'Unknown'}\n`;
+        if (projectDef.name) md += `- **Project:** ${projectDef.name}\n`;
+        md += `- **App ID:** ${app.id}\n`;
+        md += `\n`;
+        
+        // === Section: V1 Scope ===
+        const coreFeatures = (scopeData.v1Features || []).filter(f => f.priority === 'core');
+        const niceFeatures = (scopeData.v1Features || []).filter(f => f.priority === 'nice-to-have');
+        const outFeatures = (scopeData.v1Features || []).filter(f => f.priority === 'out-of-scope');
+        const futureFeatures = scopeData.futureFeatures || [];
+        
+        md += `## V1 Scope\n\n`;
+        
+        if (coreFeatures.length > 0) {
+            md += `### Must Build (Core)\n`;
+            coreFeatures.forEach(f => {
+                md += `- **${f.title}**`;
+                if (f.description) md += ` — ${f.description}`;
+                if (f.effort) md += ` _(${f.effort})_`;
+                md += `\n`;
+            });
+            md += `\n`;
+        }
+        
+        if (niceFeatures.length > 0) {
+            md += `### Nice to Have (If Time)\n`;
+            niceFeatures.forEach(f => {
+                md += `- **${f.title}**`;
+                if (f.description) md += ` — ${f.description}`;
+                md += `\n`;
+            });
+            md += `\n`;
+        }
+        
+        if (outFeatures.length > 0 || futureFeatures.length > 0) {
+            md += `### Out of Scope (Do NOT Build)\n`;
+            outFeatures.forEach(f => {
+                md += `- ~~${f.title}~~`;
+                if (f.description) md += ` — ${f.description}`;
+                md += `\n`;
+            });
+            futureFeatures.forEach(f => {
+                md += `- ~~${f.title}~~`;
+                if (f.description) md += ` — ${f.description}`;
+                md += ` _(future)_\n`;
+            });
+            md += `\n`;
+        }
+        
+        // === Section: Starting Standards ===
+        const standards = scopeData.startingStandards || [];
+        if (standards.length > 0) {
+            md += `## Starting Standards\n\n`;
+            md += `These are the baseline requirements for the app. Each session should ensure these are implemented.\n\n`;
+            
+            // Group standards by their group
+            const grouped = {};
+            standards.forEach(id => {
+                // Find in universal or category standards
+                const universal = UNIVERSAL_STANDARDS.find(s => s.id === id);
+                const catStd = CATEGORY_STANDARDS[id];
+                const group = universal?.group || catStd?.group || 'other';
+                if (!grouped[group]) grouped[group] = [];
+                grouped[group].push(id);
+            });
+            
+            // Render each group
+            Object.entries(grouped).forEach(([group, ids]) => {
+                const groupLabel = STANDARD_GROUP_LABELS[group] || group.charAt(0).toUpperCase() + group.slice(1);
+                md += `### ${groupLabel}\n`;
+                ids.forEach(id => {
+                    const desc = STANDARD_DESCRIPTIONS[id];
+                    if (desc) {
+                        md += `- ${desc}\n`;
+                    } else {
+                        // Fallback to the label from standards data
+                        const universal = UNIVERSAL_STANDARDS.find(s => s.id === id);
+                        const catStd = CATEGORY_STANDARDS[id];
+                        md += `- ${universal?.label || catStd?.label || id}\n`;
+                    }
+                });
+                md += `\n`;
+            });
+        }
+        
+        // === Section: Key Decisions ===
+        const unresolvedDecisions = (scopeData.keyDecisions || []).filter(d => !d.resolved);
+        if (unresolvedDecisions.length > 0) {
+            md += `## Key Decisions to Resolve\n\n`;
+            md += `These need answers before or during the first build session.\n\n`;
+            unresolvedDecisions.forEach(d => {
+                md += `- **${d.title}**`;
+                if (d.description) md += ` — ${d.description}`;
+                md += `\n`;
+            });
+            md += `\n`;
+        }
+        
+        // === Section: Architecture Constraints ===
+        md += `## Architecture Constraints\n\n`;
+        md += `- Single-file HTML application — all CSS and JS inline in ${app.targetPath || 'index.html'}\n`;
+        md += `- No build step, no bundler, no framework dependency (unless React via CDN)\n`;
+        
+        // Firebase if selected
+        const hasFirebase = standards.some(s => s.startsWith('firebase-'));
+        if (hasFirebase) {
+            md += `- Firebase integration using the shared Game Shelf project\n`;
+            md += `\n`;
+            md += `### Firebase Config\n`;
+            md += `\`\`\`javascript\n`;
+            md += `const firebaseConfig = {\n`;
+            md += `    apiKey: "AIzaSyBQVwn8vOrFTzLlm2MYIPBwgZV2xR9AuhM",\n`;
+            md += `    authDomain: "word-boxing.firebaseapp.com",\n`;
+            md += `    databaseURL: "https://word-boxing-default-rtdb.firebaseio.com",\n`;
+            md += `    projectId: "word-boxing"\n`;
+            md += `};\n`;
+            md += `\`\`\`\n`;
+        }
+        
+        // PWA if applicable
+        if (app.hasServiceWorker) {
+            md += `- Progressive Web App: include sw.js, manifest.json, and app icons\n`;
+        }
+        
+        md += `\n`;
+        
+        // === Section: Command Center Integration ===
+        md += `## Command Center Integration\n\n`;
+        md += `### Required Meta Tags\n`;
+        md += `\`\`\`html\n`;
+        md += `<meta name="version" content="X.Y.Z">\n`;
+        md += `<meta name="gs-app-id" content="${app.id}">\n`;
+        md += `\`\`\`\n\n`;
+        md += `### Version Management\n`;
+        md += `Semver: bump patch for fixes, minor for features, major for breaking changes.\n`;
+        md += `Command Center reads the version meta tag to track deployed versions.\n\n`;
+        
+        // Deploy package
+        md += `### Deploy Package\n`;
+        if (app.hasServiceWorker) {
+            md += `- index.html (main app — single file, all CSS/JS inline)\n`;
+            md += `- sw.js (service worker — CACHE_VERSION must match app version)\n`;
+            md += `- manifest.json (PWA manifest with app name, icons, theme)\n`;
+            md += `- icons/ folder (192px, 512px, maskable, apple-touch-icon)\n`;
+        } else {
+            md += `- index.html (main app — single file, all CSS/JS inline)\n`;
+        }
+        md += `- RELEASE_NOTES.txt (append new version notes each session)\n`;
+        md += `\n`;
+        
+        // === Section: Session Protocol ===
+        md += `## Session Protocol\n\n`;
+        md += `### Starting a Session\n`;
+        md += `1. Read SESSION_BRIEF.md for current versions and recent changes\n`;
+        md += `2. Read CONTEXT.md for architecture and conventions\n`;
+        md += `3. Review this document for scope and standards\n`;
+        md += `4. Check RELEASE_NOTES.txt for what changed last\n\n`;
+        
+        md += `### Ending a Session\n`;
+        md += `1. Bump version in all locations (meta tag, footer, sw.js if PWA)\n`;
+        md += `2. Update RELEASE_NOTES.txt with changes made\n`;
+        md += `3. Update CHANGELOG.md (Added / Changed / Fixed / Removed)\n`;
+        md += `4. Produce deploy-ready files\n`;
+        md += `5. Note any unfinished work for the next session\n`;
+        
+        md += `\n---\n`;
+        md += `*Generated ${new Date().toLocaleDateString()} by Command Center v${document.querySelector('meta[name="version"]')?.content || '?'}*\n`;
+        
+        return md;
+    }
+    
     // ProjectScopeModal — 4-step scoping flow
     function ProjectScopeModal({ app, apps, onSave, onCancel, showAlert }) {
         const [step, setStep] = React.useState(1);
@@ -15752,7 +16419,7 @@ When complete, note: "Completes ${item.id}" in deploy notes.`;
     // ISSUES VIEW - Full Issue Tracking & Release Management
     // =========================================================================
     
-    function IssuesView({ apps, deployments, showAlert, showConfirm, showPrompt }) {
+    function IssuesView({ apps, deployments, showAlert, showConfirm, showPrompt, setView, globalWorkItems }) {
         const [issues, setIssues] = React.useState([]);
         const [releases, setReleases] = React.useState([]);
         const [userReports, setUserReports] = React.useState([]);
@@ -15843,6 +16510,71 @@ ${issue.actual || 'N/A'}
 When you fix this, please note: "Fixes ${issue.id}" in the code or deploy notes.`;
             
             navigator.clipboard.writeText(text);
+        };
+        
+        // Promote issue to work item
+        const promoteToWorkItem = async (issue) => {
+            if (!firebaseUser) {
+                showAlert('Sign in to Firebase to create work items', 'error');
+                return;
+            }
+            
+            // Check if already promoted
+            const existingWI = (globalWorkItems || []).find(wi => 
+                wi.context?.relatedItems?.includes(issue.id) || 
+                wi.tags?.includes(`from-${issue.id}`)
+            );
+            if (existingWI) {
+                const proceed = await showConfirm(`Issue ${issue.id} was already promoted to ${existingWI.id}. Create another work item anyway?`);
+                if (!proceed) return;
+            }
+            
+            // Generate next work item ID
+            const existingIds = (globalWorkItems || []).map(i => parseInt(i.id?.replace('WI-', '') || '0'));
+            const nextNum = Math.max(0, ...existingIds) + 1;
+            const newId = `WI-${String(nextNum).padStart(3, '0')}`;
+            
+            // Map severity to priority
+            const priorityMap = { 'critical': 'core', 'major': 'core', 'minor': 'nice-to-have', 'cosmetic': 'nice-to-have' };
+            
+            const workItemData = {
+                id: newId,
+                appId: issue.app,
+                title: issue.title,
+                description: [
+                    issue.description || '',
+                    issue.stepsToReproduce?.length ? '\n**Steps to Reproduce:**\n' + issue.stepsToReproduce.map((s, i) => `${i + 1}. ${s}`).join('\n') : '',
+                    issue.expected ? `\n**Expected:** ${issue.expected}` : '',
+                    issue.actual ? `\n**Actual:** ${issue.actual}` : ''
+                ].filter(Boolean).join('\n'),
+                type: 'bugfix',
+                priority: priorityMap[issue.severity] || 'core',
+                status: 'ready',
+                effort: issue.severity === 'critical' || issue.severity === 'major' ? 'session' : 'quick',
+                source: 'promoted',
+                tags: ['promoted', `from-${issue.id}`],
+                context: {
+                    filesAffected: [],
+                    sections: [],
+                    dependencies: [],
+                    notes: `Promoted from issue ${issue.id} (${issue.severity})`,
+                    relatedItems: [issue.id]
+                }
+            };
+            
+            try {
+                await WorkItemService.create(firebaseUser.uid, workItemData);
+                
+                // Update the issue to note it was promoted
+                await IssueService.update(firebaseUser.uid, issue.id, {
+                    promotedTo: newId,
+                    promotedAt: new Date().toISOString()
+                });
+                
+                showAlert(`Promoted ${issue.id} → ${newId} in Backlog`, 'success');
+            } catch (e) {
+                showAlert(`Error promoting issue: ${e.message}`, 'error');
+            }
         };
         
         // Get issues ready for release (fixed in TEST, not yet in PROD)
@@ -16316,9 +17048,16 @@ Released: ${new Date().toLocaleDateString()}
                                             {issue.app && <span className="mr-3">📱 {configuredApps.find(a => a.id === issue.app)?.name || issue.app}</span>}
                                             <span>📅 {new Date(issue.createdAt).toLocaleDateString()}</span>
                                             {issue.fixedInVersion && <span className="ml-3 text-blue-400">🔧 Fixed in v{issue.fixedInVersion}</span>}
+                                            {issue.promotedTo && <span className="ml-3 text-emerald-400">📋 → {issue.promotedTo}</span>}
                                         </div>
                                     </div>
                                     <div className="flex gap-1">
+                                        <button
+                                            onClick={() => promoteToWorkItem(issue)}
+                                            className="px-2 py-1 bg-emerald-700 hover:bg-emerald-600 rounded text-xs"
+                                            title="Promote to Work Item">
+                                            📋
+                                        </button>
                                         <button
                                             onClick={() => copyForClaude(issue)}
                                             className="px-2 py-1 bg-purple-600 hover:bg-purple-500 rounded text-xs"
@@ -16357,6 +17096,13 @@ Released: ${new Date().toLocaleDateString()}
                                             onClick={() => updateIssueStatus(issue.id, 'verified')}
                                             className="px-2 py-1 bg-green-700 hover:bg-green-600 rounded text-xs">
                                             ✓ Verify Fixed
+                                        </button>
+                                    )}
+                                    {!issue.promotedTo && (issue.status === 'open' || issue.status === 'in-progress') && (
+                                        <button
+                                            onClick={() => promoteToWorkItem(issue)}
+                                            className="px-2 py-1 bg-emerald-700 hover:bg-emerald-600 rounded text-xs ml-auto">
+                                            📋 Promote to Work Item
                                         </button>
                                     )}
                                 </div>
@@ -18545,7 +19291,7 @@ const pushIssueToCommandCenter = async (testResult) => {
     // =========================================================================
     // PROJECTS TAB (v8.8.0) — Replaces Apps tab in Configure
     // =========================================================================
-    function ProjectsTab({ config, updateConfig, activeEnvs, envColors, github, githubOwner, availableRepos, showAlert, showConfirm, onRefreshRepos, deployments }) {
+    function ProjectsTab({ config, updateConfig, activeEnvs, envColors, github, githubOwner, availableRepos, showAlert, showConfirm, onRefreshRepos, deployments, globalWorkItems, firebaseUid }) {
         const [expandedProject, setExpandedProject] = React.useState(null);
         const [editingApp, setEditingApp] = React.useState(null);
         const [editingProject, setEditingProject] = React.useState(null);
@@ -18947,6 +19693,8 @@ const pushIssueToCommandCenter = async (testResult) => {
                         deployments={deployments || []}
                         onClose={() => setPrepApp(null)}
                         showAlert={showAlert}
+                        globalWorkItems={globalWorkItems}
+                        firebaseUid={firebaseUid}
                     />
                 )}
             </div>
@@ -19110,7 +19858,7 @@ const pushIssueToCommandCenter = async (testResult) => {
     // =========================================================================
     
     // Standard doc filenames for the Claude Prep package convention
-    const CLAUDE_PREP_DOCS = ['CONTEXT.md', 'PROJECT_PLAN.md', 'CHANGELOG.md', 'RELEASE_NOTES.txt', 'ARCHITECTURE.md', 'CLAUDE-PREP-STANDARD.md'];
+    const CLAUDE_PREP_DOCS = ['CONTEXT.md', 'PROJECT_PLAN.md', 'CHANGELOG.md', 'RELEASE_NOTES.txt', 'ARCHITECTURE.md', 'CLAUDE-PREP-STANDARD.md', 'CLAUDE_INSTRUCTIONS.md'];
     
     // File action classification: deploy to GitHub Pages or push to source repo
     const DOC_FILE_EXTENSIONS = /\.(md|txt)$/i;
@@ -19422,57 +20170,8 @@ const pushIssueToCommandCenter = async (testResult) => {
     }
     
     // Generate SESSION_BRIEF.md content from CC data
-    function generateSessionBrief(app, config, deployments) {
-        const now = new Date();
-        const projectDef = config.projects?.[app.project] || {};
-        
-        // Recent deploys for this app
-        const appDeploys = (deployments || [])
-            .filter(d => d.appId === app.id && d.status === 'success')
-            .slice(0, 5);
-        
-        const deployRows = appDeploys.length > 0
-            ? appDeploys.map(d => {
-                const date = new Date(d.completedAt || d.startedAt);
-                return `| ${date.toLocaleDateString()} | ${d.version || '—'} | ${(d.target || '').toUpperCase()} | ${d.isPromotion ? 'Promoted' : d.isRollback ? 'Rollback' : ''} |`;
-            }).join('\n')
-            : '| — | — | — | No recent deploys |';
-        
-        // Version info
-        const testVer = app.versions?.test || '—';
-        const prodVer = app.versions?.prod || '—';
-        
-        // Find last deploy dates
-        const lastTestDeploy = appDeploys.find(d => d.target === 'test');
-        const lastProdDeploy = appDeploys.find(d => d.target === 'prod');
-        const fmtDate = (d) => d ? new Date(d.completedAt || d.startedAt).toLocaleDateString() : '—';
-        
-        return `# Session Brief — ${app.name}
-Generated by Command Center on ${now.toLocaleString()}
-
-## Current Status
-| Environment | Version | Last Deploy |
-|-------------|---------|-------------|
-| Test        | ${testVer} | ${fmtDate(lastTestDeploy)} |
-| Prod        | ${prodVer} | ${fmtDate(lastProdDeploy)} |
-
-## Recent Deploys (Last 5)
-| Date | Version | Target | Notes |
-|------|---------|--------|-------|
-${deployRows}
-
-## Open Issues
-*Issues are tracked in Command Center → Monitor → Issues. Check there for current open items for ${app.name}.*
-
-## App Config
-- **Project:** ${projectDef.name || app.project || '—'}
-- **Type:** ${app.appType || 'other'}
-- **PWA:** ${app.hasServiceWorker ? 'Yes (sw.js + manifest.json)' : 'No'}
-- **Repos:** ${Object.entries(app.repos || {}).filter(([,v]) => v).map(([k,v]) => `${k}: ${v}`).join(', ') || '—'}
-- **SubPath:** ${app.subPath || '(root)'}
-- **Target:** ${app.targetPath || 'index.html'}
-- **Detection patterns:** ${(app.detectionPatterns || []).join(', ') || '—'}
-`;
+    function generateSessionBrief(app, config, deployments, options) {
+        return SessionBriefGenerator.generate(app, config, deployments, options || {});
     }
     
     // Generate skeleton CONTEXT.md for bootstrapping
@@ -19581,18 +20280,65 @@ ${repoStr || '- *No repos configured*'}
 `;
     }
     
-    function ClaudePrepModal({ app, config, github, githubOwner, deployments, onClose, showAlert }) {
-        const [status, setStatus] = React.useState('idle'); // idle | fetching | building | done | error
+    function ClaudePrepModal({ app, config, github, githubOwner, deployments, onClose, showAlert, globalWorkItems, firebaseUid }) {
+        // === Wizard State (Phase 2.2: 4-step Session Wizard) ===
+        const [wizardStep, setWizardStep] = React.useState(1); // 1: Work Items, 2: Session Type, 3: Context Budget, 4: Generate+Download
+        const [phase, setPhase] = React.useState('wizard'); // wizard | building | done | error
+        const [sessionType, setSessionType] = React.useState(null);
+        const [selectedWorkItems, setSelectedWorkItems] = React.useState([]);
+        const [status, setStatus] = React.useState('idle');
         const [log, setLog] = React.useState([]);
         const [progress, setProgress] = React.useState({ current: 0, total: 0 });
-        const [result, setResult] = React.useState(null); // { blobUrl, filename, fileCount, totalSize, missingDocs }
+        const [result, setResult] = React.useState(null);
         const [uploadMode, setUploadMode] = React.useState(false);
-        const [uploadFiles, setUploadFiles] = React.useState([]); // { name, content, existing: bool, sha: string|null }
+        const [uploadFiles, setUploadFiles] = React.useState([]);
         const [uploading, setUploading] = React.useState(false);
         const [uploadLog, setUploadLog] = React.useState([]);
+        const [sessionRecord, setSessionRecord] = React.useState(null);
+        
+        // Get work items for this app
+        const appWorkItems = React.useMemo(() => {
+            if (!globalWorkItems) return [];
+            return globalWorkItems.filter(wi => wi.appId === app.id && (wi.status === 'ready' || wi.status === 'in-progress'));
+        }, [globalWorkItems, app.id]);
+        
+        // Auto-suggest session type when a work item is selected
+        const handleWorkItemToggle = (wi) => {
+            setSelectedWorkItems(prev => {
+                const exists = prev.find(w => w.id === wi.id);
+                const next = exists ? prev.filter(w => w.id !== wi.id) : [...prev, wi];
+                if (next.length > 0 && !sessionType) {
+                    setSessionType(SessionBriefGenerator.suggestFromWorkItem(next[0]));
+                }
+                return next;
+            });
+        };
+        
+        const typeInfo = sessionType ? SESSION_TYPES[sessionType] : null;
+        const suggestedEngine = typeInfo ? EngineRegistryService.get(typeInfo.suggestedEngine) : null;
+        const defaultEngine = EngineRegistryService.getDefault();
+        const activeEngine = suggestedEngine || defaultEngine;
         
         const addLog = (msg, type = 'info') => {
             setLog(prev => [...prev, { msg, type, time: new Date().toLocaleTimeString() }]);
+        };
+        
+        // Wizard navigation
+        const canProceed = (step) => {
+            if (step === 1) return true; // Can always proceed from step 1 (general session is fine)
+            if (step === 2) return true; // Session type is optional
+            if (step === 3) return true; // Budget review is informational
+            return false;
+        };
+        
+        const goNext = () => setWizardStep(prev => Math.min(prev + 1, 4));
+        const goBack = () => setWizardStep(prev => Math.max(prev - 1, 1));
+        
+        // Quick Skip: jump to building immediately
+        const quickBuild = () => {
+            setSessionType(null);
+            setSelectedWorkItems([]);
+            startPrep();
         };
         
         const startPrep = async () => {
@@ -19601,6 +20347,7 @@ ${repoStr || '- *No repos configured*'}
                 return;
             }
             
+            setPhase('building');
             setStatus('fetching');
             setLog([]);
             
@@ -19610,68 +20357,79 @@ ${repoStr || '- *No repos configured*'}
                 const files = [];
                 const missingDocs = [];
                 
-                // Determine which repo to pull from (prefer prod, fall back to test)
                 const repo = app.repos?.prod || app.repos?.test;
                 if (!repo) {
-                    addLog('❌ No repo configured for this app', 'error');
+                    addLog('\u274c No repo configured for this app', 'error');
                     setStatus('error');
+                    setPhase('error');
                     return;
                 }
                 
-                addLog(`📂 Using repo: ${repo}`);
+                addLog(`\ud83d\udcc2 Using repo: ${repo}`);
                 const subPath = app.subPath || '';
                 const docsPath = getDocsPath(app);
+                const strategy = typeInfo?.contextStrategy || null;
                 
-                // === STEP 1: Fetch source files ===
-                addLog('📥 Fetching source files...');
+                // === Fetch source files (session-type-aware) ===
+                const includeSource = strategy ? strategy.includeSource : true;
                 
-                // Main app file (index.html or custom targetPath)
-                const targetPath = subPath 
-                    ? `${subPath}/${app.targetPath || 'index.html'}`
-                    : (app.targetPath || 'index.html');
-                
-                setProgress({ current: 1, total: 8 });
-                const mainFile = await github.getFileContent(repo, targetPath);
-                if (mainFile?.textContent) {
-                    appFolder.file(app.targetPath || 'index.html', mainFile.textContent);
-                    const mainName = app.targetPath || 'index.html';
-                    files.push({ name: mainName, size: mainFile.textContent.length, tokens: TokenRegistryService.estimateTokens(mainFile.textContent, mainName) });
-                    addLog(`✅ ${mainName} (${(mainFile.textContent.length / 1024).toFixed(0)}KB)`);
-                } else {
-                    addLog(`⚠️ Could not fetch ${targetPath}`, 'warn');
-                }
-                
-                // Service worker (if PWA)
-                if (app.hasServiceWorker) {
-                    setProgress({ current: 2, total: 8 });
-                    const swPath = subPath ? `${subPath}/sw.js` : 'sw.js';
-                    const swFile = await github.getFileContent(repo, swPath);
-                    if (swFile?.textContent) {
-                        appFolder.file('sw.js', swFile.textContent);
-                        files.push({ name: 'sw.js', size: swFile.textContent.length, tokens: TokenRegistryService.estimateTokens(swFile.textContent, 'sw.js') });
-                        addLog(`✅ sw.js (${(swFile.textContent.length / 1024).toFixed(0)}KB)`);
+                if (includeSource) {
+                    addLog('\ud83d\udce5 Fetching source files...');
+                    const targetPath = subPath 
+                        ? `${subPath}/${app.targetPath || 'index.html'}`
+                        : (app.targetPath || 'index.html');
+                    
+                    setProgress({ current: 1, total: 8 });
+                    const mainFile = await github.getFileContent(repo, targetPath);
+                    if (mainFile?.textContent) {
+                        appFolder.file(app.targetPath || 'index.html', mainFile.textContent);
+                        const mainName = app.targetPath || 'index.html';
+                        files.push({ name: mainName, size: mainFile.textContent.length, tokens: TokenRegistryService.estimateTokens(mainFile.textContent, mainName) });
+                        addLog(`\u2705 ${mainName} (${(mainFile.textContent.length / 1024).toFixed(0)}KB)`);
                     } else {
-                        addLog('⚠️ sw.js not found (PWA app)', 'warn');
+                        addLog(`\u26a0\ufe0f Could not fetch ${targetPath}`, 'warn');
                     }
                     
-                    // Manifest
-                    setProgress({ current: 3, total: 8 });
-                    const manifestPath = subPath ? `${subPath}/manifest.json` : 'manifest.json';
-                    const manifestFile = await github.getFileContent(repo, manifestPath);
-                    if (manifestFile?.textContent) {
-                        appFolder.file('manifest.json', manifestFile.textContent);
-                        files.push({ name: 'manifest.json', size: manifestFile.textContent.length, tokens: TokenRegistryService.estimateTokens(manifestFile.textContent, 'manifest.json') });
-                        addLog(`✅ manifest.json`);
+                    if (app.hasServiceWorker) {
+                        setProgress({ current: 2, total: 8 });
+                        const swPath = subPath ? `${subPath}/sw.js` : 'sw.js';
+                        const swFile = await github.getFileContent(repo, swPath);
+                        if (swFile?.textContent) {
+                            appFolder.file('sw.js', swFile.textContent);
+                            files.push({ name: 'sw.js', size: swFile.textContent.length, tokens: TokenRegistryService.estimateTokens(swFile.textContent, 'sw.js') });
+                            addLog(`\u2705 sw.js (${(swFile.textContent.length / 1024).toFixed(0)}KB)`);
+                        } else {
+                            addLog('\u26a0\ufe0f sw.js not found (PWA app)', 'warn');
+                        }
+                        
+                        setProgress({ current: 3, total: 8 });
+                        const manifestPath = subPath ? `${subPath}/manifest.json` : 'manifest.json';
+                        const manifestFile = await github.getFileContent(repo, manifestPath);
+                        if (manifestFile?.textContent) {
+                            appFolder.file('manifest.json', manifestFile.textContent);
+                            files.push({ name: 'manifest.json', size: manifestFile.textContent.length, tokens: TokenRegistryService.estimateTokens(manifestFile.textContent, 'manifest.json') });
+                            addLog(`\u2705 manifest.json`);
+                        }
                     }
+                } else {
+                    addLog('\u23ed\ufe0f Skipping source files (not needed for this session type)');
                 }
                 
-                // === STEP 2: Fetch doc files ===
-                addLog('📄 Looking for project docs...');
+                // === Fetch doc files (session-type-aware filtering) ===
+                addLog('\ud83d\udcc4 Looking for project docs...');
                 setProgress({ current: 4, total: 8 });
+                
+                const skipSet = new Set(strategy?.skipWhenTight || []);
+                const alwaysSet = new Set(strategy?.alwaysInclude || []);
+                const preferSet = new Set(strategy?.preferInclude || []);
                 
                 let docsFound = 0;
                 for (const docName of CLAUDE_PREP_DOCS) {
-                    // Try docs subfolder first (consolidated repos), then root (standalone repos)
+                    if (strategy && !alwaysSet.has(docName) && !preferSet.has(docName) && skipSet.has(docName)) {
+                        addLog(`\u23ed\ufe0f Skipping ${docName} (session type: ${typeInfo?.label || 'N/A'})`, 'info');
+                        continue;
+                    }
+                    
                     const paths = docsPath 
                         ? [`${docsPath}/${docName}`, `${subPath}/${docName}`, docName]
                         : [docName];
@@ -19682,44 +20440,57 @@ ${repoStr || '- *No repos configured*'}
                         if (docFile?.textContent) {
                             appFolder.file(docName, docFile.textContent);
                             files.push({ name: docName, size: docFile.textContent.length, tokens: TokenRegistryService.estimateTokens(docFile.textContent, docName) });
-                            addLog(`✅ ${docName} (from ${tryPath})`);
+                            addLog(`\u2705 ${docName} (from ${tryPath})`);
                             docsFound++;
                             found = true;
                             break;
                         }
                     }
-                    if (!found && docName !== 'ARCHITECTURE.md') {
-                        // ARCHITECTURE.md is optional, others are expected
+                    if (!found && docName !== 'ARCHITECTURE.md' && docName !== 'CLAUDE_INSTRUCTIONS.md' && docName !== 'CLAUDE-PREP-STANDARD.md') {
                         missingDocs.push(docName);
                     }
                 }
                 
-                // === STEP 3: Bootstrap missing docs ===
+                // === Bootstrap missing docs ===
                 if (missingDocs.length > 0) {
-                    addLog(`📝 Generating ${missingDocs.length} missing doc${missingDocs.length > 1 ? 's' : ''}...`, 'warn');
+                    addLog(`\ud83d\udcdd Generating ${missingDocs.length} missing doc${missingDocs.length > 1 ? 's' : ''}...`, 'warn');
                     setProgress({ current: 6, total: 8 });
                     
                     for (const docName of missingDocs) {
                         let content = '';
-                        if (docName === 'CONTEXT.md') {
-                            content = generateSkeletonContext(app, config);
-                        } else if (docName === 'PROJECT_PLAN.md') {
-                            content = generateSkeletonPlan(app);
-                        } else if (docName === 'CHANGELOG.md') {
-                            content = generateSkeletonChangelog(app);
-                        } else if (docName === 'RELEASE_NOTES.txt') {
-                            content = `${app.name} - Release Notes\n${'='.repeat(app.name.length + 18)}\n\nv${app.versions?.prod || app.versions?.test || '0.0.0'}\n- Initial release notes created by Claude Prep\n`;
-                        }
+                        if (docName === 'CONTEXT.md') content = generateSkeletonContext(app, config);
+                        else if (docName === 'PROJECT_PLAN.md') content = generateSkeletonPlan(app);
+                        else if (docName === 'CHANGELOG.md') content = generateSkeletonChangelog(app);
+                        else if (docName === 'RELEASE_NOTES.txt') content = `${app.name} - Release Notes\n${'='.repeat(app.name.length + 18)}\n\nv${app.versions?.prod || app.versions?.test || '0.0.0'}\n- Initial release notes created by Claude Prep\n`;
                         if (content) {
                             appFolder.file(docName, content);
                             files.push({ name: docName, size: content.length, generated: true, tokens: TokenRegistryService.estimateTokens(content, docName) });
-                            addLog(`📝 Generated skeleton: ${docName}`, 'warn');
+                            addLog(`\ud83d\udcdd Generated skeleton: ${docName}`, 'warn');
                         }
                     }
                 }
                 
-                // === STEP 3.5: Scan for extra docs (DATA_MODEL.md, etc.) ===
-                addLog('🔍 Scanning for extra reference docs...');
+                // === Generate CLAUDE_INSTRUCTIONS.md from scope (if not in repo) ===
+                const hasClaudeInstructions = files.some(f => f.name === 'CLAUDE_INSTRUCTIONS.md');
+                if (!hasClaudeInstructions && firebaseDb && firebaseAuth?.currentUser) {
+                    try {
+                        const scopeSnap = await firebaseDb.ref(`command-center/${firebaseAuth.currentUser.uid}/appScopes/${app.id}`).once('value');
+                        const scopeData = scopeSnap.val();
+                        if (scopeData) {
+                            const instructions = generateClaudeInstructions(app, scopeData, config);
+                            if (instructions) {
+                                appFolder.file('CLAUDE_INSTRUCTIONS.md', instructions);
+                                files.push({ name: 'CLAUDE_INSTRUCTIONS.md', size: instructions.length, generated: true, tokens: TokenRegistryService.estimateTokens(instructions, 'CLAUDE_INSTRUCTIONS.md') });
+                                addLog('\ud83c\udfaf Generated CLAUDE_INSTRUCTIONS.md from project scope');
+                            }
+                        }
+                    } catch (e) {
+                        addLog('\u26a0\ufe0f Could not generate CLAUDE_INSTRUCTIONS.md: ' + e.message, 'warn');
+                    }
+                }
+                
+                // === Scan for extra docs ===
+                addLog('\ud83d\udd0d Scanning for extra reference docs...');
                 setProgress({ current: 6, total: 9 });
                 
                 const alreadyFetched = new Set([...CLAUDE_PREP_DOCS, ...files.map(f => f.name), 'SESSION_BRIEF.md']);
@@ -19731,9 +20502,7 @@ ${repoStr || '- *No repos configured*'}
                         f.type === 'file' && 
                         (f.name.endsWith('.md') || f.name.endsWith('.txt')) &&
                         !alreadyFetched.has(f.name) &&
-                        f.name !== 'README.md' &&
-                        f.name !== 'LICENSE' &&
-                        f.name !== 'LICENSE.md'
+                        f.name !== 'README.md' && f.name !== 'LICENSE' && f.name !== 'LICENSE.md'
                     );
                     
                     for (const extra of extraMdFiles) {
@@ -19742,63 +20511,95 @@ ${repoStr || '- *No repos configured*'}
                         if (extraFile?.textContent) {
                             appFolder.file(extra.name, extraFile.textContent);
                             files.push({ name: extra.name, size: extraFile.textContent.length, tokens: TokenRegistryService.estimateTokens(extraFile.textContent, extra.name) });
-                            addLog(`✅ ${extra.name} (extra reference doc)`);
+                            addLog(`\u2705 ${extra.name} (extra reference doc)`);
                         }
                     }
-                    
-                    if (extraMdFiles.length === 0) {
-                        addLog('ℹ️ No extra reference docs found');
-                    }
+                    if (extraMdFiles.length === 0) addLog('\u2139\ufe0f No extra reference docs found');
                 } catch (e) {
-                    addLog('⚠️ Could not scan for extra docs: ' + e.message, 'warn');
+                    addLog('\u26a0\ufe0f Could not scan for extra docs: ' + e.message, 'warn');
                 }
                 
-                // === STEP 4: Generate SESSION_BRIEF.md ===
-                addLog('📋 Generating session brief...');
+                // === Generate SESSION_BRIEF.md ===
+                addLog('\ud83d\udccb Generating session brief...');
                 setProgress({ current: 8, total: 9 });
                 
-                const brief = generateSessionBrief(app, config, deployments);
-                // Append file manifest to brief
+                if (sessionType) addLog(`\ud83c\udfaf Session type: ${SESSION_TYPES[sessionType]?.icon || ''} ${SESSION_TYPES[sessionType]?.label || sessionType}`);
+                if (selectedWorkItems.length > 0) addLog(`\ud83d\udccb Targeting ${selectedWorkItems.length} work item${selectedWorkItems.length > 1 ? 's' : ''}: ${selectedWorkItems.map(wi => wi.id).join(', ')}`);
+                
+                const brief = generateSessionBrief(app, config, deployments, {
+                    sessionType: sessionType || null,
+                    targetWorkItems: selectedWorkItems.length > 0 ? selectedWorkItems : null,
+                    allWorkItems: globalWorkItems || []
+                });
                 const manifest = '\n## Files in This Package\n| File | Size | Tokens | Source |\n|------|------|--------|--------|\n' +
-                    files.map(f => `| ${f.name} | ${(f.size / 1024).toFixed(1)}KB | ${TokenRegistryService.formatTokens(f.tokens || 0)} | ${f.generated ? '⚡ Generated skeleton' : '📂 From repo'} |`).join('\n') +
-                    '\n';
+                    files.map(f => `| ${f.name} | ${(f.size / 1024).toFixed(1)}KB | ${TokenRegistryService.formatTokens(f.tokens || 0)} | ${f.generated ? '\u26a1 Generated skeleton' : '\ud83d\udcc2 From repo'} |`).join('\n') + '\n';
                 const fullBrief = brief + manifest;
                 appFolder.file('SESSION_BRIEF.md', fullBrief);
                 files.push({ name: 'SESSION_BRIEF.md', size: fullBrief.length, tokens: TokenRegistryService.estimateTokens(fullBrief, 'SESSION_BRIEF.md') });
                 
-                // === STEP 5: Build zip ===
-                addLog('📦 Building zip...');
+                // === Build zip ===
+                addLog('\ud83d\udce6 Building zip...');
                 setProgress({ current: 9, total: 9 });
                 
                 const ver = app.versions?.prod || app.versions?.test || '0.0.0';
                 const filename = `${app.id}-project-v${ver}.zip`;
-                
                 const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
                 const blobUrl = URL.createObjectURL(blob);
-                
                 const totalSize = files.reduce((sum, f) => sum + f.size, 0);
                 
-                addLog(`🎉 Package ready: ${filename} (${(blob.size / 1024).toFixed(0)}KB compressed)`, 'success');
-                if (missingDocs.length > 0) {
-                    addLog(`⚠️ ${missingDocs.length} doc${missingDocs.length > 1 ? 's were' : ' was'} generated as skeleton${missingDocs.length > 1 ? 's' : ''} — flesh out during the session`, 'warn');
-                }
+                addLog(`\ud83c\udf89 Package ready: ${filename} (${(blob.size / 1024).toFixed(0)}KB compressed)`, 'success');
+                if (missingDocs.length > 0) addLog(`\u26a0\ufe0f ${missingDocs.length} doc${missingDocs.length > 1 ? 's were' : ' was'} generated as skeleton${missingDocs.length > 1 ? 's' : ''} \u2014 flesh out during the session`, 'warn');
                 
                 const totalTokens = files.reduce((sum, f) => sum + (f.tokens || 0), 0);
                 const budget = EngineRegistryService.checkBudget(totalTokens);
                 
-                addLog(`📊 Token estimate: ${TokenRegistryService.formatTokens(totalTokens)} (${budget.percentUsed}% of ${budget.engine.name} budget)`, budget.fits ? 'success' : 'warn');
+                addLog(`\ud83d\udcca Token estimate: ${TokenRegistryService.formatTokens(totalTokens)} (${budget.percentUsed}% of ${budget.engine.name} budget)`, budget.fits ? 'success' : 'warn');
                 
-                setResult({ blobUrl, filename, fileCount: files.length, totalSize, missingDocs, files, totalTokens, budget });
+                // === Phase 2.2: Work item auto-transition to in-progress ===
+                if (firebaseUid && selectedWorkItems.length > 0) {
+                    for (const wi of selectedWorkItems) {
+                        if (wi.status === 'ready') {
+                            try {
+                                await WorkItemService.updateStatus(firebaseUid, wi.id, 'in-progress');
+                                addLog(`\u27a1\ufe0f ${wi.id} \u2192 in-progress`, 'success');
+                            } catch (e) {
+                                addLog(`\u26a0\ufe0f Could not transition ${wi.id}: ${e.message}`, 'warn');
+                            }
+                        }
+                    }
+                }
+                
+                // === Phase 2.2: Create session record via SessionService ===
+                let newSession = null;
+                if (firebaseUid) {
+                    try {
+                        newSession = await SessionService.create(firebaseUid, {
+                            appId: app.id,
+                            type: sessionType || 'build',
+                            workItemId: selectedWorkItems.length > 0 ? selectedWorkItems.map(wi => wi.id).join(',') : null,
+                            engineId: typeInfo?.suggestedEngine || 'claude-sonnet-4.5',
+                            packageTokens: totalTokens,
+                            packageFiles: files.map(f => f.name)
+                        });
+                        if (newSession) {
+                            setSessionRecord(newSession);
+                            addLog(`\ud83d\udcdd Session ${newSession.id} recorded`, 'success');
+                        }
+                    } catch (e) {
+                        addLog(`\u26a0\ufe0f Could not create session record: ${e.message}`, 'warn');
+                    }
+                }
+                
+                setResult({ blobUrl, filename, fileCount: files.length, totalSize, missingDocs, files, totalTokens, budget, sessionType });
                 setStatus('done');
+                setPhase('done');
                 
             } catch (e) {
-                addLog(`❌ Error: ${e.message}`, 'error');
+                addLog(`\u274c Error: ${e.message}`, 'error');
                 setStatus('error');
+                setPhase('error');
             }
         };
-        
-        // Auto-start on mount
-        React.useEffect(() => { startPrep(); }, []);
         
         // Cleanup blob URL on unmount
         React.useEffect(() => {
@@ -19813,26 +20614,20 @@ ${repoStr || '- *No repos configured*'}
             a.click();
         };
         
-        // === Doc Upload Functions ===
+        // === Doc Upload Functions (preserved from Phase 2.1) ===
         const ALLOWED_DOC_NAMES = ['CONTEXT.md', 'PROJECT_PLAN.md', 'CHANGELOG.md', 'RELEASE_NOTES.txt', 'ARCHITECTURE.md', 'DATA_MODEL.md', 'UX_LAYERS.md', 'VOICE_OPTIMIZATION.md', 'QUOTE_MIGRATION.md'];
         
         const handleDocDrop = async (e) => {
             e.preventDefault();
             e.stopPropagation();
             const files = Array.from(e.dataTransfer?.files || e.target?.files || []);
-            
             if (files.length === 0) return;
-            
             const repo = app.repos?.prod || app.repos?.test;
             if (!repo) return;
             const subPath = app.subPath || '';
-            
-            // Collect all doc files — from direct drops or extracted from zips
-            let docFiles = []; // { name, content }
-            
+            let docFiles = [];
             for (const file of files) {
                 if (file.name.endsWith('.zip')) {
-                    // Extract docs from zip
                     try {
                         const zipData = await file.arrayBuffer();
                         const zip = await JSZip.loadAsync(zipData);
@@ -19844,64 +20639,34 @@ ${repoStr || '- *No repos configured*'}
                                 docFiles.push({ name, content });
                             }
                         }
-                    } catch (err) {
-                        await showAlert('Failed to read zip: ' + err.message);
-                        return;
-                    }
+                    } catch (err) { await showAlert('Failed to read zip: ' + err.message); return; }
                 } else if (file.name.endsWith('.md') || file.name.endsWith('.txt')) {
                     const content = await file.text();
                     docFiles.push({ name: file.name, content });
                 }
             }
-            
-            if (docFiles.length === 0) {
-                await showAlert('No .md or .txt doc files found. Drop a zip or individual files.');
-                return;
-            }
-            
-            // Deduplicate by name (prefer last occurrence)
+            if (docFiles.length === 0) { await showAlert('No .md or .txt doc files found.'); return; }
             const deduped = {};
             for (const f of docFiles) { deduped[f.name] = f; }
             docFiles = Object.values(deduped);
-            
-            // Check each file against repo for existing SHA
             const parsed = [];
             for (const doc of docFiles) {
-                const docsPath = getDocsPath(app);
-                const paths = docsPath
-                    ? [`${docsPath}/${doc.name}`, `${subPath}/${doc.name}`, doc.name]
+                const docsPathLocal = getDocsPath(app);
+                const paths = docsPathLocal
+                    ? [`${docsPathLocal}/${doc.name}`, `${subPath}/${doc.name}`, doc.name]
                     : subPath ? [`${subPath}/${doc.name}`, doc.name] : [doc.name];
-                
                 let existingSha = null;
                 let targetPath = paths[0];
-                
                 for (const tryPath of paths) {
                     try {
                         const existing = await github.getFile(repo, tryPath);
-                        if (existing) {
-                            existingSha = existing.sha;
-                            targetPath = tryPath;
-                            break;
-                        }
+                        if (existing) { existingSha = existing.sha; targetPath = tryPath; break; }
                     } catch (e) { /* not found */ }
                 }
-                
-                if (!existingSha && !subPath) {
-                    targetPath = doc.name;
-                } else if (!existingSha && subPath) {
-                    targetPath = docsPath ? `${docsPath}/${doc.name}` : `${subPath}/${doc.name}`;
-                }
-                
-                parsed.push({
-                    name: doc.name,
-                    content: doc.content,
-                    size: doc.content.length,
-                    existing: !!existingSha,
-                    sha: existingSha,
-                    targetPath
-                });
+                if (!existingSha && !subPath) targetPath = doc.name;
+                else if (!existingSha && subPath) targetPath = docsPathLocal ? `${docsPathLocal}/${doc.name}` : `${subPath}/${doc.name}`;
+                parsed.push({ name: doc.name, content: doc.content, size: doc.content.length, existing: !!existingSha, sha: existingSha, targetPath });
             }
-            
             setUploadFiles(parsed);
         };
         
@@ -19909,44 +20674,42 @@ ${repoStr || '- *No repos configured*'}
             if (!github || uploadFiles.length === 0) return;
             const repo = app.repos?.prod || app.repos?.test;
             if (!repo) return;
-            
             setUploading(true);
             setUploadLog([]);
-            
             for (const doc of uploadFiles) {
                 try {
                     const action = doc.existing ? 'Updating' : 'Creating';
-                    setUploadLog(prev => [...prev, { msg: `📤 ${action} ${doc.targetPath}...`, type: 'info' }]);
-                    
-                    await github.createOrUpdateFile(
-                        repo,
-                        doc.targetPath,
-                        doc.content,
-                        `${doc.existing ? 'Update' : 'Add'} ${doc.name} via Command Center`,
-                        doc.sha
-                    );
-                    
-                    setUploadLog(prev => [...prev, { msg: `✅ ${doc.name} pushed to ${doc.targetPath}`, type: 'success' }]);
+                    setUploadLog(prev => [...prev, { msg: `\ud83d\udce4 ${action} ${doc.targetPath}...`, type: 'info' }]);
+                    await github.createOrUpdateFile(repo, doc.targetPath, doc.content, `${doc.existing ? 'Update' : 'Add'} ${doc.name} via Command Center`, doc.sha);
+                    setUploadLog(prev => [...prev, { msg: `\u2705 ${doc.name} pushed to ${doc.targetPath}`, type: 'success' }]);
                 } catch (e) {
-                    setUploadLog(prev => [...prev, { msg: `❌ Failed to push ${doc.name}: ${e.message}`, type: 'error' }]);
+                    setUploadLog(prev => [...prev, { msg: `\u274c Failed to push ${doc.name}: ${e.message}`, type: 'error' }]);
                 }
             }
-            
             setUploading(false);
-            setUploadLog(prev => [...prev, { msg: '🎉 Done! Docs are now in the repo.', type: 'success' }]);
+            setUploadLog(prev => [...prev, { msg: '\ud83c\udf89 Done! Docs are now in the repo.', type: 'success' }]);
         };
         
         const logColors = { info: 'text-slate-400', success: 'text-green-400', warn: 'text-amber-400', error: 'text-red-400' };
         
+        // === Wizard Step Labels ===
+        const WIZARD_STEPS = [
+            { num: 1, label: 'Work Items', icon: '\ud83d\udccb' },
+            { num: 2, label: 'Session Type', icon: '\ud83c\udfaf' },
+            { num: 3, label: 'Context Budget', icon: '\ud83e\uddee' },
+            { num: 4, label: 'Generate', icon: '\ud83d\udce6' }
+        ];
+        
+        // === RENDER ===
         return (
             <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50" onClick={onClose}>
-                <div className="bg-slate-800 rounded-xl border border-slate-600 w-full max-w-xl mx-4 max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+                <div className="bg-slate-800 rounded-xl border border-slate-600 w-full max-w-xl mx-4 max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
                     {/* Header */}
-                    <div className="flex items-center justify-between p-5 border-b border-slate-700">
+                    <div className="flex items-center justify-between p-4 border-b border-slate-700">
                         <div className="flex items-center gap-3">
-                            <span className="text-2xl">🤖</span>
+                            <span className="text-2xl">\ud83e\udd16</span>
                             <div>
-                                <h2 className="text-lg font-semibold">Claude Prep</h2>
+                                <h2 className="text-lg font-semibold">Claude Session Wizard</h2>
                                 <div className="text-sm text-slate-400 flex items-center gap-2">
                                     <AppIcon icon={app.icon} size={16} />
                                     {app.name}
@@ -19954,10 +20717,293 @@ ${repoStr || '- *No repos configured*'}
                                 </div>
                             </div>
                         </div>
-                        <button onClick={onClose} className="text-slate-400 hover:text-white text-xl px-2">✕</button>
+                        <button onClick={onClose} className="text-slate-400 hover:text-white text-xl px-2">\u2715</button>
                     </div>
                     
-                    {/* Progress bar */}
+                    {/* === Wizard Step Indicator === */}
+                    {phase === 'wizard' && (
+                        <div className="flex items-center gap-1 px-4 pt-3 pb-1">
+                            {WIZARD_STEPS.map((s, i) => (
+                                <React.Fragment key={s.num}>
+                                    <button 
+                                        onClick={() => s.num < wizardStep && setWizardStep(s.num)}
+                                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-medium transition-all ${
+                                            wizardStep === s.num 
+                                                ? 'bg-purple-600/30 text-purple-200 border border-purple-500' 
+                                                : wizardStep > s.num 
+                                                    ? 'bg-green-900/20 text-green-400 border border-green-800 cursor-pointer hover:bg-green-900/30'
+                                                    : 'bg-slate-700/30 text-slate-500 border border-slate-700'
+                                        }`}>
+                                        <span>{wizardStep > s.num ? '\u2713' : s.icon}</span>
+                                        <span className="hidden sm:inline">{s.label}</span>
+                                        <span className="sm:hidden">{s.num}</span>
+                                    </button>
+                                    {i < WIZARD_STEPS.length - 1 && (
+                                        <div className={`flex-1 h-px ${wizardStep > s.num ? 'bg-green-700' : 'bg-slate-700'}`} />
+                                    )}
+                                </React.Fragment>
+                            ))}
+                        </div>
+                    )}
+                    
+                    {/* === STEP 1: Work Items === */}
+                    {phase === 'wizard' && wizardStep === 1 && (
+                        <div className="flex-1 overflow-y-auto p-5 min-h-0 space-y-4">
+                            <div className="text-sm font-medium text-slate-300 mb-1">What are you working on?</div>
+                            <div className="text-xs text-slate-500 mb-3">Select work items to target, or skip for a general session.</div>
+                            
+                            {appWorkItems.length > 0 ? (
+                                <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                                    {appWorkItems.map(wi => {
+                                        const isSelected = selectedWorkItems.some(w => w.id === wi.id);
+                                        const typeColors = { feature: 'text-blue-400', bugfix: 'text-red-400', enhancement: 'text-green-400', chore: 'text-slate-400', research: 'text-amber-400' };
+                                        return (
+                                            <button key={wi.id}
+                                                onClick={() => handleWorkItemToggle(wi)}
+                                                className={`w-full text-left px-3 py-2.5 rounded-lg text-xs flex items-center gap-2 transition-all border ${
+                                                    isSelected 
+                                                        ? 'bg-purple-600/20 border-purple-500/50 text-slate-200' 
+                                                        : 'bg-slate-700/30 border-transparent text-slate-400 hover:bg-slate-700/50'
+                                                }`}>
+                                                <span className={`w-4 h-4 flex items-center justify-center rounded border ${
+                                                    isSelected ? 'bg-purple-600 border-purple-500 text-white' : 'border-slate-600'
+                                                }`}>
+                                                    {isSelected && '\u2713'}
+                                                </span>
+                                                <span className="font-mono text-slate-500">{wi.id}</span>
+                                                <span className={typeColors[wi.type] || 'text-slate-400'}>{wi.type}</span>
+                                                <span className="flex-1 truncate text-slate-300">{wi.title}</span>
+                                                <span className={`px-1.5 py-0.5 rounded text-[10px] ${
+                                                    wi.status === 'in-progress' ? 'bg-blue-900/30 text-blue-300' : 'bg-slate-700 text-slate-400'
+                                                }`}>{wi.status}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            ) : (
+                                <div className="bg-slate-900/30 rounded-lg p-4 text-center text-sm text-slate-500">
+                                    No open work items for this app.
+                                    <div className="text-xs mt-1 text-slate-600">This will be a general session.</div>
+                                </div>
+                            )}
+                            
+                            {selectedWorkItems.length > 0 && (
+                                <div className="bg-purple-900/20 border border-purple-800/50 rounded-lg p-3 text-xs text-purple-300">
+                                    \ud83d\udccb {selectedWorkItems.length} item{selectedWorkItems.length > 1 ? 's' : ''} selected
+                                    {selectedWorkItems.filter(wi => wi.status === 'ready').length > 0 && (
+                                        <span className="text-purple-400 ml-2">
+                                            \u2192 {selectedWorkItems.filter(wi => wi.status === 'ready').length} will transition to in-progress
+                                        </span>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    
+                    {/* === STEP 2: Session Type === */}
+                    {phase === 'wizard' && wizardStep === 2 && (
+                        <div className="flex-1 overflow-y-auto p-5 min-h-0 space-y-4">
+                            <div className="text-sm font-medium text-slate-300 mb-1">Session Type</div>
+                            <div className="text-xs text-slate-500 mb-3">
+                                {selectedWorkItems.length > 0 && sessionType 
+                                    ? `Auto-suggested from work item type. Override if needed.` 
+                                    : 'Choose what kind of work you\'ll be doing.'}
+                            </div>
+                            
+                            <div className="grid grid-cols-4 gap-1.5">
+                                {SessionBriefGenerator.getAll().map(t => (
+                                    <button key={t.id}
+                                        onClick={() => setSessionType(sessionType === t.id ? null : t.id)}
+                                        className={`py-2.5 px-1.5 rounded-lg text-center text-xs transition-all border ${
+                                            sessionType === t.id 
+                                                ? 'bg-purple-600/30 border-purple-500 text-purple-200' 
+                                                : 'bg-slate-700/50 border-slate-600/50 text-slate-400 hover:bg-slate-700 hover:text-slate-300'
+                                        }`}>
+                                        <div className="text-lg mb-0.5">{t.icon}</div>
+                                        <div>{t.label}</div>
+                                    </button>
+                                ))}
+                            </div>
+                            
+                            {typeInfo && (
+                                <div className="bg-slate-900/50 rounded-lg p-3 text-xs space-y-2">
+                                    <div className="text-slate-300">{typeInfo.description}</div>
+                                    {suggestedEngine && (
+                                        <div className="text-slate-500">Suggested engine: <span className="text-slate-400">{suggestedEngine.name}</span></div>
+                                    )}
+                                    <div className="text-slate-400 italic text-[11px]">"{typeInfo.roleFrame}"</div>
+                                    <div className="space-y-0.5 mt-1">
+                                        {typeInfo.scopeRules.map((rule, i) => (
+                                            <div key={i} className="text-slate-500 flex items-start gap-1.5">
+                                                <span className="text-slate-600 mt-0.5">\u2022</span> {rule}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="pt-2 border-t border-slate-800">
+                                        <div className="text-slate-500 font-medium mb-1">Delivery requirements:</div>
+                                        {typeInfo.deliveryRequirements.map((req, i) => (
+                                            <div key={i} className="text-slate-500 flex items-start gap-1.5">
+                                                <span className="text-green-700 mt-0.5">\u2713</span> {req}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    
+                    {/* === STEP 3: Context Budget === */}
+                    {phase === 'wizard' && wizardStep === 3 && (
+                        <div className="flex-1 overflow-y-auto p-5 min-h-0 space-y-4">
+                            <div className="text-sm font-medium text-slate-300 mb-1">Context Budget Preview</div>
+                            <div className="text-xs text-slate-500 mb-3">
+                                Review what will be included in your session package based on {typeInfo ? `${typeInfo.icon} ${typeInfo.label}` : 'default'} context strategy.
+                            </div>
+                            
+                            {/* Engine info */}
+                            <div className="bg-slate-900/50 rounded-lg p-3 text-xs">
+                                <div className="flex items-center justify-between mb-2">
+                                    <span className="text-slate-400 font-medium">{activeEngine?.name || 'Default Engine'}</span>
+                                    <span className="text-slate-500">{TokenRegistryService.formatTokens(activeEngine?.contextWindow || 200000)} context window</span>
+                                </div>
+                                <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+                                    <div className="h-full bg-slate-600 rounded-full" style={{ width: '0%' }} />
+                                </div>
+                                <div className="text-[10px] text-slate-600 mt-1">Actual token usage will be calculated during package generation</div>
+                            </div>
+                            
+                            {/* Context Strategy */}
+                            {typeInfo ? (
+                                <div className="space-y-2">
+                                    <div className="text-xs text-slate-400 font-medium">\ud83d\udce6 Files included by {typeInfo.icon} {typeInfo.label} strategy:</div>
+                                    
+                                    <div className="space-y-1">
+                                        {typeInfo.contextStrategy.includeSource && (
+                                            <div className="flex items-center gap-2 px-3 py-1.5 bg-green-900/20 rounded text-xs">
+                                                <span className="text-green-400">\u2713</span>
+                                                <span className="text-green-300 font-mono">{app.targetPath || 'index.html'}</span>
+                                                <span className="text-green-600 ml-auto">source</span>
+                                            </div>
+                                        )}
+                                        {!typeInfo.contextStrategy.includeSource && (
+                                            <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 rounded text-xs">
+                                                <span className="text-slate-600">\u2212</span>
+                                                <span className="text-slate-500 font-mono line-through">{app.targetPath || 'index.html'}</span>
+                                                <span className="text-amber-600 ml-auto">skipped</span>
+                                            </div>
+                                        )}
+                                        {typeInfo.contextStrategy.alwaysInclude.map(f => (
+                                            <div key={f} className="flex items-center gap-2 px-3 py-1.5 bg-green-900/20 rounded text-xs">
+                                                <span className="text-green-400">\u2713</span>
+                                                <span className="text-green-300 font-mono">{f}</span>
+                                                <span className="text-green-600 ml-auto">always</span>
+                                            </div>
+                                        ))}
+                                        {typeInfo.contextStrategy.preferInclude.map(f => (
+                                            <div key={f} className="flex items-center gap-2 px-3 py-1.5 bg-slate-700/50 rounded text-xs">
+                                                <span className="text-slate-400">+</span>
+                                                <span className="text-slate-300 font-mono">{f}</span>
+                                                <span className="text-slate-500 ml-auto">preferred</span>
+                                            </div>
+                                        ))}
+                                        {typeInfo.contextStrategy.skipWhenTight.map(f => (
+                                            <div key={f} className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 rounded text-xs">
+                                                <span className="text-slate-600">\u2212</span>
+                                                <span className="text-slate-500 font-mono">{f}</span>
+                                                <span className="text-slate-600 ml-auto">skipped</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    
+                                    <div className="text-xs text-slate-500 mt-2">
+                                        + SESSION_BRIEF.md (auto-generated) + any extra .md/.txt files found in repo
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="bg-slate-900/30 rounded-lg p-3 text-xs text-slate-500">
+                                    <div className="font-medium text-slate-400 mb-1">\ud83d\udce6 Default strategy (no session type):</div>
+                                    All standard docs + source files will be included. Select a session type in Step 2 to optimize file selection.
+                                </div>
+                            )}
+                            
+                            {/* Work item context note */}
+                            {selectedWorkItems.length > 0 && (
+                                <div className="bg-purple-900/15 border border-purple-800/30 rounded-lg p-3 text-xs text-purple-300">
+                                    \ud83d\udccb Session brief will include acceptance criteria, files affected, and dependencies for {selectedWorkItems.length} targeted work item{selectedWorkItems.length > 1 ? 's' : ''}.
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    
+                    {/* === STEP 4: Generate (in wizard — shows summary before building) === */}
+                    {phase === 'wizard' && wizardStep === 4 && (
+                        <div className="flex-1 overflow-y-auto p-5 min-h-0 space-y-4">
+                            <div className="text-sm font-medium text-slate-300 mb-1">Ready to Generate</div>
+                            <div className="text-xs text-slate-500 mb-3">Review your session configuration and generate the package.</div>
+                            
+                            {/* Summary */}
+                            <div className="bg-slate-900/50 rounded-lg p-4 space-y-3 text-xs">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-slate-500">Session Type</span>
+                                    <span className="text-slate-300">{typeInfo ? `${typeInfo.icon} ${typeInfo.label}` : 'General (no type)'}</span>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <span className="text-slate-500">Work Items</span>
+                                    <span className="text-slate-300">{selectedWorkItems.length > 0 ? selectedWorkItems.map(wi => wi.id).join(', ') : 'None (general session)'}</span>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <span className="text-slate-500">Engine</span>
+                                    <span className="text-slate-300">{activeEngine?.name || 'Default'}</span>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <span className="text-slate-500">Source Files</span>
+                                    <span className="text-slate-300">{typeInfo?.contextStrategy?.includeSource === false ? 'Excluded' : 'Included'}</span>
+                                </div>
+                                {selectedWorkItems.filter(wi => wi.status === 'ready').length > 0 && (
+                                    <div className="pt-2 border-t border-slate-700 text-purple-300">
+                                        \u27a1\ufe0f {selectedWorkItems.filter(wi => wi.status === 'ready').length} work item{selectedWorkItems.filter(wi => wi.status === 'ready').length > 1 ? 's' : ''} will transition to <strong>in-progress</strong>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                    
+                    {/* === Wizard Footer (navigation) === */}
+                    {phase === 'wizard' && (
+                        <div className="p-4 border-t border-slate-700 space-y-2">
+                            <div className="flex gap-2">
+                                {wizardStep > 1 && (
+                                    <button onClick={goBack}
+                                        className="px-4 py-2.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition-colors">
+                                        \u2190 Back
+                                    </button>
+                                )}
+                                {wizardStep < 4 && (
+                                    <button onClick={goNext}
+                                        className="flex-1 py-2.5 bg-purple-600 hover:bg-purple-500 rounded-lg font-medium text-sm transition-colors">
+                                        Next \u2192
+                                    </button>
+                                )}
+                                {wizardStep === 4 && (
+                                    <button onClick={startPrep}
+                                        className="flex-1 py-2.5 bg-purple-600 hover:bg-purple-500 rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-colors">
+                                        \ud83d\udce6 Generate Package{sessionType ? ` (${SESSION_TYPES[sessionType].icon} ${SESSION_TYPES[sessionType].label})` : ''}
+                                    </button>
+                                )}
+                            </div>
+                            {wizardStep === 1 && (
+                                <button onClick={quickBuild}
+                                    className="w-full py-2 text-sm text-slate-500 hover:text-slate-300 transition-colors">
+                                    Skip wizard \u2014 Quick package
+                                </button>
+                            )}
+                        </div>
+                    )}
+                    
+                    {/* === Building/Done/Error Phase (same as before) === */}
+                    {(phase === 'building' || phase === 'done' || phase === 'error') && (
+                        <React.Fragment>
+                    
                     {status === 'fetching' && progress.total > 0 && (
                         <div className="px-5 pt-3">
                             <div className="h-1.5 bg-slate-700 rounded-full overflow-hidden">
@@ -19967,7 +21013,6 @@ ${repoStr || '- *No repos configured*'}
                         </div>
                     )}
                     
-                    {/* Log */}
                     <div className="flex-1 overflow-y-auto p-5 min-h-0">
                         <div className="space-y-1 font-mono text-xs">
                             {log.map((entry, i) => (
@@ -19977,34 +21022,26 @@ ${repoStr || '- *No repos configured*'}
                                 </div>
                             ))}
                             {status === 'fetching' && (
-                                <div className="text-purple-400 animate-pulse">⏳ Working...</div>
+                                <div className="text-purple-400 animate-pulse">\u23f3 Working...</div>
                             )}
                         </div>
                     </div>
                     
-                    {/* Result / Actions */}
                     <div className="p-5 border-t border-slate-700">
                         {status === 'done' && result && (
                             <div className="space-y-3">
-                                {/* Summary stats row */}
                                 <div className="flex items-center gap-4 text-sm flex-wrap">
-                                    <div className="flex items-center gap-1.5 text-slate-300">
-                                        <span>📦</span> {result.fileCount} files
-                                    </div>
-                                    <div className="flex items-center gap-1.5 text-slate-300">
-                                        <span>💾</span> {(result.totalSize / 1024).toFixed(0)}KB
-                                    </div>
-                                    <div className="flex items-center gap-1.5 text-slate-300">
-                                        <span>🧮</span> {TokenRegistryService.formatTokens(result.totalTokens)} tokens
-                                    </div>
+                                    <div className="flex items-center gap-1.5 text-slate-300"><span>\ud83d\udce6</span> {result.fileCount} files</div>
+                                    <div className="flex items-center gap-1.5 text-slate-300"><span>\ud83d\udcbe</span> {(result.totalSize / 1024).toFixed(0)}KB</div>
+                                    <div className="flex items-center gap-1.5 text-slate-300"><span>\ud83e\uddee</span> {TokenRegistryService.formatTokens(result.totalTokens)} tokens</div>
                                     {result.missingDocs.length > 0 && (
-                                        <div className="flex items-center gap-1.5 text-amber-400">
-                                            <span>⚡</span> {result.missingDocs.length} skeleton{result.missingDocs.length > 1 ? 's' : ''}
-                                        </div>
+                                        <div className="flex items-center gap-1.5 text-amber-400"><span>\u26a1</span> {result.missingDocs.length} skeleton{result.missingDocs.length > 1 ? 's' : ''}</div>
+                                    )}
+                                    {sessionRecord && (
+                                        <div className="flex items-center gap-1.5 text-green-400"><span>\ud83d\udcdd</span> {sessionRecord.id}</div>
                                     )}
                                 </div>
                                 
-                                {/* Context Budget Bar */}
                                 {result.budget && (() => {
                                     const b = result.budget;
                                     const pct = Math.min(b.percentUsed, 100);
@@ -20014,193 +21051,136 @@ ${repoStr || '- *No repos configured*'}
                                         <div className="bg-slate-900 rounded-lg p-3">
                                             <div className="flex items-center justify-between text-xs mb-1.5">
                                                 <span className="text-slate-400 font-medium">{b.engine.name}</span>
-                                                <span className={textColor}>
-                                                    {TokenRegistryService.formatTokens(b.tokenCount)} / {TokenRegistryService.formatTokens(b.usableLimit)} usable ({b.percentUsed}%)
-                                                </span>
+                                                <span className={textColor}>{TokenRegistryService.formatTokens(b.tokenCount)} / {TokenRegistryService.formatTokens(b.usableLimit)} usable ({b.percentUsed}%)</span>
                                             </div>
                                             <div className="h-2.5 bg-slate-700 rounded-full overflow-hidden">
-                                                <div className={`h-full rounded-full transition-all duration-500 ${barColor}`}
-                                                    style={{ width: `${pct}%` }} />
+                                                <div className={`h-full rounded-full transition-all duration-500 ${barColor}`} style={{ width: `${pct}%` }} />
                                             </div>
                                             <div className="flex justify-between text-[10px] text-slate-600 mt-1">
                                                 <span>0</span>
-                                                <span>{TokenRegistryService.formatTokens(b.limit)} total ({TokenRegistryService.formatTokens(b.usableLimit)} usable · 20% reserved)</span>
+                                                <span>{TokenRegistryService.formatTokens(b.limit)} total ({TokenRegistryService.formatTokens(b.usableLimit)} usable \u00b7 20% reserved)</span>
                                             </div>
                                             {!b.fits && b.recommendations.length > 0 && (
                                                 <div className="mt-2.5 pt-2.5 border-t border-slate-700">
-                                                    <div className="text-xs text-red-400 font-medium mb-1.5">⚠️ Over budget by {TokenRegistryService.formatTokens(b.overBy)} tokens</div>
-                                                    <div className="space-y-1">
-                                                        {b.recommendations.map((rec, i) => (
-                                                            <div key={i} className="flex items-start gap-2 text-xs">
-                                                                <span className="text-slate-500 mt-0.5">•</span>
-                                                                <div>
-                                                                    <span className="text-slate-300">{rec.label}</span>
-                                                                    {rec.savings && <span className="text-green-500 ml-1">({rec.savings})</span>}
-                                                                    {rec.cost && <span className="text-amber-500 ml-1">({rec.cost})</span>}
-                                                                </div>
-                                                            </div>
-                                                        ))}
-                                                    </div>
+                                                    <div className="text-xs text-red-400 font-medium mb-1.5">\u26a0\ufe0f Over budget by {TokenRegistryService.formatTokens(b.overBy)} tokens</div>
+                                                    <div className="space-y-1">{b.recommendations.map((rec, i) => (
+                                                        <div key={i} className="flex items-start gap-2 text-xs">
+                                                            <span className="text-slate-500 mt-0.5">\u2022</span>
+                                                            <div><span className="text-slate-300">{rec.label}</span>{rec.savings && <span className="text-green-500 ml-1">({rec.savings})</span>}{rec.cost && <span className="text-amber-500 ml-1">({rec.cost})</span>}</div>
+                                                        </div>
+                                                    ))}</div>
                                                 </div>
                                             )}
                                         </div>
                                     );
                                 })()}
                                 
-                                {/* File Manifest Table */}
                                 {result.files && result.files.length > 0 && (
                                     <details className="group">
-                                        <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-300 select-none">📋 File manifest ({result.files.length} files)</summary>
+                                        <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-300 select-none">\ud83d\udccb File manifest ({result.files.length} files)</summary>
                                         <div className="mt-2 bg-slate-900 rounded-lg overflow-hidden">
                                             <table className="w-full text-xs">
-                                                <thead>
-                                                    <tr className="text-slate-500 border-b border-slate-700">
-                                                        <th className="text-left py-1.5 px-2 font-medium">File</th>
-                                                        <th className="text-right py-1.5 px-2 font-medium">Size</th>
-                                                        <th className="text-right py-1.5 px-2 font-medium">Tokens</th>
-                                                        <th className="text-right py-1.5 px-2 font-medium">%</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {[...result.files].sort((a, b) => (b.tokens || 0) - (a.tokens || 0)).map((f, i) => {
-                                                        const pctOfTotal = result.totalTokens ? Math.round(((f.tokens || 0) / result.totalTokens) * 100) : 0;
-                                                        return (
-                                                            <tr key={i} className="border-b border-slate-800 hover:bg-slate-800/50">
-                                                                <td className="py-1 px-2 font-mono text-slate-300">
-                                                                    {f.generated ? '⚡ ' : ''}{f.name}
-                                                                </td>
-                                                                <td className="py-1 px-2 text-right text-slate-500">{(f.size / 1024).toFixed(1)}KB</td>
-                                                                <td className="py-1 px-2 text-right text-slate-400">{TokenRegistryService.formatTokens(f.tokens || 0)}</td>
-                                                                <td className="py-1 px-2 text-right">
-                                                                    <span className={`${pctOfTotal >= 50 ? 'text-amber-400' : 'text-slate-500'}`}>{pctOfTotal}%</span>
-                                                                </td>
-                                                            </tr>
-                                                        );
-                                                    })}
-                                                </tbody>
-                                                <tfoot>
-                                                    <tr className="border-t border-slate-600 font-medium">
-                                                        <td className="py-1.5 px-2 text-slate-300">Total</td>
-                                                        <td className="py-1.5 px-2 text-right text-slate-400">{(result.totalSize / 1024).toFixed(0)}KB</td>
-                                                        <td className="py-1.5 px-2 text-right text-slate-300">{TokenRegistryService.formatTokens(result.totalTokens)}</td>
-                                                        <td className="py-1.5 px-2 text-right text-slate-500">100%</td>
-                                                    </tr>
-                                                </tfoot>
+                                                <thead><tr className="text-slate-500 border-b border-slate-700">
+                                                    <th className="text-left py-1.5 px-2 font-medium">File</th>
+                                                    <th className="text-right py-1.5 px-2 font-medium">Size</th>
+                                                    <th className="text-right py-1.5 px-2 font-medium">Tokens</th>
+                                                    <th className="text-right py-1.5 px-2 font-medium">%</th>
+                                                </tr></thead>
+                                                <tbody>{[...result.files].sort((a, b) => (b.tokens || 0) - (a.tokens || 0)).map((f, i) => {
+                                                    const pctOfTotal = result.totalTokens ? Math.round(((f.tokens || 0) / result.totalTokens) * 100) : 0;
+                                                    return (<tr key={i} className="border-b border-slate-800 hover:bg-slate-800/50">
+                                                        <td className="py-1 px-2 font-mono text-slate-300">{f.generated ? '\u26a1 ' : ''}{f.name}</td>
+                                                        <td className="py-1 px-2 text-right text-slate-500">{(f.size / 1024).toFixed(1)}KB</td>
+                                                        <td className="py-1 px-2 text-right text-slate-400">{TokenRegistryService.formatTokens(f.tokens || 0)}</td>
+                                                        <td className="py-1 px-2 text-right"><span className={pctOfTotal > 50 ? 'text-amber-400' : pctOfTotal > 25 ? 'text-slate-300' : 'text-slate-500'}>{pctOfTotal}%</span></td>
+                                                    </tr>);
+                                                })}</tbody>
+                                                <tfoot><tr className="border-t border-slate-600 font-medium">
+                                                    <td className="py-1.5 px-2 text-slate-300">Total</td>
+                                                    <td className="py-1.5 px-2 text-right text-slate-400">{(result.totalSize / 1024).toFixed(0)}KB</td>
+                                                    <td className="py-1.5 px-2 text-right text-slate-300">{TokenRegistryService.formatTokens(result.totalTokens)}</td>
+                                                    <td className="py-1.5 px-2 text-right text-slate-500">100%</td>
+                                                </tr></tfoot>
                                             </table>
                                         </div>
                                     </details>
                                 )}
                                 
-                                {/* Download button */}
-                                <button onClick={download}
-                                    className="w-full py-3 bg-purple-600 hover:bg-purple-500 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors">
-                                    ⬇️ Download {result.filename}
+                                <button onClick={download} className="w-full py-3 bg-purple-600 hover:bg-purple-500 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors">
+                                    \u2b07\ufe0f Download {result.filename}
                                 </button>
                                 
                                 {result.missingDocs.length > 0 && (
                                     <div className="text-xs text-amber-400/80 bg-amber-900/20 rounded-lg p-3">
                                         <strong>Skeleton docs generated:</strong> {result.missingDocs.join(', ')}. 
-                                        These are templates — flesh them out during your first session with this app, 
+                                        These are templates \u2014 flesh them out during your first session with this app, 
                                         then commit the docs to the repo so future preps pull the real versions.
                                     </div>
                                 )}
                                 
-                                {/* Upload Docs toggle */}
                                 {!uploadMode && uploadFiles.length === 0 && (
                                     <button onClick={() => setUploadMode(true)}
                                         className="w-full py-2 rounded-lg text-sm flex items-center justify-center gap-2 transition-colors bg-slate-700 hover:bg-slate-600 text-slate-300">
-                                        📄 Push Docs to Repo
+                                        \ud83d\udcc4 Push Docs to Repo
                                     </button>
                                 )}
                             </div>
                         )}
                         
-                        {/* Upload Docs Panel — visible when toggled or files are staged */}
                         {(uploadMode || uploadFiles.length > 0) && (
                             <div className="space-y-3 mt-3">
-                                {/* Drop zone — hide once files are staged */}
                                 {uploadFiles.length === 0 && (
                                     <div>
-                                        <div 
-                                            onDrop={handleDocDrop}
-                                            onDragOver={e => { e.preventDefault(); e.stopPropagation(); }}
+                                        <div onDrop={handleDocDrop} onDragOver={e => { e.preventDefault(); e.stopPropagation(); }}
                                             onClick={() => { const input = document.createElement('input'); input.type = 'file'; input.multiple = true; input.accept = '.md,.txt,.zip'; input.onchange = handleDocDrop; input.click(); }}
-                                            className="border-2 border-dashed border-slate-600 hover:border-indigo-500 rounded-lg p-4 text-center cursor-pointer transition-colors"
-                                        >
-                                            <div className="text-slate-400 text-sm">
-                                                📄 Drop doc files or a project zip here
-                                            </div>
-                                            <div className="text-xs text-slate-500 mt-1">
-                                                Accepts .md, .txt files or .zip packages — extracts docs automatically
-                                            </div>
+                                            className="border-2 border-dashed border-slate-600 hover:border-indigo-500 rounded-lg p-4 text-center cursor-pointer transition-colors">
+                                            <div className="text-slate-400 text-sm">\ud83d\udcc4 Drop doc files or a project zip here</div>
+                                            <div className="text-xs text-slate-500 mt-1">Accepts .md, .txt files or .zip packages</div>
                                         </div>
-                                        <button onClick={() => { setUploadMode(false); }}
-                                            className="w-full mt-2 py-1.5 text-xs text-slate-500 hover:text-slate-300">
-                                            Cancel
-                                        </button>
+                                        <button onClick={() => setUploadMode(false)} className="w-full mt-2 py-1.5 text-xs text-slate-500 hover:text-slate-300">Cancel</button>
                                     </div>
                                 )}
-                                
-                                {/* Staged files */}
                                 {uploadFiles.length > 0 && (
                                     <div className="space-y-2">
                                         <div className="flex items-center justify-between">
                                             <div className="text-xs text-slate-400 font-medium">Files to push:</div>
-                                            <button onClick={() => { setUploadFiles([]); setUploadLog([]); }}
-                                                className="text-xs text-slate-500 hover:text-red-400">✕ Clear</button>
+                                            <button onClick={() => { setUploadFiles([]); setUploadLog([]); }} className="text-xs text-slate-500 hover:text-red-400">\u2715 Clear</button>
                                         </div>
                                         {uploadFiles.map((f, i) => (
                                             <div key={i} className="flex items-center justify-between bg-slate-900 rounded px-3 py-2 text-sm">
                                                 <div className="flex items-center gap-2">
-                                                    <span>{f.existing ? '🔄' : '🆕'}</span>
+                                                    <span>{f.existing ? '\ud83d\udd04' : '\ud83c\udd95'}</span>
                                                     <span className="font-mono text-slate-300">{f.name}</span>
                                                     <span className="text-xs text-slate-500">({(f.size / 1024).toFixed(1)}KB)</span>
                                                 </div>
                                                 <div className="text-xs text-slate-500 font-mono">{f.targetPath}</div>
                                             </div>
                                         ))}
-                                        
-                                        {/* Push button / status */}
                                         {!uploading && uploadLog.length === 0 && (
-                                            <button 
-                                                onClick={pushDocsToRepo}
-                                                className="w-full py-2.5 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors bg-green-600 hover:bg-green-500 text-white"
-                                            >
-                                                🚀 Push {uploadFiles.length} file{uploadFiles.length > 1 ? 's' : ''} to {app.repos?.prod?.split('/').pop() || 'repo'}
+                                            <button onClick={pushDocsToRepo} className="w-full py-2.5 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors bg-green-600 hover:bg-green-500 text-white">
+                                                \ud83d\ude80 Push {uploadFiles.length} file{uploadFiles.length > 1 ? 's' : ''} to {app.repos?.prod?.split('/').pop() || 'repo'}
                                             </button>
                                         )}
-                                        
                                         {uploading && (
-                                            <div className="w-full py-2.5 rounded-lg font-medium flex items-center justify-center gap-2 bg-slate-700 text-amber-400 animate-pulse">
-                                                ⏳ Pushing files to repo...
-                                            </div>
+                                            <div className="w-full py-2.5 rounded-lg font-medium flex items-center justify-center gap-2 bg-slate-700 text-amber-400 animate-pulse">\u23f3 Pushing files to repo...</div>
                                         )}
                                     </div>
                                 )}
-                                
-                                {/* Upload log */}
                                 {uploadLog.length > 0 && (
                                     <div className="space-y-2">
                                         <div className="bg-slate-900 rounded-lg p-3 space-y-1 font-mono text-xs max-h-40 overflow-y-auto">
-                                            {uploadLog.map((entry, i) => (
-                                                <div key={i} className={logColors[entry.type] || 'text-slate-400'}>{entry.msg}</div>
-                                            ))}
+                                            {uploadLog.map((entry, i) => (<div key={i} className={logColors[entry.type] || 'text-slate-400'}>{entry.msg}</div>))}
                                         </div>
-                                        
-                                        {/* Completion banner */}
                                         {!uploading && uploadLog.some(e => e.type === 'success' && e.msg.includes('Done')) && (
                                             <div className="bg-green-900/30 border border-green-700 rounded-lg p-3 text-center">
-                                                <div className="text-green-400 font-medium">✅ All docs pushed to repo</div>
+                                                <div className="text-green-400 font-medium">\u2705 All docs pushed to repo</div>
                                                 <div className="text-xs text-green-500 mt-1">Next Claude Prep will pull these docs automatically</div>
                                             </div>
                                         )}
-                                        
-                                        {/* Error banner */}
                                         {!uploading && uploadLog.some(e => e.type === 'error') && !uploadLog.some(e => e.msg.includes('Done')) && (
                                             <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 text-center">
-                                                <div className="text-red-400 font-medium">⚠️ Some files failed to push</div>
-                                                <button onClick={() => { setUploadLog([]); }}
-                                                    className="text-xs text-slate-400 hover:text-white mt-1">Retry</button>
+                                                <div className="text-red-400 font-medium">\u26a0\ufe0f Some files failed to push</div>
+                                                <button onClick={() => setUploadLog([])} className="text-xs text-slate-400 hover:text-white mt-1">Retry</button>
                                             </div>
                                         )}
                                     </div>
@@ -20210,24 +21190,15 @@ ${repoStr || '- *No repos configured*'}
                         
                         {status === 'error' && (
                             <div className="flex gap-2">
-                                <button onClick={startPrep}
-                                    className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm">
-                                    🔄 Retry
-                                </button>
-                                <button onClick={onClose}
-                                    className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm">
-                                    Close
-                                </button>
+                                <button onClick={() => { setPhase('wizard'); setWizardStep(4); setStatus('idle'); }} className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm">\u2190 Back</button>
+                                <button onClick={startPrep} className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm">\ud83d\udd04 Retry</button>
+                                <button onClick={onClose} className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm">Close</button>
                             </div>
                         )}
-                        
-                        {status === 'idle' && (
-                            <button onClick={startPrep}
-                                className="w-full py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-sm">
-                                Start
-                            </button>
-                        )}
                     </div>
+                    
+                    </React.Fragment>
+                    )}
                 </div>
             </div>
         );
@@ -20418,10 +21389,22 @@ ${repoStr || '- *No repos configured*'}
                     addLog('✅ Repos refreshed', 'success');
                 }
 
-                // Generate Claude prompt
-                const prompt = generateClaudePrompt(appData, prodFullName, testFullName);
-                setPromptGenerated(prompt);
-                addLog('✅ Claude project prompt generated', 'success');
+                // Generate Claude prompt (use CLAUDE_INSTRUCTIONS.md if scope available)
+                if (scopeData) {
+                    const instructions = generateClaudeInstructions(appData, scopeData, config);
+                    if (instructions) {
+                        setPromptGenerated(instructions);
+                        addLog('🎯 Generated CLAUDE_INSTRUCTIONS.md from project scope', 'success');
+                    } else {
+                        const prompt = generateClaudePrompt(appData, prodFullName, testFullName);
+                        setPromptGenerated(prompt);
+                        addLog('✅ Claude project prompt generated', 'success');
+                    }
+                } else {
+                    const prompt = generateClaudePrompt(appData, prodFullName, testFullName);
+                    setPromptGenerated(prompt);
+                    addLog('✅ Claude project prompt generated', 'success');
+                }
                 addLog('🎉 Setup complete!', 'success');
 
             } catch (e) {
@@ -21531,11 +22514,11 @@ The developer uses Claude for iterative development — each session should:
                     <details className="mt-3">
                         <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-300 select-none">Session type → engine recommendations</summary>
                         <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
-                            {Object.entries(EngineRegistryService.SESSION_TYPE_ENGINES).map(([type, engineId]) => {
-                                const engine = EngineRegistryService.get(engineId);
+                            {SessionBriefGenerator.getAll().map(t => {
+                                const engine = EngineRegistryService.get(t.suggestedEngine);
                                 return (
-                                    <div key={type} className="bg-slate-900 rounded px-2.5 py-1.5">
-                                        <div className="text-[10px] text-slate-500 uppercase">{type}</div>
+                                    <div key={t.id} className="bg-slate-900 rounded px-2.5 py-1.5" title={t.description}>
+                                        <div className="text-[10px] text-slate-500 uppercase flex items-center gap-1">{t.icon} {t.label}</div>
                                         <div className="text-xs text-slate-300">{engine?.name?.split(' ').pop()}</div>
                                     </div>
                                 );
