@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Command Center</title>
-    <meta name="version" content="8.21.1">
+    <meta name="version" content="8.22.0">
     <meta name="gs-app-id" content="command-center">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -1131,6 +1131,7 @@
                 tags: itemData.tags || [],
                 createdAt: new Date().toISOString(),
                 createdBy: itemData.createdBy || 'manual',
+                source: itemData.source || 'manual',
                 startedAt: null,
                 completedAt: null,
                 completedInVersion: null,
@@ -1196,6 +1197,56 @@
         // Get in-progress items (for deploy close-the-loop)
         getInProgress(items, appId) {
             return items.filter(i => i.status === 'in-progress' && (!appId || i.appId === appId));
+        },
+        
+        // Batch create work items (for scoping flow)
+        async createBatch(uid, itemsData) {
+            const ref = this._ref(uid);
+            if (!ref) return [];
+            
+            const results = [];
+            const updates = {};
+            for (const itemData of itemsData) {
+                const item = {
+                    appId: itemData.appId,
+                    title: itemData.title,
+                    description: itemData.description || '',
+                    type: itemData.type || 'feature',
+                    priority: itemData.priority || 'core',
+                    milestone: itemData.milestone || 'beta',
+                    status: itemData.status || 'idea',
+                    effort: itemData.effort || 'session',
+                    criteria: itemData.criteria || [],
+                    context: {
+                        filesAffected: itemData.context?.filesAffected || [],
+                        sections: itemData.context?.sections || [],
+                        dependencies: itemData.context?.dependencies || [],
+                        notes: itemData.context?.notes || '',
+                        relatedItems: itemData.context?.relatedItems || []
+                    },
+                    tags: itemData.tags || [],
+                    createdAt: new Date().toISOString(),
+                    createdBy: itemData.createdBy || 'manual',
+                    source: itemData.source || 'manual',
+                    startedAt: null,
+                    completedAt: null,
+                    completedInVersion: null,
+                    sessionId: null
+                };
+                updates[itemData.id] = item;
+                results.push({ id: itemData.id, ...item });
+            }
+            await ref.update(updates);
+            console.log(`[WorkItemService] Batch created ${results.length} items`);
+            return results;
+        },
+        
+        // Delete a work item
+        async delete(uid, itemId) {
+            const ref = this._ref(uid);
+            if (!ref) return;
+            await ref.child(itemId).remove();
+            console.log(`[WorkItemService] Deleted ${itemId}`);
         },
         
         // Generate next work item ID from existing list
@@ -3931,6 +3982,7 @@
         
         // Global issues state (synced with Firebase)
         const [globalIssues, setGlobalIssues] = React.useState([]);
+        const [globalWorkItems, setGlobalWorkItems] = React.useState([]);
         const [firebaseUid, setFirebaseUid] = React.useState(null);
         const [firebaseUser, setFirebaseUser] = React.useState(null);
         
@@ -3939,6 +3991,7 @@
             if (!firebaseAuth) return;
             
             let unsubscribeIssues = () => {};
+            let unsubscribeWorkItems = () => {};
             
             const unsubscribe = firebaseAuth.onAuthStateChanged((u) => {
                 setFirebaseUser(u);
@@ -3946,15 +3999,19 @@
                     setFirebaseUid(u.uid);
                     // Listen for issues changes via IssueService
                     unsubscribeIssues = IssueService.listen(u.uid, setGlobalIssues);
+                    // Listen for work items via WorkItemService (v8.22.0)
+                    unsubscribeWorkItems = WorkItemService.listen(u.uid, setGlobalWorkItems);
                 } else {
                     setFirebaseUid(null);
                     setGlobalIssues([]);
+                    setGlobalWorkItems([]);
                 }
             });
             
             return () => {
                 unsubscribe();
                 unsubscribeIssues();
+                unsubscribeWorkItems();
             };
         }, []);
         
@@ -5889,6 +5946,7 @@
                                 {[
                                     { id: 'deploy', icon: '🚀', label: 'Deploy', views: ['dashboard', 'smartdeploy', 'history'] },
                                     { id: 'projects', icon: '📂', label: 'Projects', views: ['projects'] },
+                                    { id: 'backlog', icon: '📋', label: 'Backlog', views: ['backlog'] },
                                     { id: 'monitor', icon: '📊', label: 'Monitor', views: ['users', 'beta', 'firebase', 'integrations', 'issues'] },
                                     { id: 'maintain', icon: '🔧', label: 'Maintain', views: ['cleanup', 'files', 'archive', 'session'] },
                                     { id: 'configure', icon: '⚙️', label: 'Configure', views: ['config', 'setup', 'settings'] }
@@ -6151,6 +6209,7 @@
                             showAlert={showAlert}
                             showPrompt={showPrompt}
                             globalIssues={globalIssues}
+                            globalWorkItems={globalWorkItems}
                             linkIssuesToVersion={linkIssuesToVersion}
                             setView={setView}
                             rollbackSnapshots={rollbackSnapshots}
@@ -6279,6 +6338,10 @@
                     
                     {view === 'issues' && (
                         <IssuesView apps={apps} deployments={deployments} showAlert={showAlert} showConfirm={showConfirm} showPrompt={showPrompt} />
+                    )}
+                    
+                    {view === 'backlog' && (
+                        <BacklogView apps={apps} showAlert={showAlert} showConfirm={showConfirm} showPrompt={showPrompt} setView={setView} />
                     )}
                     
                     {view === 'config' && (
@@ -7065,7 +7128,7 @@
     // DASHBOARD VIEW
     // =========================================================================
     
-    function DashboardView({ apps, config, stagedFiles, setStagedFiles, github, onFileDrop, onRemove, onDeploy, onBatchDeploy, onPromote, activeDeployments, removeActiveDeployment, refreshing, onUpdateStagedFile, deployingRepos, showConfirm, showAlert, showPrompt, globalIssues, linkIssuesToVersion, setView, rollbackSnapshots, onQuickRollback }) {
+    function DashboardView({ apps, config, stagedFiles, setStagedFiles, github, onFileDrop, onRemove, onDeploy, onBatchDeploy, onPromote, activeDeployments, removeActiveDeployment, refreshing, onUpdateStagedFile, deployingRepos, showConfirm, showAlert, showPrompt, globalIssues, globalWorkItems, linkIssuesToVersion, setView, rollbackSnapshots, onQuickRollback }) {
         const [selectedFileIds, setSelectedFileIds] = React.useState(new Set());
         const [deployTarget, setDeployTarget] = React.useState({ appId: 'command-center', target: 'test' });
         const [isDeploying, setIsDeploying] = React.useState(false);
@@ -8049,6 +8112,14 @@
                                                                     <span className={`transform transition-transform ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
                                                                     <AppIcon icon={app.icon} size={20} />
                                                                     <span className="font-medium flex-1">{app.name}</span>
+                                                                    {(() => {
+                                                                        const activeWI = (globalWorkItems || []).filter(wi => wi.appId === app.id && ['idea','ready','in-progress'].includes(wi.status));
+                                                                        return activeWI.length > 0 ? (
+                                                                            <span className="px-1.5 py-0.5 bg-indigo-900/50 text-indigo-300 rounded text-xs" title={`${activeWI.length} active work items`}>
+                                                                                📋 {activeWI.length}
+                                                                            </span>
+                                                                        ) : null;
+                                                                    })()}
                                                                     {isInternal && <span className="text-xs text-slate-500">internal</span>}
                                                                     {canPromote && (
                                                                         <button onClick={(e) => { e.stopPropagation(); onPromote(app.id); }}
@@ -8188,6 +8259,66 @@
                                             }`} />
                                         </div>
                                     ))
+                                }
+                            </div>
+                        </div>
+                    )}
+                    
+                    {/* Backlog Summary Widget (v8.22.0) */}
+                    {(globalWorkItems || []).length > 0 && (
+                        <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
+                            <h3 className="font-semibold mb-3 flex items-center gap-2">
+                                📋 Backlog
+                                <button 
+                                    onClick={() => setView('backlog')}
+                                    className="ml-auto text-xs text-indigo-400 hover:text-indigo-300">
+                                    View All →
+                                </button>
+                            </h3>
+                            <div className="grid grid-cols-4 gap-2 text-center mb-3">
+                                <div className="bg-slate-700/50 rounded p-2">
+                                    <div className="text-lg font-bold text-slate-300">
+                                        {globalWorkItems.filter(i => i.status === 'idea').length}
+                                    </div>
+                                    <div className="text-xs text-slate-400">Ideas</div>
+                                </div>
+                                <div className="bg-blue-900/30 rounded p-2">
+                                    <div className="text-lg font-bold text-blue-400">
+                                        {globalWorkItems.filter(i => i.status === 'ready').length}
+                                    </div>
+                                    <div className="text-xs text-slate-400">Ready</div>
+                                </div>
+                                <div className="bg-amber-900/30 rounded p-2">
+                                    <div className="text-lg font-bold text-amber-400">
+                                        {globalWorkItems.filter(i => i.status === 'in-progress').length}
+                                    </div>
+                                    <div className="text-xs text-slate-400">In Progress</div>
+                                </div>
+                                <div className="bg-green-900/30 rounded p-2">
+                                    <div className="text-lg font-bold text-green-400">
+                                        {globalWorkItems.filter(i => i.status === 'done').length}
+                                    </div>
+                                    <div className="text-xs text-slate-400">Done</div>
+                                </div>
+                            </div>
+                            {/* Recent active items */}
+                            <div className="space-y-1">
+                                {globalWorkItems
+                                    .filter(i => i.status === 'in-progress' || i.status === 'ready')
+                                    .slice(0, 3)
+                                    .map(item => {
+                                        const app = Object.values(apps).find(a => a.id === item.appId);
+                                        return (
+                                            <div key={item.id} className="flex items-center gap-2 text-sm p-2 bg-slate-700/50 rounded">
+                                                <span className="font-mono text-xs text-indigo-400">{item.id}</span>
+                                                {app && <span className="text-xs">{app.icon}</span>}
+                                                <span className="flex-1 truncate">{item.title}</span>
+                                                <span className={`px-1.5 py-0.5 rounded text-xs ${
+                                                    item.status === 'in-progress' ? 'bg-amber-900/50 text-amber-300' : 'bg-blue-900/50 text-blue-300'
+                                                }`}>{item.status}</span>
+                                            </div>
+                                        );
+                                    })
                                 }
                             </div>
                         </div>
@@ -14056,6 +14187,778 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
         );
     }
 
+    // =========================================================================
+    // BACKLOG VIEW - Work Item Tracking & Project Planning (v8.22.0)
+    // =========================================================================
+    
+    function WorkItemEditModal({ item, apps, isNew, onSave, onCancel }) {
+        const configuredApps = Object.values(apps).filter(a => a.testRepo || a.prodRepo);
+        
+        const [formData, setFormData] = React.useState({
+            appId: item?.appId || configuredApps[0]?.id || '',
+            title: item?.title || '',
+            description: item?.description || '',
+            type: item?.type || 'feature',
+            priority: item?.priority || 'core',
+            status: item?.status || 'idea',
+            effort: item?.effort || 'session',
+            criteria: item?.criteria || [],
+            context: {
+                filesAffected: item?.context?.filesAffected || [],
+                sections: item?.context?.sections || [],
+                dependencies: item?.context?.dependencies || [],
+                notes: item?.context?.notes || '',
+                relatedItems: item?.context?.relatedItems || []
+            },
+            tags: item?.tags || [],
+            source: item?.source || 'manual'
+        });
+        
+        const [newCriterion, setNewCriterion] = React.useState('');
+        const [newTag, setNewTag] = React.useState('');
+        const [showContext, setShowContext] = React.useState(false);
+        
+        const update = (field, value) => setFormData(prev => ({ ...prev, [field]: value }));
+        
+        const addCriterion = () => {
+            if (!newCriterion.trim()) return;
+            update('criteria', [...formData.criteria, newCriterion.trim()]);
+            setNewCriterion('');
+        };
+        
+        const removeCriterion = (idx) => {
+            update('criteria', formData.criteria.filter((_, i) => i !== idx));
+        };
+        
+        const addTag = () => {
+            if (!newTag.trim()) return;
+            update('tags', [...formData.tags, newTag.trim()]);
+            setNewTag('');
+        };
+        
+        const removeTag = (idx) => {
+            update('tags', formData.tags.filter((_, i) => i !== idx));
+        };
+        
+        const handleSave = () => {
+            if (!formData.title.trim()) return;
+            if (!formData.appId) return;
+            onSave(formData);
+        };
+        
+        const typeOptions = [
+            { value: 'feature', label: '✨ Feature', color: 'bg-indigo-900/50 text-indigo-300' },
+            { value: 'bugfix', label: '🐛 Bugfix', color: 'bg-red-900/50 text-red-300' },
+            { value: 'enhancement', label: '💎 Enhancement', color: 'bg-purple-900/50 text-purple-300' },
+            { value: 'chore', label: '🔧 Chore', color: 'bg-slate-700 text-slate-300' },
+            { value: 'research', label: '🔍 Research', color: 'bg-amber-900/50 text-amber-300' }
+        ];
+        
+        const priorityOptions = [
+            { value: 'core', label: 'Core', color: 'bg-red-900/50 text-red-300' },
+            { value: 'nice-to-have', label: 'Nice to Have', color: 'bg-amber-900/50 text-amber-300' },
+            { value: 'out-of-scope', label: 'Out of Scope', color: 'bg-slate-700 text-slate-400' }
+        ];
+        
+        const statusOptions = [
+            { value: 'idea', label: '💡 Idea' },
+            { value: 'ready', label: '📋 Ready' },
+            { value: 'in-progress', label: '🔨 In Progress' },
+            { value: 'done', label: '✅ Done' },
+            { value: 'deferred', label: '⏸️ Deferred' }
+        ];
+        
+        const effortOptions = [
+            { value: 'quick', label: '⚡ Quick (<30 min)' },
+            { value: 'session', label: '🕐 Session (1-2 hrs)' },
+            { value: 'multi-session', label: '📅 Multi-Session' },
+            { value: 'epic', label: '🏔️ Epic' }
+        ];
+        
+        return (
+            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onCancel}>
+                <div className="bg-slate-800 rounded-xl border border-slate-700 w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                    <div className="p-6">
+                        <div className="flex items-center justify-between mb-6">
+                            <h2 className="text-xl font-bold">{isNew ? '➕ New Work Item' : `✏️ Edit ${item?.id || ''}`}</h2>
+                            <button onClick={onCancel} className="text-slate-400 hover:text-white text-xl">✕</button>
+                        </div>
+                        
+                        {/* App + Title */}
+                        <div className="grid grid-cols-[200px_1fr] gap-3 mb-4">
+                            <div>
+                                <label className="text-xs text-slate-400 block mb-1">App</label>
+                                <select value={formData.appId} onChange={e => update('appId', e.target.value)}
+                                    className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm">
+                                    {configuredApps.map(a => (
+                                        <option key={a.id} value={a.id}>{a.icon} {a.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-xs text-slate-400 block mb-1">Title *</label>
+                                <input value={formData.title} onChange={e => update('title', e.target.value)}
+                                    placeholder="What needs to be done?"
+                                    className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm"
+                                    autoFocus />
+                            </div>
+                        </div>
+                        
+                        {/* Description */}
+                        <div className="mb-4">
+                            <label className="text-xs text-slate-400 block mb-1">Description</label>
+                            <textarea value={formData.description} onChange={e => update('description', e.target.value)}
+                                placeholder="Detailed description of the work..."
+                                rows={3}
+                                className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm resize-y" />
+                        </div>
+                        
+                        {/* Type + Priority + Status + Effort */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                            <div>
+                                <label className="text-xs text-slate-400 block mb-1">Type</label>
+                                <select value={formData.type} onChange={e => update('type', e.target.value)}
+                                    className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm">
+                                    {typeOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-xs text-slate-400 block mb-1">Priority</label>
+                                <select value={formData.priority} onChange={e => update('priority', e.target.value)}
+                                    className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm">
+                                    {priorityOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-xs text-slate-400 block mb-1">Status</label>
+                                <select value={formData.status} onChange={e => update('status', e.target.value)}
+                                    className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm">
+                                    {statusOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-xs text-slate-400 block mb-1">Effort</label>
+                                <select value={formData.effort} onChange={e => update('effort', e.target.value)}
+                                    className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm">
+                                    {effortOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                </select>
+                            </div>
+                        </div>
+                        
+                        {/* Acceptance Criteria */}
+                        <div className="mb-4">
+                            <label className="text-xs text-slate-400 block mb-1">Acceptance Criteria</label>
+                            {formData.criteria.length > 0 && (
+                                <div className="space-y-1 mb-2">
+                                    {formData.criteria.map((c, i) => (
+                                        <div key={i} className="flex items-center gap-2 text-sm bg-slate-700/50 rounded px-3 py-1.5">
+                                            <span className="text-slate-500">☐</span>
+                                            <span className="flex-1">{c}</span>
+                                            <button onClick={() => removeCriterion(i)} className="text-slate-500 hover:text-red-400 text-xs">✕</button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                            <div className="flex gap-2">
+                                <input value={newCriterion} onChange={e => setNewCriterion(e.target.value)}
+                                    onKeyDown={e => e.key === 'Enter' && addCriterion()}
+                                    placeholder="Add acceptance criterion..."
+                                    className="flex-1 bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm" />
+                                <button onClick={addCriterion} className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 rounded text-sm">+</button>
+                            </div>
+                        </div>
+                        
+                        {/* Tags */}
+                        <div className="mb-4">
+                            <label className="text-xs text-slate-400 block mb-1">Tags</label>
+                            <div className="flex flex-wrap gap-1 mb-2">
+                                {formData.tags.map((t, i) => (
+                                    <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-600 rounded text-xs">
+                                        {t}
+                                        <button onClick={() => removeTag(i)} className="text-slate-400 hover:text-red-400">✕</button>
+                                    </span>
+                                ))}
+                            </div>
+                            <div className="flex gap-2">
+                                <input value={newTag} onChange={e => setNewTag(e.target.value)}
+                                    onKeyDown={e => e.key === 'Enter' && addTag()}
+                                    placeholder="Add tag..."
+                                    className="flex-1 bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm" />
+                                <button onClick={addTag} className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 rounded text-sm">+</button>
+                            </div>
+                        </div>
+                        
+                        {/* Context (collapsible) */}
+                        <div className="mb-6">
+                            <button onClick={() => setShowContext(!showContext)}
+                                className="text-xs text-slate-400 hover:text-white flex items-center gap-1">
+                                <span className={`transform transition-transform ${showContext ? 'rotate-90' : ''}`}>▶</span>
+                                Context & Dependencies
+                            </button>
+                            {showContext && (
+                                <div className="mt-2 space-y-3 pl-4 border-l border-slate-700">
+                                    <div>
+                                        <label className="text-xs text-slate-400 block mb-1">Files Affected (comma-separated)</label>
+                                        <input value={formData.context.filesAffected.join(', ')}
+                                            onChange={e => setFormData(prev => ({
+                                                ...prev,
+                                                context: { ...prev.context, filesAffected: e.target.value.split(',').map(s => s.trim()).filter(Boolean) }
+                                            }))}
+                                            placeholder="index.html, sw.js"
+                                            className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm" />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs text-slate-400 block mb-1">Sections (comma-separated)</label>
+                                        <input value={formData.context.sections.join(', ')}
+                                            onChange={e => setFormData(prev => ({
+                                                ...prev,
+                                                context: { ...prev.context, sections: e.target.value.split(',').map(s => s.trim()).filter(Boolean) }
+                                            }))}
+                                            placeholder="DashboardView, WorkItemService"
+                                            className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm" />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs text-slate-400 block mb-1">Dependencies (comma-separated)</label>
+                                        <input value={formData.context.dependencies.join(', ')}
+                                            onChange={e => setFormData(prev => ({
+                                                ...prev,
+                                                context: { ...prev.context, dependencies: e.target.value.split(',').map(s => s.trim()).filter(Boolean) }
+                                            }))}
+                                            placeholder="WI-001, WI-003"
+                                            className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm" />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs text-slate-400 block mb-1">Notes</label>
+                                        <textarea value={formData.context.notes}
+                                            onChange={e => setFormData(prev => ({
+                                                ...prev,
+                                                context: { ...prev.context, notes: e.target.value }
+                                            }))}
+                                            rows={2}
+                                            placeholder="Additional context..."
+                                            className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm resize-y" />
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                        
+                        {/* Actions */}
+                        <div className="flex justify-end gap-3">
+                            <button onClick={onCancel} className="px-4 py-2 text-sm text-slate-400 hover:text-white">Cancel</button>
+                            <button onClick={handleSave} disabled={!formData.title.trim() || !formData.appId}
+                                className="px-6 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded-lg text-sm font-medium">
+                                {isNew ? 'Create Work Item' : 'Save Changes'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+    
+    function BacklogView({ apps, showAlert, showConfirm, showPrompt, setView }) {
+        const [workItems, setWorkItems] = React.useState([]);
+        const [firebaseUser, setFirebaseUser] = React.useState(null);
+        const [loading, setLoading] = React.useState(true);
+        const [showEditModal, setShowEditModal] = React.useState(null); // null | { item, isNew }
+        const [statusFilter, setStatusFilter] = React.useState('active'); // 'all', 'active', 'idea', 'ready', 'in-progress', 'done', 'deferred'
+        const [typeFilter, setTypeFilter] = React.useState('all');
+        const [appFilter, setAppFilter] = React.useState('all');
+        const [searchQuery, setSearchQuery] = React.useState('');
+        const [sortBy, setSortBy] = React.useState('priority'); // 'priority', 'status', 'created', 'effort', 'type'
+        const [groupBy, setGroupBy] = React.useState('app'); // 'app', 'status', 'type', 'none'
+        const [selectedItems, setSelectedItems] = React.useState(new Set());
+        
+        const configuredApps = Object.values(apps).filter(a => a.testRepo || a.prodRepo);
+        
+        // Firebase listener
+        React.useEffect(() => {
+            if (!firebaseAuth) return;
+            let unsub = () => {};
+            const authUnsub = firebaseAuth.onAuthStateChanged((u) => {
+                setFirebaseUser(u);
+                if (u) {
+                    setLoading(true);
+                    unsub = WorkItemService.listen(u.uid, (list) => {
+                        setWorkItems(list);
+                        setLoading(false);
+                    });
+                }
+            });
+            return () => { authUnsub(); unsub(); };
+        }, []);
+        
+        // Generate next ID
+        const getNextId = () => WorkItemService.getNextId(workItems);
+        
+        // CRUD operations
+        const createItem = async (data) => {
+            if (!firebaseUser) return;
+            const id = getNextId();
+            await WorkItemService.create(firebaseUser.uid, { ...data, id });
+            setShowEditModal(null);
+            showAlert(`Created ${id}: ${data.title}`, 'success');
+        };
+        
+        const updateItem = async (data) => {
+            if (!firebaseUser || !showEditModal?.item?.id) return;
+            const id = showEditModal.item.id;
+            await WorkItemService.update(firebaseUser.uid, id, data);
+            setShowEditModal(null);
+            showAlert(`Updated ${id}`, 'success');
+        };
+        
+        const deleteItem = async (item) => {
+            if (!firebaseUser) return;
+            const confirmed = await showConfirm(`Delete ${item.id}: ${item.title}?`);
+            if (!confirmed) return;
+            await WorkItemService.delete(firebaseUser.uid, item.id);
+            showAlert(`Deleted ${item.id}`, 'success');
+        };
+        
+        const transitionStatus = async (item, newStatus) => {
+            if (!firebaseUser) return;
+            await WorkItemService.updateStatus(firebaseUser.uid, item.id, newStatus);
+        };
+        
+        const bulkUpdateStatus = async (newStatus) => {
+            if (!firebaseUser || selectedItems.size === 0) return;
+            const confirmed = await showConfirm(`Change ${selectedItems.size} item(s) to "${newStatus}"?`);
+            if (!confirmed) return;
+            for (const id of selectedItems) {
+                await WorkItemService.updateStatus(firebaseUser.uid, id, newStatus);
+            }
+            setSelectedItems(new Set());
+            showAlert(`Updated ${selectedItems.size} items`, 'success');
+        };
+        
+        // Copy for Claude
+        const copyForClaude = (item) => {
+            const app = configuredApps.find(a => a.id === item.appId);
+            const text = `## Work Item ${item.id}: ${item.title}
+
+**App:** ${app?.name || item.appId}
+**Type:** ${item.type} | **Priority:** ${item.priority} | **Effort:** ${item.effort}
+**Status:** ${item.status}
+
+### Description
+${item.description || 'N/A'}
+
+### Acceptance Criteria
+${item.criteria?.length > 0 ? item.criteria.map((c, i) => `${i + 1}. ${c}`).join('\n') : 'None specified'}
+${item.context?.filesAffected?.length > 0 ? `\n### Files Affected\n${item.context.filesAffected.join(', ')}` : ''}
+${item.context?.notes ? `\n### Notes\n${item.context.notes}` : ''}
+---
+When complete, note: "Completes ${item.id}" in deploy notes.`;
+            
+            navigator.clipboard.writeText(text);
+            showAlert(`Copied ${item.id} for Claude`, 'success');
+        };
+        
+        // Filtering & sorting
+        const priorityOrder = { 'core': 0, 'nice-to-have': 1, 'out-of-scope': 2 };
+        const statusOrder = { 'in-progress': 0, 'ready': 1, 'idea': 2, 'deferred': 3, 'done': 4 };
+        const effortOrder = { 'quick': 0, 'session': 1, 'multi-session': 2, 'epic': 3 };
+        
+        const filteredItems = React.useMemo(() => {
+            let items = [...workItems];
+            
+            // Status filter
+            if (statusFilter === 'active') {
+                items = items.filter(i => ['idea', 'ready', 'in-progress'].includes(i.status));
+            } else if (statusFilter !== 'all') {
+                items = items.filter(i => i.status === statusFilter);
+            }
+            
+            // Type filter
+            if (typeFilter !== 'all') {
+                items = items.filter(i => i.type === typeFilter);
+            }
+            
+            // App filter
+            if (appFilter !== 'all') {
+                items = items.filter(i => i.appId === appFilter);
+            }
+            
+            // Search
+            if (searchQuery.trim()) {
+                const q = searchQuery.toLowerCase();
+                items = items.filter(i =>
+                    i.title?.toLowerCase().includes(q) ||
+                    i.description?.toLowerCase().includes(q) ||
+                    i.id?.toLowerCase().includes(q) ||
+                    i.tags?.some(t => t.toLowerCase().includes(q))
+                );
+            }
+            
+            // Sort
+            items.sort((a, b) => {
+                switch (sortBy) {
+                    case 'priority': return (priorityOrder[a.priority] || 9) - (priorityOrder[b.priority] || 9);
+                    case 'status': return (statusOrder[a.status] || 9) - (statusOrder[b.status] || 9);
+                    case 'effort': return (effortOrder[a.effort] || 9) - (effortOrder[b.effort] || 9);
+                    case 'type': return (a.type || '').localeCompare(b.type || '');
+                    case 'created': return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+                    default: return 0;
+                }
+            });
+            
+            return items;
+        }, [workItems, statusFilter, typeFilter, appFilter, searchQuery, sortBy]);
+        
+        // Grouping
+        const groupedItems = React.useMemo(() => {
+            if (groupBy === 'none') return { 'All Items': filteredItems };
+            
+            const groups = {};
+            filteredItems.forEach(item => {
+                let key;
+                switch (groupBy) {
+                    case 'app': {
+                        const app = configuredApps.find(a => a.id === item.appId);
+                        key = app ? `${app.icon} ${app.name}` : item.appId || 'Unassigned';
+                        break;
+                    }
+                    case 'status': key = item.status || 'unknown'; break;
+                    case 'type': key = item.type || 'unknown'; break;
+                    default: key = 'All';
+                }
+                if (!groups[key]) groups[key] = [];
+                groups[key].push(item);
+            });
+            return groups;
+        }, [filteredItems, groupBy, configuredApps]);
+        
+        // Stats
+        const stats = React.useMemo(() => {
+            const all = workItems;
+            return {
+                total: all.length,
+                idea: all.filter(i => i.status === 'idea').length,
+                ready: all.filter(i => i.status === 'ready').length,
+                inProgress: all.filter(i => i.status === 'in-progress').length,
+                done: all.filter(i => i.status === 'done').length,
+                deferred: all.filter(i => i.status === 'deferred').length,
+            };
+        }, [workItems]);
+        
+        // Toggle selection
+        const toggleSelect = (id) => {
+            setSelectedItems(prev => {
+                const next = new Set(prev);
+                if (next.has(id)) next.delete(id); else next.add(id);
+                return next;
+            });
+        };
+        
+        const selectAll = () => {
+            if (selectedItems.size === filteredItems.length) {
+                setSelectedItems(new Set());
+            } else {
+                setSelectedItems(new Set(filteredItems.map(i => i.id)));
+            }
+        };
+        
+        // Status badge component
+        const StatusBadge = ({ status }) => {
+            const styles = {
+                'idea': 'bg-slate-600 text-slate-300',
+                'ready': 'bg-blue-900/50 text-blue-300',
+                'in-progress': 'bg-amber-900/50 text-amber-300',
+                'done': 'bg-green-900/50 text-green-300',
+                'deferred': 'bg-slate-700 text-slate-400'
+            };
+            const icons = { 'idea': '💡', 'ready': '📋', 'in-progress': '🔨', 'done': '✅', 'deferred': '⏸️' };
+            return (
+                <span className={`px-2 py-0.5 rounded text-xs ${styles[status] || 'bg-slate-600 text-slate-300'}`}>
+                    {icons[status] || ''} {status}
+                </span>
+            );
+        };
+        
+        const TypeBadge = ({ type }) => {
+            const styles = {
+                'feature': 'bg-indigo-900/50 text-indigo-300',
+                'bugfix': 'bg-red-900/50 text-red-300',
+                'enhancement': 'bg-purple-900/50 text-purple-300',
+                'chore': 'bg-slate-700 text-slate-300',
+                'research': 'bg-amber-900/50 text-amber-300'
+            };
+            const icons = { 'feature': '✨', 'bugfix': '🐛', 'enhancement': '💎', 'chore': '🔧', 'research': '🔍' };
+            return (
+                <span className={`px-2 py-0.5 rounded text-xs ${styles[type] || 'bg-slate-600'}`}>
+                    {icons[type] || ''} {type}
+                </span>
+            );
+        };
+        
+        const PriorityBadge = ({ priority }) => {
+            const styles = {
+                'core': 'bg-red-900/30 text-red-300 border border-red-800/50',
+                'nice-to-have': 'bg-amber-900/30 text-amber-300 border border-amber-800/50',
+                'out-of-scope': 'bg-slate-700/50 text-slate-400 border border-slate-600'
+            };
+            return <span className={`px-2 py-0.5 rounded text-xs ${styles[priority] || ''}`}>{priority}</span>;
+        };
+        
+        const EffortBadge = ({ effort }) => {
+            const icons = { 'quick': '⚡', 'session': '🕐', 'multi-session': '📅', 'epic': '🏔️' };
+            return <span className="text-xs text-slate-500">{icons[effort] || ''} {effort}</span>;
+        };
+        
+        // Quick status transitions
+        const getNextStatuses = (current) => {
+            const transitions = {
+                'idea': ['ready', 'deferred'],
+                'ready': ['in-progress', 'deferred'],
+                'in-progress': ['done', 'ready', 'deferred'],
+                'done': ['ready'],
+                'deferred': ['idea', 'ready']
+            };
+            return transitions[current] || [];
+        };
+        
+        if (!firebaseUser && !loading) {
+            return (
+                <div className="text-center py-20">
+                    <div className="text-4xl mb-4">🔐</div>
+                    <h2 className="text-xl font-bold mb-2">Sign in Required</h2>
+                    <p className="text-slate-400 text-sm">Backlog requires Firebase authentication. Sign in via Settings.</p>
+                    <button onClick={() => setView('settings')} className="mt-4 px-4 py-2 bg-indigo-600 rounded-lg text-sm">
+                        Go to Settings
+                    </button>
+                </div>
+            );
+        }
+        
+        return (
+            <div>
+                {/* Header */}
+                <div className="flex items-center justify-between mb-6">
+                    <div>
+                        <h1 className="text-2xl font-bold flex items-center gap-2">📋 Backlog</h1>
+                        <p className="text-sm text-slate-400 mt-1">
+                            {stats.total} items — {stats.inProgress} in progress, {stats.ready} ready, {stats.idea} ideas
+                        </p>
+                    </div>
+                    <button onClick={() => setShowEditModal({ item: null, isNew: true })}
+                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-medium flex items-center gap-2">
+                        ➕ New Work Item
+                    </button>
+                </div>
+                
+                {/* Stats Bar */}
+                {stats.total > 0 && (
+                    <div className="flex gap-2 mb-4 flex-wrap">
+                        {[
+                            { label: 'Active', value: stats.idea + stats.ready + stats.inProgress, filter: 'active', color: 'bg-indigo-600' },
+                            { label: 'Ideas', value: stats.idea, filter: 'idea', color: 'bg-slate-600' },
+                            { label: 'Ready', value: stats.ready, filter: 'ready', color: 'bg-blue-600' },
+                            { label: 'In Progress', value: stats.inProgress, filter: 'in-progress', color: 'bg-amber-600' },
+                            { label: 'Done', value: stats.done, filter: 'done', color: 'bg-green-600' },
+                            { label: 'Deferred', value: stats.deferred, filter: 'deferred', color: 'bg-slate-500' },
+                        ].map(s => (
+                            <button key={s.filter} onClick={() => setStatusFilter(statusFilter === s.filter ? 'all' : s.filter)}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-2 transition-colors ${
+                                    statusFilter === s.filter ? `${s.color} text-white` : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                                }`}>
+                                {s.label} <span className="font-bold">{s.value}</span>
+                            </button>
+                        ))}
+                    </div>
+                )}
+                
+                {/* Filters Bar */}
+                <div className="flex flex-wrap items-center gap-3 mb-4 bg-slate-800/50 rounded-lg p-3">
+                    <div className="flex-1 min-w-[200px]">
+                        <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+                            placeholder="🔍 Search items..."
+                            className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm" />
+                    </div>
+                    <select value={appFilter} onChange={e => setAppFilter(e.target.value)}
+                        className="bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm">
+                        <option value="all">All Apps</option>
+                        {configuredApps.map(a => <option key={a.id} value={a.id}>{a.icon} {a.name}</option>)}
+                    </select>
+                    <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)}
+                        className="bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm">
+                        <option value="all">All Types</option>
+                        <option value="feature">✨ Feature</option>
+                        <option value="bugfix">🐛 Bugfix</option>
+                        <option value="enhancement">💎 Enhancement</option>
+                        <option value="chore">🔧 Chore</option>
+                        <option value="research">🔍 Research</option>
+                    </select>
+                    <select value={sortBy} onChange={e => setSortBy(e.target.value)}
+                        className="bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm">
+                        <option value="priority">Sort: Priority</option>
+                        <option value="status">Sort: Status</option>
+                        <option value="effort">Sort: Effort</option>
+                        <option value="type">Sort: Type</option>
+                        <option value="created">Sort: Newest</option>
+                    </select>
+                    <select value={groupBy} onChange={e => setGroupBy(e.target.value)}
+                        className="bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm">
+                        <option value="app">Group: App</option>
+                        <option value="status">Group: Status</option>
+                        <option value="type">Group: Type</option>
+                        <option value="none">No Grouping</option>
+                    </select>
+                </div>
+                
+                {/* Bulk Actions */}
+                {selectedItems.size > 0 && (
+                    <div className="flex items-center gap-3 mb-4 bg-indigo-900/20 border border-indigo-700/50 rounded-lg p-3">
+                        <span className="text-sm font-medium">{selectedItems.size} selected</span>
+                        <div className="flex gap-2">
+                            <button onClick={() => bulkUpdateStatus('ready')} className="px-3 py-1 bg-blue-600 rounded text-xs">→ Ready</button>
+                            <button onClick={() => bulkUpdateStatus('in-progress')} className="px-3 py-1 bg-amber-600 rounded text-xs">→ In Progress</button>
+                            <button onClick={() => bulkUpdateStatus('done')} className="px-3 py-1 bg-green-600 rounded text-xs">→ Done</button>
+                            <button onClick={() => bulkUpdateStatus('deferred')} className="px-3 py-1 bg-slate-600 rounded text-xs">→ Deferred</button>
+                        </div>
+                        <button onClick={() => setSelectedItems(new Set())} className="text-xs text-slate-400 hover:text-white ml-auto">Clear</button>
+                    </div>
+                )}
+                
+                {/* Content */}
+                {loading ? (
+                    <div className="text-center py-20">
+                        <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+                        <p className="text-slate-400">Loading backlog...</p>
+                    </div>
+                ) : filteredItems.length === 0 ? (
+                    <div className="text-center py-20">
+                        <div className="text-4xl mb-4">{workItems.length === 0 ? '📋' : '🔍'}</div>
+                        <h2 className="text-lg font-bold mb-2">{workItems.length === 0 ? 'Backlog is empty' : 'No items match filters'}</h2>
+                        <p className="text-slate-400 text-sm mb-4">
+                            {workItems.length === 0 ? 'Create your first work item to start tracking.' : 'Try adjusting your filters.'}
+                        </p>
+                        {workItems.length === 0 && (
+                            <button onClick={() => setShowEditModal({ item: null, isNew: true })}
+                                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm">
+                                ➕ Create First Item
+                            </button>
+                        )}
+                    </div>
+                ) : (
+                    <div className="space-y-6">
+                        {Object.entries(groupedItems).map(([groupName, items]) => (
+                            <div key={groupName}>
+                                {groupBy !== 'none' && (
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <h3 className="text-sm font-bold text-slate-300 capitalize">{groupName}</h3>
+                                        <span className="text-xs text-slate-500 bg-slate-700 px-2 py-0.5 rounded-full">{items.length}</span>
+                                    </div>
+                                )}
+                                <div className="space-y-2">
+                                    {items.map(item => {
+                                        const app = configuredApps.find(a => a.id === item.appId);
+                                        const isSelected = selectedItems.has(item.id);
+                                        const nextStatuses = getNextStatuses(item.status);
+                                        
+                                        return (
+                                            <div key={item.id} className={`bg-slate-800 rounded-lg border transition-colors ${
+                                                isSelected ? 'border-indigo-500 bg-indigo-900/10' : 'border-slate-700 hover:border-slate-600'
+                                            }`}>
+                                                <div className="p-3">
+                                                    <div className="flex items-start gap-3">
+                                                        {/* Checkbox */}
+                                                        <button onClick={() => toggleSelect(item.id)}
+                                                            className={`mt-1 w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center text-xs ${
+                                                                isSelected ? 'bg-indigo-600 border-indigo-500 text-white' : 'border-slate-500 hover:border-slate-400'
+                                                            }`}>
+                                                            {isSelected && '✓'}
+                                                        </button>
+                                                        
+                                                        {/* Main content */}
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                                                <span className="text-xs text-slate-500 font-mono">{item.id}</span>
+                                                                <TypeBadge type={item.type} />
+                                                                <PriorityBadge priority={item.priority} />
+                                                                <StatusBadge status={item.status} />
+                                                                <EffortBadge effort={item.effort} />
+                                                                {groupBy !== 'app' && app && (
+                                                                    <span className="text-xs text-slate-500">{app.icon} {app.name}</span>
+                                                                )}
+                                                                {item.source && item.source !== 'manual' && (
+                                                                    <span className="text-xs text-slate-600 italic">{item.source}</span>
+                                                                )}
+                                                            </div>
+                                                            <h4 className="font-medium text-sm">{item.title}</h4>
+                                                            {item.description && (
+                                                                <p className="text-xs text-slate-400 mt-1 line-clamp-2">{item.description}</p>
+                                                            )}
+                                                            {item.criteria?.length > 0 && (
+                                                                <div className="text-xs text-slate-500 mt-1">
+                                                                    ☐ {item.criteria.length} acceptance criteria
+                                                                </div>
+                                                            )}
+                                                            {item.tags?.length > 0 && (
+                                                                <div className="flex gap-1 mt-1">
+                                                                    {item.tags.map((t, i) => (
+                                                                        <span key={i} className="text-xs px-1.5 py-0.5 bg-slate-700 rounded text-slate-400">{t}</span>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        
+                                                        {/* Actions */}
+                                                        <div className="flex items-center gap-1 flex-shrink-0">
+                                                            {/* Quick status transitions */}
+                                                            {nextStatuses.map(ns => (
+                                                                <button key={ns} onClick={() => transitionStatus(item, ns)}
+                                                                    title={`→ ${ns}`}
+                                                                    className="p-1.5 rounded hover:bg-slate-700 text-xs text-slate-400 hover:text-white">
+                                                                    {ns === 'ready' && '📋'}
+                                                                    {ns === 'in-progress' && '🔨'}
+                                                                    {ns === 'done' && '✅'}
+                                                                    {ns === 'deferred' && '⏸️'}
+                                                                    {ns === 'idea' && '💡'}
+                                                                </button>
+                                                            ))}
+                                                            <div className="w-px h-4 bg-slate-700 mx-1" />
+                                                            <button onClick={() => copyForClaude(item)} title="Copy for Claude"
+                                                                className="p-1.5 rounded hover:bg-slate-700 text-xs text-slate-400 hover:text-white">📋</button>
+                                                            <button onClick={() => setShowEditModal({ item, isNew: false })} title="Edit"
+                                                                className="p-1.5 rounded hover:bg-slate-700 text-xs text-slate-400 hover:text-white">✏️</button>
+                                                            <button onClick={() => deleteItem(item)} title="Delete"
+                                                                className="p-1.5 rounded hover:bg-slate-700 text-xs text-slate-400 hover:text-red-400">🗑️</button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+                
+                {/* Select all shortcut */}
+                {filteredItems.length > 0 && (
+                    <div className="mt-4 text-center">
+                        <button onClick={selectAll} className="text-xs text-slate-500 hover:text-slate-300">
+                            {selectedItems.size === filteredItems.length ? 'Deselect all' : `Select all ${filteredItems.length} items`}
+                        </button>
+                    </div>
+                )}
+                
+                {/* Edit Modal */}
+                {showEditModal && (
+                    <WorkItemEditModal
+                        item={showEditModal.item}
+                        apps={apps}
+                        isNew={showEditModal.isNew}
+                        onSave={showEditModal.isNew ? createItem : updateItem}
+                        onCancel={() => setShowEditModal(null)}
+                    />
+                )}
+            </div>
+        );
+    }
+    
     // =========================================================================
     // ISSUES VIEW - Full Issue Tracking & Release Management
     // =========================================================================
