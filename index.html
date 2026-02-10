@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Command Center</title>
-    <meta name="version" content="8.36.1">
+    <meta name="version" content="8.36.3">
     <meta name="gs-app-id" content="command-center">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -22590,24 +22590,28 @@ const pushIssueToCommandCenter = async (testResult) => {
 
         const deployFiles = selectedFiles.filter(f => f.fileAction === 'deploy');
         const docFiles = selectedFiles.filter(f => f.fileAction === 'push-doc');
-        const indexFile = deployFiles.find(f => f.name === 'index.html');
+        const indexFile = deployFiles.find(f => f.name === 'index.html' || f.targetPath === 'index.html');
         const swFile = deployFiles.find(f => f.name === 'sw.js');
-        const deployVersion = indexFile?.version || null;
+        // For quick-deploy (single file), use that file's version even if not named index.html
+        const deployVersion = indexFile?.version || (deployFiles.length === 1 ? deployFiles[0]?.version : null) || null;
         const isPWA = appConfig?.hasServiceWorker === true;
 
         const issues = [];
 
-        // --- Version not incremented ---
-        if ((intent === 'deploy-package' || intent === 'full-package') && deployVersion && deployedVersion) {
+        // --- Version not incremented (applies to ALL deploy intents, not just packages) ---
+        if (intent !== 'none' && intent !== 'docs-only' && deployVersion && deployedVersion) {
             if (!isNewerVersion(deployVersion, deployedVersion)) {
+                const isDowngrade = compareVersions(deployVersion, deployedVersion) < 0;
                 const suggestedBump = bumpVersion(deployedVersion, 'patch');
                 const hasDocsSelected = docFiles.length > 0;
                 issues.push({
                     id: 'version-not-incremented',
-                    severity: 'warning',
+                    severity: isDowngrade ? 'error' : 'warning',
                     category: 'versions',
-                    title: 'Version not incremented',
-                    detail: `v${deployVersion} is already on ${appConfig?.name || 'target'}`,
+                    title: isDowngrade ? 'Version downgrade detected' : 'Version not incremented',
+                    detail: isDowngrade 
+                        ? `v${deployVersion} is OLDER than deployed v${deployedVersion} on ${appConfig?.name || 'target'}`
+                        : `v${deployVersion} is already on ${appConfig?.name || 'target'}`,
                     fix: `Bump to v${suggestedBump}`,
                     action: hasDocsSelected ? null : {
                         type: 'bump-version',
