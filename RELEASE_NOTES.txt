@@ -1,6 +1,65 @@
 Command Center — Release Notes
 ================================
 
+v8.46.0 — Unified Plan Phase 5.6–5.7: Activity Feed + Multi-Person Access
+---------------------------------------------------------------------------
+Phase 5 complete! Command Center is now a multi-person coordination 
+platform. Team members can be invited by email, and all activity 
+flows into a shared feed with per-person attribution.
+
+ACTIVITY FEED VIEW (Phase 5.6):
+New "Activity Feed" sub-tab in Session Log alongside Session Log 
+and Session History. Shows a full-page timeline of all workspace 
+events — deploys, sessions, work item transitions, reviews, scoping, 
+and dependency alerts.
+
+Stats row at top: total events, contributor count, deploys, and 
+sessions. When multiple people are active, a Team Activity panel 
+shows per-person breakdowns with avatars and event counts.
+
+Filters: actor, app, action type, stream — all combinable. Events 
+grouped by day with color-coded action icons, hover metadata 
+(version, session type, environment), and actor avatars.
+
+TEAM SERVICE (Phase 5.7):
+New TeamService manages multi-person workspace access via Firebase:
+- Owner invites collaborators by email with role assignment
+- Roles: owner (full access + team management), editor (can create 
+  and edit), viewer (read-only)
+- Invited users show as "Pending" until they sign in and accept
+- All team members read/write to the owner's Firebase path — no 
+  data duplication, single source of truth
+
+TEAM MANAGEMENT UI:
+New "Team" section in Settings (after Your Name):
+- Owner sees: their profile, team member list with role dropdowns 
+  and remove buttons, email invite form with role selector
+- Team member sees: their role and workspace name
+- Firebase security rules template with one-click copy for 
+  deploying access control via Rules Manager
+
+WORKSPACE IDENTITY:
+- workspaceUid: team members automatically use the owner's UID for 
+  all data access — work items, sessions, streams, deploys all 
+  flow through the shared workspace
+- canEdit flag: ready for viewer-mode enforcement across all views
+- Header shows team count (owners) or role badge (members)
+
+Unified Plan Phase 5: COMPLETE.
+  5.1 ✅ Decouple from Game Shelf (v8.43.0)
+  5.2 ✅ Work Streams (v8.43.0)
+  5.3 ✅ Unified Work Item Model (v8.43.0)
+  5.4 ✅ Dependencies Auto-Remediation (v8.44.0)
+  5.5 ✅ Product Brief Auto-Generation (v8.45.0)
+  5.6 ✅ Activity Feed Multi-Person View (v8.46.0)
+  5.7 ✅ Multi-Person Access (v8.46.0)
+
+All 5 phases of the Unified Development Plan are now delivered.
+Command Center has evolved from a deployment tool into a full 
+AI-native product development coordination platform.
+
+---
+
 v8.45.0 — Unified Plan Phase 5.5: Product Brief Auto-Generation
 -----------------------------------------------------------------
 Command Center can now auto-generate a living product brief in PM 
