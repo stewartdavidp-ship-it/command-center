@@ -4,7 +4,7 @@
 
 ## Current Version
 
-**v8.39.0** — Released 2026-02-10
+**v8.40.0** — Released 2026-02-10
 
 ## What Command Center Is
 
@@ -219,7 +219,7 @@ Configure
 - **Firebase scope storage** — Scope data at `command-center/{uid}/appScopes/{appId}`
 
 ### v8.22.0 — Backlog View + Work Item CRUD (Phase 1.1)
-- **BacklogView** — New top-level navigation tab with full work item management: create, edit, delete, status transitions (idea→ready→in-progress→done→deferred)
+- **BacklogView** — New top-level navigation tab with full work item management: create, edit, delete, status transitions (idea→ready→in-progress→review→done→deferred)
 - **WorkItemEditModal** — Full-featured modal for all WorkItemService fields: app, title, description, type, priority, status, effort, acceptance criteria, tags, and context (files affected, sections, dependencies, notes)
 - **Grouping & filtering** — Group by app/status/type, filter by status/type/app, search by title/description/ID/tags, sort by priority/status/effort/type/creation date
 - **Bulk operations** — Multi-select with bulk status update
