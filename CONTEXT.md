@@ -4,7 +4,7 @@
 
 ## Current Version
 
-**v8.42.0** — Released 2026-02-10
+**v8.43.0** — Released 2026-02-10
 
 ## What Command Center Is
 
@@ -22,7 +22,7 @@ Command Center is an internal tool for managing the Game Shelf ecosystem of web 
 
 ## Architecture
 
-- **Single HTML file** — All CSS, JS, React inline (~870KB, ~20,700 lines)
+- **Single HTML file** — All CSS, JS, React inline (~870KB, ~29,000 lines)
 - **React via CDN** — React 18 + ReactDOM loaded from unpkg
 - **No build step** — Runs directly from file:// or GitHub Pages
 - **GitHub API** — All repo/deploy operations use personal access token
@@ -132,6 +132,9 @@ Deploy
 Projects             — Project & app management
 
 Backlog              — Work item tracking & project planning (NEW v8.22.0)
+├── Backlog          — Work item list with grouping, filtering, search
+├── Streams          — Work stream board (NEW v8.43.0)
+└── Releases         — Release coordination & test checklists (NEW v8.42.0)
 
 Monitor
 ├── Users            — Player stats
@@ -164,7 +167,12 @@ Configure
 | `ClaudePrepModal` | 4-step Claude Session Wizard: Work Items → Session Type → Context Budget → Generate+Download. Session-type-aware file filtering, work item auto-transition, session record creation (Phase 2.2, v8.26.0) |
 | `SESSION_TYPES` | 8 session type definitions with role frames, scope rules, delivery requirements, context strategies (NEW v8.25.0) |
 | `SessionBriefGenerator` | Session-type-aware brief generation with work item context, maturity constraints (NEW v8.25.0) |
-| `WorkItemService` | Backlog work item CRUD via Firebase, status transitions, batch create, milestone filtering (NEW v8.20.0, enhanced v8.22.0) |
+| `WorkStreamService` | Work stream CRUD via Firebase — named, owned, parallel tracks of work. Supports status transitions, completion tracking, blocked-by relationships (NEW v8.43.0) |
+| `StreamInterfaceService` | Stream-provided interface contracts — behavior, output, data, naming, timing categories (NEW v8.43.0) |
+| `DependencyService` | Cross-stream dependency declarations with active/changed/verified status tracking (NEW v8.43.0) |
+| `WorkStreamsView` | Work streams board view — stream cards with completion, items, interfaces, dependencies per app (NEW v8.43.0) |
+| `StreamEditModal` | Create/edit work streams with full metadata (NEW v8.43.0) |
+| `WorkItemService` | Backlog work item CRUD via Firebase, status transitions, batch create, milestone filtering (NEW v8.20.0, enhanced v8.22.0, streamId added v8.43.0) |
 | `BacklogView` | Work item list with grouping, filtering, search, sort, bulk actions, status transitions, scope work button (NEW v8.22.0, enhanced v8.23.0) |
 | `WorkItemEditModal` | Create/edit work items — all fields including acceptance criteria, tags, context (NEW v8.22.0) |
 | `ProjectScopeModal` | 4-step scoping wizard (Describe → Clarify → Features → Standards) with category-driven questions, feature pre-population, standards assembly, scope save + batch work item creation (NEW v8.23.0) |
@@ -184,6 +192,22 @@ Configure
 | `ConfigManager` | Config load/save/migrate with backward compatibility |
 
 ## Recent Changes (This Session)
+
+### v8.43.0 — Unified Plan Phase 5.1–5.3: Work Streams, Decoupling, Unified Model
+- **WorkStreamService** — New Firebase service (`command-center/{uid}/streams`) for creating, managing, and tracking named work streams with owner, goal, status (active/paused/blocked/complete), target release, and blockedBy relationships
+- **StreamInterfaceService** — New Firebase service (`command-center/{uid}/interfaces`) for stream-provided interfaces (behavior/output/data/naming/timing contracts)
+- **DependencyService** — New Firebase service (`command-center/{uid}/dependencies`) for declared dependencies between streams with status tracking (active/changed/verified)
+- **WorkStreamsView** — New top-level view (📋 Backlog → 🔀 Streams) with stream board showing per-app stream cards, completion bars, work item summaries, interface/dependency displays, status management, and create/edit/delete operations
+- **StreamEditModal** — Create/edit streams with name, app, owner, goal, target release, status, and blockedBy stream selection
+- **Phase 5.3 Unified Work Item Model** — `streamId` field added to WorkItemService (create + batch create), enabling work items to be assigned to streams
+- **WorkItemEditModal stream selector** — Stream dropdown appears when app has streams, allowing items to be assigned/unassigned
+- **BacklogView stream grouping** — New "Group: Stream" option in backlog grouping, stream badges on items when not grouped by stream
+- **ClaudePrepModal stream filter** — Stream dropdown in Step 1 filters work items by stream for focused session prep
+- **SessionBriefGenerator stream context** — Session briefs include stream name/owner/goal when targeted items belong to a stream
+- **Phase 5.1 Decouple from Game Shelf** — Skills recommendations now project-aware (only recommend gs-active for Game Shelf project apps, not universally); gs-logos skill only for GS apps; platform recommendations text genericized
+- **Extensible categories** — `getAllCategories(config)` helper merges built-in SCOPE_CATEGORIES with `config.customCategories` for future custom category support
+- **Global state** — `globalStreams`, `globalInterfaces`, `globalDependencies` added to App component with Firebase listeners
+- **Navigation** — 🔀 Streams added to Backlog dropdown (alongside Backlog and Releases)
 
 ### v8.41.0 — Unified Plan Phase 4: Dashboard Polish (Phase 4.1–4.3)
 - **Product Health dashboard** — DashboardView sidebar redesigned from deploy-focused to product-focused with: Features Shipped (30d), Pipeline count, Session-Ready apps, Cost per Feature metrics with progressive disclosure tooltips
