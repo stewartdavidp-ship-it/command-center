@@ -4,7 +4,7 @@
 
 ## Current Version
 
-**v8.40.0** — Released 2026-02-10
+**v8.41.0** — Released 2026-02-10
 
 ## What Command Center Is
 
@@ -184,6 +184,16 @@ Configure
 | `ConfigManager` | Config load/save/migrate with backward compatibility |
 
 ## Recent Changes (This Session)
+
+### v8.41.0 — Unified Plan Phase 4: Dashboard Polish (Phase 4.1–4.3)
+- **Product Health dashboard** — DashboardView sidebar redesigned from deploy-focused to product-focused with: Features Shipped (30d), Pipeline count, Session-Ready apps, Cost per Feature metrics with progressive disclosure tooltips
+- **Smart Quick Actions** — Sidebar actions aligned to product workflow: Start Session (auto-targets most-ready app), Add Idea (→ Backlog), Review Session (shows pending count), Smart Deploy
+- **Header Quick Actions updated** — Add Idea, Smart Deploy, Portfolio access replace old deploy-centric buttons; Deploy Staged only shows when files staged
+- **Pipeline Health panel** — Horizontal status bar (Idea/Ready/WIP/Review) with active work items list, replaces old 5-column backlog grid
+- **Recent Activity feed** — Chronological activity events in sidebar from ActivityLogService with action icons and relative timestamps
+- **Progressive disclosure** — App Pipeline and Issues/Shipped widgets collapsed into `<details>` elements (below the fold per plan). Hover tooltips on metrics show breakdown details
+- **Portfolio View enhanced** — Features Shipped stat added to top stats row (5 columns), product-focused layout
+- **Demoted content** — Maturity distribution, session mix, deploy counts pushed below primary product health metrics per Unified Plan spec
 
 ### v8.26.0 — Claude Session Wizard (Phase 2.2)
 - **4-step wizard flow** — ClaudePrepModal rewritten from single-phase configure-and-build into guided wizard: Step 1 (Work Items) → Step 2 (Session Type) → Step 3 (Context Budget Preview) → Step 4 (Generate+Download)
