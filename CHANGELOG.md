@@ -1,5 +1,23 @@
 # Command Center — Changelog
 
+## [8.46.0] — 2026-02-11
+
+### Added
+- **Activity Feed View (Phase 5.6)** — Full-page activity timeline as new sub-tab in Session Log
+- Activity stats row: total events, contributors count, deploy count, session count
+- Team Activity panel with per-actor summaries, avatars, and event breakdowns
+- Activity filters by actor, app, action type, and stream (combinable with clear button)
+- Day-grouped timeline with action-colored entries, hover metadata, and timestamps
+- **TeamService (Phase 5.7)** — Multi-person workspace management via Firebase
+- Team invite by email with pending/active status lifecycle
+- Role-based access: owner (full + team management), editor (create/edit), viewer (read-only)
+- Membership pointer system: member's node points to owner's workspace UID
+- Team Management section in Settings with member list, role management, invite form
+- Firebase security rules template generator with copy button
+- `workspaceUid` computed value for shared data path access
+- `canEdit` permission flag for viewer-mode enforcement
+- Header workspace indicators: team count for owners, role badge for members
+
 ## [8.45.0] — 2026-02-10
 
 ### Added
