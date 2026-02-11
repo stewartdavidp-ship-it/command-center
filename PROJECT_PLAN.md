@@ -257,11 +257,26 @@ Single-file web application for managing deployment, monitoring, and configurati
 - [x] ProductBriefModal — 📄 button on app rows, rendered markdown viewer with copy
 - [x] Environment Optimization — PRODUCT_BRIEF.md in doc listing with token estimate
 
+### Unified Plan Phase 5.6–5.7: Activity Feed Multi-Person View + Multi-Person Access (v8.46.0)
+- [x] Activity Feed View — new sub-tab in Session Log with full-page timeline, day grouping, action colors
+- [x] Activity filters — by actor, app, action type, stream, combinable with clear
+- [x] Activity stats — total events, contributors, deploys, sessions counts
+- [x] Team Activity panel — per-actor summary with avatar, deploy/session/item counts (shows with 2+ actors)
+- [x] TeamService — Firebase CRUD for team members and membership pointers
+- [x] Invite flow — email-based invite, pending status, accept on sign-in
+- [x] Role management — owner/editor/viewer with role dropdown and remove
+- [x] Team Management UI in Settings — owner view with member list + invite form, member view with role display
+- [x] workspaceUid — computed value for shared data access (team members use owner's UID)
+- [x] canEdit permission flag — ready for viewer-mode enforcement
+- [x] Header indicators — team count badge for owners, role badge for members
+- [x] Firebase security rules template — generated per-workspace with copy button
+- [x] State management — teamMembers, teamMembership with Firebase listeners and cleanup
+
 ---
 
 ## In Progress
 
-_(Unified Plan Phases 1–4 complete, Phase 5.1–5.5 complete — Phase 5.6–5.7 next: Activity Feed, Multi-Person Access)_
+_(Unified Plan Phases 1–5 complete. All planned phases delivered.)_
 
 ---
 
