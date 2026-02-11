@@ -1,6 +1,84 @@
 Command Center — Release Notes
 ================================
 
+v8.44.0 — Unified Plan Phase 5.4: Dependencies Auto-Remediation & Prompt Chaining
+------------------------------------------------------------------------------------
+The core AI-native innovation lands. When a session changes an interface
+that other streams depend on, Command Center automatically generates work
+items in the dependent streams — complete with the change context from
+the source session. This creates a prompt chain: one person's session
+output becomes another person's session input, routed through declared
+dependency contracts.
+
+DEPENDENCY ALERT SERVICE (NEW):
+- DependencyAlertService — Firebase CRUD for dependency alerts at
+  command-center/{uid}/dependencyAlerts
+- Full lifecycle: pending → updated | no_impact with actor tracking
+- Alerts link to: source session, source work item, affected interface,
+  affected dependency, and auto-generated remediation work item
+- getPendingForStream() — filter alerts by dependent stream
+- getPending() — all unresolved alerts
+- getBySession() — alerts triggered by a specific session
+
+AUTO-REMEDIATION FLOW:
+- triggerAlerts() orchestrates the full flow when an interface changes:
+  1. Finds all dependencies that consume the changed interface
+  2. Creates a work item in each dependent stream (type: dependency_update)
+  3. Work item includes: what changed, why the stream is affected,
+     change notes from source session, suggested acceptance criteria
+  4. Creates a dependency alert record linking everything together
+  5. Marks affected dependencies as status: 'changed'
+  6. Logs to activity feed for visibility
+
+POST-SESSION REVIEW — INTERFACE CHANGE DETECTION:
+- When reviewing a session that belongs to a stream with provided
+  interfaces that have dependents, Step 1 (Overview) now shows an
+  interface change checklist
+- Check which interfaces changed, describe what changed
+- "Notify" button triggers auto-remediation for all checked interfaces
+- Results panel shows created work items in dependent streams
+- Skipped cleanly when stream has no interfaces with dependents
+
+PROMPT CHAINING IN SESSION BRIEFS:
+- SessionBriefGenerator now detects dependency_update work items
+- When a session targets dependency_update items, the brief includes
+  a "Dependency Changes — Context from Source Session" section
+- Contains: change description, affected interfaces, source work item
+  reference, and change notes from the triggering session
+- Claude receives the full context chain without manual transfer
+
+WORK STREAMS VIEW — ALERT VISIBILITY:
+- Stream cards show pending dependency alerts with amber badge
+- Alert details: which interface changed, what the change was
+- Summary stats row gains "Pending Alerts" count when alerts exist
+- handleResolveAlert() marks alerts as updated (verifies dependency)
+  or no_impact (dismisses)
+
+DEPENDENCY STATUS TRACKING:
+- Dependencies gain 'changed' status when an alert fires
+- Resolving an alert as 'updated' moves dependency back to 'verified'
+- Changed dependencies show ⚠ indicator on stream cards (existing)
+
+DATA MODEL:
+- globalDependencyAlerts state added to App component
+- Firebase listener for dependencyAlerts at startup
+- Props threaded: App → SessionLogView → PostSessionReviewModal
+- Props threaded: App → WorkStreamsView
+
+Phase 5.4 complete. The prompt chain is live:
+  Session output → Interface change → Alert → Work item with context →
+  Next session brief → Claude receives change context automatically.
+
+Remaining Phase 5 work (5.5–5.7):
+- Product Brief auto-generation
+- Activity Feed multi-person view
+- Multi-Person Access via Firebase Auth
+
+---
+
+Command Center — Release Notes
+================================
+
 v8.43.0 — Unified Plan Phase 5.1–5.3: Work Streams, Decoupling, Unified Model
 --------------------------------------------------------------------------------
 Phase 5 begins! Command Center gains work streams — named, owned, parallel
