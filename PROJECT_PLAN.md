@@ -198,11 +198,21 @@ Single-file web application for managing deployment, monitoring, and configurati
 - [x] Activity Logging — ActivityLogService audit trail (v8.39.0)
 - [x] Work Item Lifecycle Automation — `review` status, Idea→Ready auto-suggest, In-Progress→Review on session review, stale detection badges (v8.40.0)
 
+### Unified Plan Phase 4.1–4.3: Dashboard Polish (v8.41.0)
+- [x] Product Health dashboard — Features Shipped, Pipeline count, Session-Ready apps, Cost per Feature metrics
+- [x] Smart Quick Actions — Start Session (most-ready app), Add Idea, Review Session, Smart Deploy
+- [x] Header Quick Actions realigned — Add Idea, Smart Deploy, Portfolio; Deploy Staged conditional
+- [x] Pipeline Health panel — horizontal status bar with active work items list
+- [x] Recent Activity feed — chronological events from ActivityLogService in sidebar
+- [x] Progressive disclosure — App Pipeline/Issues/Shipped collapsed into `<details>` elements
+- [x] Portfolio View — Features Shipped added to top stats row (5 columns)
+- [x] Demoted below fold — maturity distribution, session mix, deploy counts per Unified Plan spec
+
 ---
 
 ## In Progress
 
-_(Unified Plan Phases 1–3 complete — Phase 4: Polish is next)_
+_(Unified Plan Phases 1–3 complete, Phase 4.1–4.3 complete — Phase 4.4–4.5: Release Coordination + Test Checklist next)_
 
 ---
 
