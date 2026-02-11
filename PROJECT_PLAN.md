@@ -272,11 +272,31 @@ Single-file web application for managing deployment, monitoring, and configurati
 - [x] Firebase security rules template — generated per-workspace with copy button
 - [x] State management — teamMembers, teamMembership with Firebase listeners and cleanup
 
+### Domain Management (v8.47.0)
+- [x] FirebaseAdmin auth domain methods — getAuthConfig, getAuthorizedDomains, updateAuthorizedDomains, addAuthorizedDomain, removeAuthorizedDomain
+- [x] AuthorizedDomainsManager component in Settings
+- [x] GitHubPagesDomainManager with DNS health checks
+- [x] testConnection 4th check for auth config
+
+### SESSION_RETURN.json: Structured Session Handoff (v8.48.1)
+- [x] Phase A: All 8 session types include SESSION_RETURN.json in delivery requirements
+- [x] Phase A: SessionBriefGenerator embeds full JSON schema with pre-filled sessionType and sessionId
+- [x] Phase A: classifyFileAction treats SESSION_RETURN.json as 'skip'
+- [x] Phase B: SESSION_RETURN.json detection in ZIP extraction and single-file drop
+- [x] Phase B: validateSessionReturn — schema validation with required fields, enum checks
+- [x] Phase B: matchSessionReturn — 3-tier confidence matching (session ID → work item overlap → type + recency)
+- [x] Phase B: AutoReviewModal — parsed manifest viewer with editable statuses, issue/idea creation toggles, apply handler
+- [x] Phase C: Session ID embedding — session record created before brief for ID pre-fill
+- [x] Phase C: Auto-Reviewed badge in session history
+- [x] Phase C: Return manifest details section in expanded sessions
+- [x] Phase C: Pending return banner in Sessions view with Open Auto-Review button
+- [x] Phase C: pendingSessionReturn state threaded App → SessionLogView
+
 ---
 
 ## In Progress
 
-_(Unified Plan Phases 1–5 complete. All planned phases delivered.)_
+_(Unified Plan Phases 1–5 complete. SESSION_RETURN.json handoff contract implemented. All planned phases delivered.)_
 
 ---
 
@@ -363,7 +383,7 @@ Firebase admin APIs (rules, functions, logging) require Google OAuth2 with servi
 ```
 cc-project-vX.X.X.zip
 └── command-center/
-    ├── index.html              ← The application (~790KB single-file)
+    ├── index.html              ← The application (~1.8MB single-file)
     ├── CONTEXT.md              ← READ FIRST — current version, schemas, nav, recent changes
     ├── CHANGELOG.md            ← Structured version history (Added/Changed/Removed)
     ├── PROJECT_PLAN.md         ← This file — roadmap, completed features, decisions
