@@ -1,6 +1,41 @@
 Command Center — Release Notes
 ================================
 
+v8.41.0 — Unified Plan Phase 4: Dashboard Polish (4.1–4.3)
+--------------------------------------------------------------
+The dashboard now answers "How is my product doing?" instead of 
+"What did I deploy?" This is the first session of Phase 4 from 
+the Unified Development Plan.
+
+PRODUCT HEALTH DASHBOARD: The sidebar now leads with four product 
+metrics — Features Shipped (last 30 days), Pipeline count (active 
+work items), Session-Ready apps (apps with ready items and 
+acceptance criteria), and Cost per Feature. Hover any metric card 
+to see a detailed breakdown via progressive disclosure tooltips.
+
+SMART QUICK ACTIONS: The sidebar actions are now aligned to the 
+product workflow — Start Session automatically targets the app with 
+the most ready items, Add Idea goes straight to the backlog, 
+Review Session shows when sessions are pending, and Smart Deploy 
+is one click away.
+
+PIPELINE HEALTH: A horizontal status bar shows the proportion of 
+items in each stage (Idea/Ready/WIP/Review) with the top 5 active 
+work items listed below.
+
+RECENT ACTIVITY: Activity events from the audit log now appear in 
+the sidebar with action icons and relative timestamps.
+
+PROGRESSIVE DISCLOSURE: App Pipeline details, Issues, and Recently 
+Shipped items are now collapsed by default into expandable sections 
+— visible when you need them, out of the way when you don't.
+
+PORTFOLIO ENHANCED: Features Shipped added as the first stat card 
+in the Portfolio view, respecting the time range filter.
+
+Remaining Phase 4 work: 4.4 Release Coordination View and 
+4.5 Release Test Checklist will be built in subsequent sessions.
+
 v8.40.0 — Phase 3: Close the Loop, Session 2
 -------------------------------------------------
 Work Item Lifecycle Automation: Work items now flow through a full 
