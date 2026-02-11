@@ -6,6 +6,27 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [8.42.0] — 2026-02-10
+
+### Added
+- **Release Coordination View** (Phase 4.4) — per-app release readiness with go/no-go assessment
+- **Release Test Checklist** (Phase 4.5) — auto-generated manual testing guide from work items + criteria
+- Readiness badges — Ready to Ship / Almost Ready / Blocked / In Progress per app
+- Pipeline completion bars with milestone breakdown and stale item detection
+- Test vs prod version drift detection with warning indicators
+- Category-driven standard user journeys (game/tool/dashboard/content/admin)
+- Regression checks from recent session deliverables
+- PWA-aware deploy verification with service worker checks
+- Interactive checklist with completion tracking and deploy prompt
+- Summary cards — aggregate Ready/Blocked/Completion/Stale across all apps
+- "Releases" nav item under Backlog dropdown
+
+### Changed
+- Backlog nav group now includes Releases as sub-view
+- Phase 4 marked complete in PROJECT_PLAN.md
+
+---
+
 ## [8.41.0] — 2026-02-10
 
 ### Added — Unified Plan Phase 4: Dashboard Polish (4.1–4.3)
