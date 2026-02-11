@@ -1,6 +1,59 @@
 Command Center — Release Notes
 ================================
 
+v8.45.0 — Unified Plan Phase 5.5: Product Brief Auto-Generation
+-----------------------------------------------------------------
+Command Center can now auto-generate a living product brief in PM 
+language — describing what the product does, not how it's built. Any 
+stream owner gets product context in their Claude session package 
+without needing another stream's source code.
+
+PRODUCT BRIEF GENERATOR (NEW):
+- ProductBriefGenerator service assembles PRODUCT_BRIEF.md from 
+  existing CC data: scope answers, work items, deploy history, 
+  streams, and lifecycle metadata
+- Product Identity section: description, category, maturity, 
+  audience, user goal, success metric, current version
+- Key Product Decisions: scoping category answers translated to 
+  PM-language decisions (e.g. "Data Persistence: Saves to cloud, 
+  syncs across devices" instead of "dataPersistence: firebase")
+- Feature Inventory: organized by status — Shipped, In Progress, 
+  Planned, Ideas — pulled from work items, falls back to scope 
+  features for new apps
+- Known Issues: open bugs surfaced with priority indicators
+- Work Streams overview: per-stream progress and ownership
+- Recent Releases: last 5 deploys with version and item counts
+- Open Decisions from scoping
+
+CLAUDE PREP INTEGRATION:
+- PRODUCT_BRIEF.md auto-generated and included in every session 
+  package (after CLAUDE_INSTRUCTIONS.md, before extra docs scan)
+- Session type context strategies updated:
+  - alwaysInclude for Design and Research (product context critical)
+  - preferInclude for Build, Fix, Test, Review, Polish, Document
+- Skipped from Push Docs (auto-generated, not pushed to repo)
+- Token estimate: ~3,000 tokens (~8KB typical)
+
+PRODUCT BRIEF VIEWER:
+- 📄 button on each app row in Projects view
+- ProductBriefModal: lightweight viewer with rendered markdown
+- Copy button to clipboard for pasting elsewhere
+- Regenerates on open (always reflects current state)
+
+ENVIRONMENT OPTIMIZATION:
+- PRODUCT_BRIEF.md added to doc listing with change frequency
+- Token estimation for setup guide calculations
+
+Phase 5.5 complete. Product briefs travel with every session package:
+  Scope data + Work items + Deploys + Streams → PRODUCT_BRIEF.md →
+  Claude receives product context without source code access.
+
+Remaining Phase 5 work (5.6–5.7):
+- Activity Feed multi-person view
+- Multi-Person Access via Firebase Auth
+
+---
+
 v8.44.0 — Unified Plan Phase 5.4: Dependencies Auto-Remediation & Prompt Chaining
 ------------------------------------------------------------------------------------
 The core AI-native innovation lands. When a session changes an interface
