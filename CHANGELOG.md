@@ -6,6 +6,32 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [8.41.0] — 2026-02-10
+
+### Added — Unified Plan Phase 4: Dashboard Polish (4.1–4.3)
+- **Product Health dashboard** — DashboardView sidebar redesigned with product-focused metrics: Features Shipped (30d), In Pipeline count, Session-Ready apps count, Cost per Feature
+- **`productMetrics` computed state** — React.useMemo computing features shipped, pipeline health, session readiness, cost per feature from globalWorkItems/globalSessions/deployments
+- **Smart Quick Actions sidebar** — Start Session (auto-targets most-ready app via `mostReadyApp`), Add Idea, Review Session (conditional on pending sessions), Smart Deploy
+- **Recent Activity feed** — Sidebar widget showing chronological ActivityLogService events with action-type icons and relative timestamps
+- **Pipeline Health panel** — Horizontal status bar (Idea/Ready/WIP/Review proportional segments) with active work items list
+- **Progressive disclosure tooltips** — Session-Ready and Cost/Feature cards show detailed breakdown on hover
+- **Portfolio: Features Shipped stat** — New "Shipped" card in Portfolio top stats row, respects time range filter
+- **DashboardView new props** — `globalSessions`, `globalActivity`, `deployments`, `firebaseUid`, `setModal` now passed through
+
+### Changed
+- **Header Quick Actions** — Replaced Deploy All/Sync/Bump/Health/Cleanup with Add Idea/Smart Deploy/Portfolio; Deploy Staged shows only when files are staged
+- **App Pipeline** — Demoted from always-visible panel to collapsible `<details>` element (progressive disclosure)
+- **Issues widget** — Demoted to collapsible `<details>`, shows only when open/WIP issues exist
+- **Backlog Summary** — Replaced with "Recently Shipped" collapsible `<details>` showing completed work items
+- **Portfolio top stats** — Expanded from 4 to 5 columns to include Features Shipped
+
+### Removed
+- Old 5-column backlog status grid from dashboard sidebar
+- Old 4-column issues status grid from dashboard sidebar
+- Version Bump and Cleanup Scan from header quick actions (still accessible via nav)
+
+---
+
 ## [8.40.0] — 2026-02-10
 
 ### Added — Phase 3.3: Work Item Lifecycle Automation
