@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Command Center</title>
-    <meta name="version" content="8.48.0">
+    <meta name="version" content="8.48.1">
     <meta name="gs-app-id" content="command-center">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -3713,7 +3713,7 @@
         
         // Main entry point: generate a session brief with optional session type and work item context
         generate(app, config, deployments, options = {}) {
-            const { sessionType, targetWorkItems, allWorkItems } = options;
+            const { sessionType, targetWorkItems, allWorkItems, sessionId } = options;
             const now = new Date();
             const projectDef = config.projects?.[app.project] || {};
             const typeInfo = sessionType ? SESSION_TYPES[sessionType] : null;
@@ -3749,6 +3749,7 @@
                 brief += '```json\n';
                 brief += `{
   "version": "1.0",
+  "sessionId": "${sessionId || '<session ID if known, otherwise omit>'}",
   "sessionType": "${typeInfo.id}",
   "timestamp": "<ISO 8601 timestamp when session completed>",
   "summary": "<1-2 sentence summary of what was accomplished>",
@@ -3795,6 +3796,7 @@
                 brief += '```\n\n';
                 brief += `**Rules:**\n`;
                 brief += `- Include ALL sections even if empty (use empty arrays \`[]\`)\n`;
+                brief += `- Keep the \`sessionId\` value exactly as shown — it links your output back to the originating session\n`;
                 brief += `- \`workItems\` must reference the exact IDs from the Target Work Items section above\n`;
                 brief += `- \`discoveredIssues\` = bugs or problems found during the session that were NOT in scope to fix\n`;
                 brief += `- \`discoveredIdeas\` = enhancements or features thought of during the session\n`;
@@ -8760,6 +8762,8 @@
                             globalDependencyAlerts={globalDependencyAlerts}
                             globalActivity={globalActivity}
                             teamMembers={teamMembers}
+                            pendingSessionReturn={pendingSessionReturn}
+                            setPendingSessionReturn={setPendingSessionReturn}
                         />
                     )}
                     
@@ -9003,11 +9007,11 @@
                                         }
                                     }
                                     
-                                    // 4. Complete session review
+                                    // 4. Complete session review + store return manifest metadata
                                     if (firebaseUid && matchedSession) {
                                         try {
                                             await SessionService.startReview(firebaseUid, matchedSession.id, {
-                                                files: data.filesModified || [],
+                                                files: [...(data.filesModified || []), ...(data.filesCreated || [])],
                                                 summary: data.summary
                                             });
                                             await SessionService.completeReview(firebaseUid, matchedSession.id, {
@@ -9018,6 +9022,18 @@
                                                 })),
                                                 reviewedBy: 'auto-review (SESSION_RETURN.json)',
                                                 notes: data.summary
+                                            });
+                                            // Store return manifest details on session
+                                            await SessionService.update(firebaseUid, matchedSession.id, {
+                                                returnManifest: {
+                                                    version: data.version,
+                                                    versionBump: data.versionBump || null,
+                                                    issuesFound: (data.discoveredIssues || []).length,
+                                                    ideasFound: (data.discoveredIdeas || []).length,
+                                                    interfaceChanges: (data.interfaceChanges || []).length,
+                                                    changelog: data.changelog || null,
+                                                    appliedAt: new Date().toISOString()
+                                                }
                                             });
                                             results.push(`📋 Session ${matchedSession.id} → review complete`);
                                         } catch (e) {
@@ -17869,7 +17885,7 @@
     // SESSION LOG VIEW
     // =========================================================================
     
-    function SessionLogView({ apps, sessionLog, setSessionLog, deployments, github, onFileDrop, showAlert, globalSessions, globalWorkItems, firebaseUid, config, globalStreams, globalInterfaces, globalDependencies, globalDependencyAlerts, globalActivity, teamMembers }) {
+    function SessionLogView({ apps, sessionLog, setSessionLog, deployments, github, onFileDrop, showAlert, globalSessions, globalWorkItems, firebaseUid, config, globalStreams, globalInterfaces, globalDependencies, globalDependencyAlerts, globalActivity, teamMembers, pendingSessionReturn, setPendingSessionReturn }) {
         const [newEntry, setNewEntry] = React.useState('');
         const [firebaseUser, setFirebaseUser] = React.useState(null);
         const [syncStatus, setSyncStatus] = React.useState('local');
@@ -18231,6 +18247,27 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
                         </button>
                     ))}
                 </div>
+                
+                {/* Phase C: Pending SESSION_RETURN.json banner */}
+                {pendingSessionReturn && (
+                    <div className="bg-cyan-900/30 border border-cyan-600/50 rounded-xl p-4 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <span className="text-2xl">📋</span>
+                            <div>
+                                <div className="text-sm font-medium text-cyan-200">SESSION_RETURN.json ready for review</div>
+                                <div className="text-xs text-cyan-400/70 mt-0.5">
+                                    {pendingSessionReturn.data?.sessionType || 'unknown'} session — {pendingSessionReturn.data?.summary?.slice(0, 80) || 'No summary'}
+                                    {(pendingSessionReturn.data?.summary?.length || 0) > 80 ? '...' : ''}
+                                </div>
+                            </div>
+                        </div>
+                        <button 
+                            onClick={() => setPendingSessionReturn({ ...pendingSessionReturn })}
+                            className="px-3 py-1.5 text-xs font-medium bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors">
+                            Open Auto-Review
+                        </button>
+                    </div>
+                )}
                 
                 {activeSubTab === 'log' && (<React.Fragment>
                 {/* Pending Deploys from Claude */}
@@ -19721,6 +19758,9 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
                                                 <div className="text-xs text-slate-400 mt-0.5">
                                                     {new Date(session.createdAt).toLocaleDateString()} {new Date(session.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                                                     {session.engineId && <span className="ml-2 opacity-70">• {session.engineId}</span>}
+                                                    {session.review?.reviewedBy?.includes('auto-review') && (
+                                                        <span className="ml-2 px-1.5 py-0.5 bg-cyan-900/40 text-cyan-300 rounded text-[10px] font-medium">⚡ Auto-Reviewed</span>
+                                                    )}
                                                 </div>
                                             </div>
                                         </div>
@@ -19903,6 +19943,29 @@ The deploy will appear in Command Center's Session tab for one-click deployment.
                                                 {session.review.notes && (
                                                     <div className="text-xs text-slate-400 mt-1">{session.review.notes}</div>
                                                 )}
+                                            </div>
+                                        )}
+                                        
+                                        {/* Phase C: Return manifest details */}
+                                        {session.returnManifest && (
+                                            <div>
+                                                <div className="text-xs text-slate-500 mb-1">⚡ Return Manifest</div>
+                                                <div className="text-sm px-3 py-2 rounded-lg border bg-cyan-900/20 border-cyan-700/50 space-y-1">
+                                                    {session.returnManifest.versionBump && session.returnManifest.versionBump.to && (
+                                                        <div className="text-cyan-200">
+                                                            Version: <span className="font-mono">{session.returnManifest.versionBump.from || '?'}</span>
+                                                            <span className="text-cyan-500 mx-1">→</span>
+                                                            <span className="font-mono text-green-300">{session.returnManifest.versionBump.to}</span>
+                                                            <span className="text-xs text-cyan-500 ml-1">({session.returnManifest.versionBump.bumpType})</span>
+                                                        </div>
+                                                    )}
+                                                    <div className="flex gap-3 text-xs text-cyan-300/80">
+                                                        {session.returnManifest.issuesFound > 0 && <span>🐛 {session.returnManifest.issuesFound} issue{session.returnManifest.issuesFound !== 1 ? 's' : ''}</span>}
+                                                        {session.returnManifest.ideasFound > 0 && <span>💡 {session.returnManifest.ideasFound} idea{session.returnManifest.ideasFound !== 1 ? 's' : ''}</span>}
+                                                        {session.returnManifest.interfaceChanges > 0 && <span>🔗 {session.returnManifest.interfaceChanges} interface change{session.returnManifest.interfaceChanges !== 1 ? 's' : ''}</span>}
+                                                    </div>
+                                                    <div className="text-[10px] text-cyan-500">Applied {new Date(session.returnManifest.appliedAt).toLocaleString()}</div>
+                                                </div>
                                             </div>
                                         )}
                                     </div>
@@ -26947,7 +27010,7 @@ const pushIssueToCommandCenter = async (testResult) => {
     
     const SESSION_RETURN_SCHEMA = {
         required: ['version', 'sessionType', 'timestamp', 'summary'],
-        optional: ['versionBump', 'workItems', 'discoveredIssues', 'discoveredIdeas', 'interfaceChanges', 'filesModified', 'filesCreated', 'filesDeleted', 'changelog'],
+        optional: ['sessionId', 'versionBump', 'workItems', 'discoveredIssues', 'discoveredIdeas', 'interfaceChanges', 'filesModified', 'filesCreated', 'filesDeleted', 'changelog'],
         workItemStatuses: ['completed', 'partial', 'blocked', 'deferred'],
         severities: ['critical', 'high', 'medium', 'low'],
         changeTypes: ['added', 'modified', 'removed', 'renamed'],
@@ -27041,6 +27104,14 @@ const pushIssueToCommandCenter = async (testResult) => {
             .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
         
         if (candidates.length === 0) return { session: null, confidence: 'none', reason: 'No active sessions found' };
+        
+        // Best match: session ID from the brief
+        if (returnData.sessionId) {
+            const idMatch = sessions.find(s => s.id === returnData.sessionId);
+            if (idMatch) {
+                return { session: idMatch, confidence: 'high', reason: `Matched by session ID: ${returnData.sessionId}` };
+            }
+        }
         
         // Try matching by session type + app context
         const typeMatch = candidates.filter(s => s.type === returnData.sessionType);
@@ -27899,6 +27970,30 @@ ${repoStr || '- *No repos configured*'}
                     addLog('\u26a0\ufe0f Could not scan for extra docs: ' + e.message, 'warn');
                 }
                 
+                // === Phase 2.2: Create session record via SessionService (moved before brief for ID embedding) ===
+                let newSession = null;
+                if (firebaseUid) {
+                    try {
+                        newSession = await SessionService.create(firebaseUid, {
+                            appId: app.id,
+                            type: sessionType || 'build',
+                            workItemId: selectedWorkItems.length > 0 ? selectedWorkItems.map(wi => wi.id).join(',') : null,
+                            engineId: typeInfo?.suggestedEngine || 'claude-sonnet-4.5',
+                            packageTokens: totalTokens,
+                            packageFiles: files.map(f => f.name)
+                        });
+                        if (newSession) {
+                            setSessionRecord(newSession);
+                            addLog(`\ud83d\udcdd Session ${newSession.id} recorded`, 'success');
+                            // Phase 3.4: Log session creation
+                            const actor = config?.ownerName || 'Owner';
+                            ActivityLogService.logSessionCreate(firebaseUid, actor, app.name, sessionType || 'build', newSession.id).catch(() => {});
+                        }
+                    } catch (e) {
+                        addLog(`\u26a0\ufe0f Could not create session record: ${e.message}`, 'warn');
+                    }
+                }
+                
                 // === Generate SESSION_BRIEF.md ===
                 addLog('\ud83d\udccb Generating session brief...');
                 setProgress({ current: 8, total: 9 });
@@ -27910,7 +28005,8 @@ ${repoStr || '- *No repos configured*'}
                     sessionType: sessionType || null,
                     targetWorkItems: selectedWorkItems.length > 0 ? selectedWorkItems : null,
                     allWorkItems: globalWorkItems || [],
-                    streams: globalStreams || []  // Phase 5.2: stream context
+                    streams: globalStreams || [],  // Phase 5.2: stream context
+                    sessionId: newSession?.id || null  // Phase C: embed session ID for return matching
                 });
                 const manifest = '\n## Files in This Package\n| File | Size | Tokens | Source |\n|------|------|--------|--------|\n' +
                     files.map(f => `| ${f.name} | ${(f.size / 1024).toFixed(1)}KB | ${TokenRegistryService.formatTokens(f.tokens || 0)} | ${f.generated ? '\u26a1 Generated skeleton' : '\ud83d\udcc2 From repo'} |`).join('\n') + '\n';
@@ -27947,30 +28043,6 @@ ${repoStr || '- *No repos configured*'}
                                 addLog(`\u26a0\ufe0f Could not transition ${wi.id}: ${e.message}`, 'warn');
                             }
                         }
-                    }
-                }
-                
-                // === Phase 2.2: Create session record via SessionService ===
-                let newSession = null;
-                if (firebaseUid) {
-                    try {
-                        newSession = await SessionService.create(firebaseUid, {
-                            appId: app.id,
-                            type: sessionType || 'build',
-                            workItemId: selectedWorkItems.length > 0 ? selectedWorkItems.map(wi => wi.id).join(',') : null,
-                            engineId: typeInfo?.suggestedEngine || 'claude-sonnet-4.5',
-                            packageTokens: totalTokens,
-                            packageFiles: files.map(f => f.name)
-                        });
-                        if (newSession) {
-                            setSessionRecord(newSession);
-                            addLog(`\ud83d\udcdd Session ${newSession.id} recorded`, 'success');
-                            // Phase 3.4: Log session creation
-                            const actor = config?.ownerName || 'Owner';
-                            ActivityLogService.logSessionCreate(firebaseUid, actor, app.name, sessionType || 'build', newSession.id).catch(() => {});
-                        }
-                    } catch (e) {
-                        addLog(`\u26a0\ufe0f Could not create session record: ${e.message}`, 'warn');
                     }
                 }
                 
