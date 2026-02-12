@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Analytics — Command Center</title>
-    <meta name="version" content="1.0.1">
+    <meta name="version" content="1.2.0">
     <meta name="gs-app-id" content="cc-analytics">
     <link rel="stylesheet" href="../shared/cc-shared.css">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -3202,6 +3202,9 @@
     function WorkStreamsView({ apps, config, globalWorkItems, globalStreams, globalInterfaces, globalDependencies, globalDependencyAlerts, showAlert, showConfirm, showPrompt, setView }) {
         const [selectedApp, setSelectedApp] = React.useState('all');
         const [editingStream, setEditingStream] = React.useState(null); // null, 'new', or stream object
+        const [briefStream, setBriefStream] = React.useState(null); // stream object for brief modal
+        const [expandedStreamId, setExpandedStreamId] = React.useState(null); // which stream card is expanded
+        const [detailTab, setDetailTab] = React.useState('concepts'); // concepts | tests | review | artifacts | sessions
         const [firebaseUser, setFirebaseUser] = React.useState(null);
         
         React.useEffect(() => {
@@ -3249,6 +3252,13 @@
             if (!firebaseUser) return;
             await WorkStreamService.update(firebaseUser.uid, streamId, updates);
             setEditingStream(null);
+        };
+        
+        // Lightweight save for inline detail panel edits (no modal close)
+        const saveStreamField = async (streamId, updates) => {
+            if (!firebaseUser) return;
+            await WorkStreamService.update(firebaseUser.uid, streamId, updates);
+            showAlert('Stream updated', 'success');
         };
         
         const handleDeleteStream = async (stream) => {
@@ -3440,7 +3450,10 @@
                                                         <span className={`px-2 py-0.5 rounded text-xs border ${statusColors[stream.status]}`}>
                                                             {statusIcons[stream.status]} {stream.status}
                                                         </span>
-                                                        <h4 className="font-semibold">{stream.name}</h4>
+                                                        <h4 className="font-semibold cursor-pointer hover:text-indigo-400 transition-colors"
+                                                            onClick={() => { setExpandedStreamId(expandedStreamId === stream.id ? null : stream.id); setDetailTab('concepts'); }}>
+                                                            {stream.name} {expandedStreamId === stream.id ? '▾' : '▸'}
+                                                        </h4>
                                                     </div>
                                                     {stream.goal && <p className="text-xs text-slate-400 mt-1">{stream.goal}</p>}
                                                     <div className="text-xs text-slate-500 mt-1 flex items-center gap-3">
@@ -3565,6 +3578,20 @@
                                                 </div>
                                             )}
                                             
+                                            {/* Expandable Detail Panel */}
+                                            {expandedStreamId === stream.id && (
+                                                <StreamDetailPanel
+                                                    stream={stream}
+                                                    apps={apps}
+                                                    tab={detailTab}
+                                                    setTab={setDetailTab}
+                                                    onSave={(updates) => saveStreamField(stream.id, updates)}
+                                                    showAlert={showAlert}
+                                                    showConfirm={showConfirm}
+                                                    showPrompt={showPrompt}
+                                                />
+                                            )}
+                                            
                                             {/* Actions */}
                                             <div className="flex items-center gap-2 pt-2 border-t border-slate-700">
                                                 <select value={stream.status} onChange={e => handleStatusChange(stream, e.target.value)}
@@ -3578,6 +3605,11 @@
                                                     className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs"
                                                     title="Assign unassigned items">
                                                     📋 Assign Items
+                                                </button>
+                                                <button onClick={() => setBriefStream(stream)}
+                                                    className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs"
+                                                    title="Generate workstream brief">
+                                                    📄 Brief
                                                 </button>
                                                 <button onClick={() => { setView('backlog'); }}
                                                     className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs"
@@ -3604,9 +3636,443 @@
                         onCancel={() => setEditingStream(null)}
                     />
                 )}
+                
+                {/* Workstream Brief Modal */}
+                {briefStream && (
+                    <WorkstreamBriefModal
+                        stream={briefStream}
+                        apps={apps}
+                        showAlert={showAlert}
+                        onClose={() => setBriefStream(null)}
+                    />
+                )}
             </div>
         );
     }
+    // =========================================================================
+    // STREAM DETAIL PANEL — Expandable tabs within stream cards
+    // =========================================================================
+    function StreamDetailPanel({ stream, apps, tab, setTab, onSave, showAlert, showConfirm, showPrompt }) {
+        // Local state for add-concept form
+        const [addingConcept, setAddingConcept] = React.useState(false);
+        const [newConceptType, setNewConceptType] = React.useState('rule');
+        const [newConceptText, setNewConceptText] = React.useState('');
+        const [newConceptScope, setNewConceptScope] = React.useState('');
+        const [importText, setImportText] = React.useState('');
+        const [showImport, setShowImport] = React.useState(false);
+        
+        // Local state for add-scenario form
+        const [addingScenario, setAddingScenario] = React.useState(false);
+        const [newScenarioName, setNewScenarioName] = React.useState('');
+        
+        // Local state for code review edit
+        const [editingReview, setEditingReview] = React.useState(false);
+        const [reviewStatus, setReviewStatus] = React.useState(stream.codeReview?.status || 'pending');
+        const [reviewDate, setReviewDate] = React.useState(stream.codeReview?.lastReview || '');
+        const [reviewTechniques, setReviewTechniques] = React.useState(stream.codeReview?.techniques || '');
+        const [reviewFound, setReviewFound] = React.useState(stream.codeReview?.issuesFound ?? '');
+        const [reviewFixed, setReviewFixed] = React.useState(stream.codeReview?.issuesFixed ?? '');
+        
+        const conceptTypes = ['rule', 'decision', 'constraint', 'process', 'lesson', 'open', 'fix'];
+        const typeColors = {
+            rule: 'bg-red-900/30 text-red-400 border-red-800/40',
+            decision: 'bg-blue-900/30 text-blue-400 border-blue-800/40',
+            constraint: 'bg-amber-900/30 text-amber-400 border-amber-800/40',
+            process: 'bg-green-900/30 text-green-400 border-green-800/40',
+            lesson: 'bg-purple-900/30 text-purple-400 border-purple-800/40',
+            open: 'bg-orange-900/30 text-orange-400 border-orange-800/40',
+            fix: 'bg-cyan-900/30 text-cyan-400 border-cyan-800/40'
+        };
+        
+        const tabs = [
+            { id: 'concepts', label: '💡 Concepts', count: (stream.concepts || []).filter(c => c.status === 'active').length },
+            { id: 'tests', label: '🧪 Tests', count: stream.tests?.coverage?.total || 0 },
+            { id: 'review', label: '🔍 Review' },
+            { id: 'artifacts', label: '📦 Artifacts', count: (stream.artifacts || []).length },
+            { id: 'sessions', label: '📅 Sessions', count: (stream.sessions || []).length }
+        ];
+        
+        // === CONCEPT HANDLERS ===
+        const addConcept = async () => {
+            if (!newConceptText.trim()) return;
+            const concepts = [...(stream.concepts || [])];
+            concepts.push({
+                id: `C-${Date.now()}-${concepts.length}`,
+                type: newConceptType,
+                text: newConceptText.trim(),
+                scope: newConceptScope.split(',').map(s => s.trim()).filter(Boolean),
+                source: 'manual',
+                date: new Date().toISOString().split('T')[0],
+                status: 'active'
+            });
+            await onSave({ concepts });
+            setNewConceptText('');
+            setNewConceptScope('');
+            setAddingConcept(false);
+            console.log(`[Concepts] Manually added ${newConceptType.toUpperCase()} concept to "${stream.name}"`);
+        };
+        
+        const toggleConceptStatus = async (conceptId, currentStatus) => {
+            const concepts = (stream.concepts || []).map(c => 
+                c.id === conceptId ? { ...c, status: currentStatus === 'active' ? 'superseded' : 'active' } : c
+            );
+            await onSave({ concepts });
+        };
+        
+        const removeConcept = async (conceptId) => {
+            const concepts = (stream.concepts || []).filter(c => c.id !== conceptId);
+            await onSave({ concepts });
+        };
+        
+        const importConcepts = async () => {
+            if (!importText.trim()) return;
+            // Reuse the parseConcepts logic — parse cc-concepts block or raw lines
+            const newConcepts = [];
+            const lineRegex = /^[\s]*-\s*(RULE|DECISION|CONSTRAINT|PROCESS|LESSON|OPEN|FIX):\s*(.+)$/gm;
+            let match;
+            while ((match = lineRegex.exec(importText)) !== null) {
+                newConcepts.push({
+                    id: `C-${Date.now()}-${newConcepts.length}`,
+                    type: match[1].toLowerCase(),
+                    text: match[2].trim(),
+                    scope: [],
+                    source: 'import',
+                    date: new Date().toISOString().split('T')[0],
+                    status: 'active'
+                });
+            }
+            if (newConcepts.length === 0) {
+                showAlert('No concepts found. Use format: - RULE: text', 'error');
+                return;
+            }
+            // Deduplicate by text
+            const existing = new Set((stream.concepts || []).map(c => c.text));
+            const unique = newConcepts.filter(c => !existing.has(c.text));
+            const concepts = [...(stream.concepts || []), ...unique];
+            await onSave({ concepts });
+            setImportText('');
+            setShowImport(false);
+            showAlert(`Imported ${unique.length} concept(s) (${newConcepts.length - unique.length} duplicates skipped)`, 'success');
+            console.log(`[Concepts] Imported ${unique.length} concepts into "${stream.name}"`);
+        };
+        
+        // === TEST HANDLERS ===
+        const toggleScenarioStatus = async (scenarioId) => {
+            const tests = { ...(stream.tests || {}) };
+            const scenarios = (tests.scenarios || []).map(s => {
+                if (s.id !== scenarioId) return s;
+                const statusCycle = ['untested', 'pass', 'fail'];
+                const nextIdx = (statusCycle.indexOf(s.status) + 1) % statusCycle.length;
+                return { ...s, status: statusCycle[nextIdx] };
+            });
+            // Recalculate coverage
+            const pass = scenarios.filter(s => s.status === 'pass').length;
+            const fail = scenarios.filter(s => s.status === 'fail').length;
+            const untested = scenarios.filter(s => s.status === 'untested').length;
+            tests.scenarios = scenarios;
+            tests.coverage = { pass, fail, untested, total: scenarios.length };
+            await onSave({ tests });
+        };
+        
+        const addScenario = async () => {
+            if (!newScenarioName.trim()) return;
+            const tests = { ...(stream.tests || {}), scenarios: [...(stream.tests?.scenarios || [])] };
+            tests.scenarios.push({
+                id: `TS-${Date.now()}`,
+                name: newScenarioName.trim(),
+                status: 'untested',
+                evidence: ''
+            });
+            const pass = tests.scenarios.filter(s => s.status === 'pass').length;
+            const fail = tests.scenarios.filter(s => s.status === 'fail').length;
+            const untested = tests.scenarios.filter(s => s.status === 'untested').length;
+            tests.coverage = { pass, fail, untested, total: tests.scenarios.length };
+            await onSave({ tests });
+            setNewScenarioName('');
+            setAddingScenario(false);
+        };
+        
+        const removeScenario = async (scenarioId) => {
+            const tests = { ...(stream.tests || {}) };
+            tests.scenarios = (tests.scenarios || []).filter(s => s.id !== scenarioId);
+            const pass = tests.scenarios.filter(s => s.status === 'pass').length;
+            const fail = tests.scenarios.filter(s => s.status === 'fail').length;
+            const untested = tests.scenarios.filter(s => s.status === 'untested').length;
+            tests.coverage = { pass, fail, untested, total: tests.scenarios.length };
+            await onSave({ tests });
+        };
+        
+        // === CODE REVIEW HANDLER ===
+        const saveReview = async () => {
+            const codeReview = {
+                status: reviewStatus,
+                lastReview: reviewDate || new Date().toISOString().split('T')[0],
+                techniques: reviewTechniques,
+                issuesFound: reviewFound !== '' ? parseInt(reviewFound) || 0 : null,
+                issuesFixed: reviewFixed !== '' ? parseInt(reviewFixed) || 0 : null
+            };
+            await onSave({ codeReview });
+            setEditingReview(false);
+        };
+        
+        // === RENDER ===
+        return (
+            <div className="mt-3 border-t border-slate-700 pt-3">
+                {/* Tabs */}
+                <div className="flex gap-1 mb-3 overflow-x-auto">
+                    {tabs.map(t => (
+                        <button key={t.id} onClick={() => setTab(t.id)}
+                            className={`px-2.5 py-1 rounded text-xs whitespace-nowrap transition-colors ${
+                                tab === t.id ? 'bg-indigo-600 text-white' : 'bg-slate-700/50 text-slate-400 hover:bg-slate-700'
+                            }`}>
+                            {t.label}{t.count > 0 ? ` (${t.count})` : ''}
+                        </button>
+                    ))}
+                </div>
+                
+                {/* === CONCEPTS TAB === */}
+                {tab === 'concepts' && (
+                    <div className="space-y-2">
+                        {/* Concept list */}
+                        {(stream.concepts || []).length === 0 && !addingConcept && !showImport && (
+                            <div className="text-xs text-slate-500 text-center py-3">No concepts yet. Add manually or import from a document.</div>
+                        )}
+                        {(stream.concepts || []).map(c => (
+                            <div key={c.id} className={`flex items-start gap-2 text-xs rounded px-2 py-1.5 ${c.status === 'superseded' ? 'opacity-40' : ''}`}>
+                                <span className={`px-1.5 py-0.5 rounded border text-[10px] font-medium ${typeColors[c.type] || 'bg-slate-700 text-slate-400'}`}>
+                                    {c.type.toUpperCase()}
+                                </span>
+                                <span className={`flex-1 ${c.status === 'superseded' ? 'line-through text-slate-500' : 'text-slate-300'}`}>{c.text}</span>
+                                {c.scope?.length > 0 && (
+                                    <span className="text-[10px] text-slate-500">[{c.scope.join(', ')}]</span>
+                                )}
+                                <button onClick={() => toggleConceptStatus(c.id, c.status)} 
+                                    className="text-slate-500 hover:text-slate-300 px-1" title={c.status === 'active' ? 'Mark superseded' : 'Reactivate'}>
+                                    {c.status === 'active' ? '⊘' : '↩'}
+                                </button>
+                                <button onClick={() => removeConcept(c.id)} className="text-slate-500 hover:text-red-400 px-1" title="Remove">✕</button>
+                            </div>
+                        ))}
+                        
+                        {/* Add concept form */}
+                        {addingConcept && (
+                            <div className="bg-slate-900/50 rounded-lg p-3 space-y-2 border border-slate-700">
+                                <div className="flex gap-2">
+                                    <select value={newConceptType} onChange={e => setNewConceptType(e.target.value)}
+                                        className="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs">
+                                        {conceptTypes.map(t => (
+                                            <option key={t} value={t}>{t.toUpperCase()}</option>
+                                        ))}
+                                    </select>
+                                    <input value={newConceptText} onChange={e => setNewConceptText(e.target.value)}
+                                        className="flex-1 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs"
+                                        placeholder="Concept text..." autoFocus
+                                        onKeyDown={e => e.key === 'Enter' && addConcept()} />
+                                </div>
+                                <div className="flex gap-2 items-center">
+                                    <input value={newConceptScope} onChange={e => setNewConceptScope(e.target.value)}
+                                        className="flex-1 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs"
+                                        placeholder="Scope (comma-separated, optional)" />
+                                    <button onClick={addConcept} className="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 rounded text-xs">Add</button>
+                                    <button onClick={() => setAddingConcept(false)} className="px-2 py-1 text-slate-400 hover:text-white text-xs">Cancel</button>
+                                </div>
+                            </div>
+                        )}
+                        
+                        {/* Import form */}
+                        {showImport && (
+                            <div className="bg-slate-900/50 rounded-lg p-3 space-y-2 border border-slate-700">
+                                <div className="text-xs text-slate-400 mb-1">Paste cc-concepts block or concept lines (- TYPE: text):</div>
+                                <textarea value={importText} onChange={e => setImportText(e.target.value)}
+                                    className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs font-mono h-20"
+                                    placeholder="- RULE: If it can't be automated...&#10;- DECISION: Extend existing model..." autoFocus />
+                                <div className="flex gap-2 justify-end">
+                                    <button onClick={() => setShowImport(false)} className="px-2 py-1 text-slate-400 hover:text-white text-xs">Cancel</button>
+                                    <button onClick={importConcepts} className="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 rounded text-xs">Import</button>
+                                </div>
+                            </div>
+                        )}
+                        
+                        {/* Action buttons */}
+                        {!addingConcept && !showImport && (
+                            <div className="flex gap-2 pt-1">
+                                <button onClick={() => setAddingConcept(true)} className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs">+ Add Concept</button>
+                                <button onClick={() => setShowImport(true)} className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs">📋 Import</button>
+                            </div>
+                        )}
+                    </div>
+                )}
+                
+                {/* === TESTS TAB === */}
+                {tab === 'tests' && (
+                    <div className="space-y-2">
+                        {/* Coverage summary badge */}
+                        {stream.tests?.coverage && (
+                            <div className="flex gap-3 text-xs mb-2">
+                                <span className="text-green-400">✅ {stream.tests.coverage.pass || 0} pass</span>
+                                <span className="text-red-400">❌ {stream.tests.coverage.fail || 0} fail</span>
+                                <span className="text-slate-400">○ {stream.tests.coverage.untested || 0} untested</span>
+                                <span className="text-slate-500">({stream.tests.coverage.total || 0} total)</span>
+                            </div>
+                        )}
+                        
+                        {/* Test plan reference */}
+                        {stream.tests?.plan && (
+                            <div className="text-xs text-slate-400 mb-2">📋 Plan: {stream.tests.plan}</div>
+                        )}
+                        
+                        {/* Scenario list */}
+                        {(stream.tests?.scenarios || []).length === 0 && !addingScenario && (
+                            <div className="text-xs text-slate-500 text-center py-3">No test scenarios. Add scenarios to track coverage.</div>
+                        )}
+                        {(stream.tests?.scenarios || []).map(s => (
+                            <div key={s.id} className="flex items-center gap-2 text-xs">
+                                <button onClick={() => toggleScenarioStatus(s.id)}
+                                    className={`px-1.5 py-0.5 rounded border text-[10px] font-medium cursor-pointer ${
+                                        s.status === 'pass' ? 'bg-green-900/30 text-green-400 border-green-800/40' :
+                                        s.status === 'fail' ? 'bg-red-900/30 text-red-400 border-red-800/40' :
+                                        'bg-slate-700/50 text-slate-400 border-slate-600/40'
+                                    }`} title="Click to cycle: untested → pass → fail">
+                                    {s.status === 'pass' ? '✅' : s.status === 'fail' ? '❌' : '○'} {s.status}
+                                </button>
+                                <span className="flex-1 text-slate-300">{s.name}</span>
+                                <button onClick={() => removeScenario(s.id)} className="text-slate-500 hover:text-red-400 px-1" title="Remove">✕</button>
+                            </div>
+                        ))}
+                        
+                        {/* Add scenario */}
+                        {addingScenario ? (
+                            <div className="flex gap-2 items-center">
+                                <input value={newScenarioName} onChange={e => setNewScenarioName(e.target.value)}
+                                    className="flex-1 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs"
+                                    placeholder="Scenario name..." autoFocus
+                                    onKeyDown={e => e.key === 'Enter' && addScenario()} />
+                                <button onClick={addScenario} className="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 rounded text-xs">Add</button>
+                                <button onClick={() => setAddingScenario(false)} className="px-2 py-1 text-slate-400 hover:text-white text-xs">Cancel</button>
+                            </div>
+                        ) : (
+                            <button onClick={() => setAddingScenario(true)} className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs">+ Add Scenario</button>
+                        )}
+                    </div>
+                )}
+                
+                {/* === REVIEW TAB === */}
+                {tab === 'review' && (
+                    <div className="space-y-2">
+                        {!editingReview ? (
+                            <>
+                                {stream.codeReview ? (
+                                    <div className="space-y-1 text-xs">
+                                        <div className="flex items-center gap-2">
+                                            <span className={`px-1.5 py-0.5 rounded border text-[10px] font-medium ${
+                                                stream.codeReview.status === 'clean' ? 'bg-green-900/30 text-green-400 border-green-800/40' :
+                                                stream.codeReview.status === 'issues' ? 'bg-amber-900/30 text-amber-400 border-amber-800/40' :
+                                                'bg-slate-700/50 text-slate-400 border-slate-600/40'
+                                            }`}>{stream.codeReview.status || 'pending'}</span>
+                                            {stream.codeReview.lastReview && <span className="text-slate-500">Last: {stream.codeReview.lastReview}</span>}
+                                        </div>
+                                        {stream.codeReview.techniques && <div className="text-slate-400">Techniques: {stream.codeReview.techniques}</div>}
+                                        {stream.codeReview.issuesFound != null && (
+                                            <div className="text-slate-400">Issues: {stream.codeReview.issuesFound} found, {stream.codeReview.issuesFixed || 0} fixed</div>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div className="text-xs text-slate-500 text-center py-3">No code review recorded yet.</div>
+                                )}
+                                <button onClick={() => setEditingReview(true)} 
+                                    className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs">
+                                    {stream.codeReview ? '✏️ Edit Review' : '+ Record Review'}
+                                </button>
+                            </>
+                        ) : (
+                            <div className="bg-slate-900/50 rounded-lg p-3 space-y-2 border border-slate-700">
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                        <label className="block text-[10px] text-slate-500 mb-0.5">Status</label>
+                                        <select value={reviewStatus} onChange={e => setReviewStatus(e.target.value)}
+                                            className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs">
+                                            <option value="pending">Pending</option>
+                                            <option value="in-progress">In Progress</option>
+                                            <option value="issues">Issues Found</option>
+                                            <option value="clean">Clean</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] text-slate-500 mb-0.5">Date</label>
+                                        <input type="date" value={reviewDate} onChange={e => setReviewDate(e.target.value)}
+                                            className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs" />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] text-slate-500 mb-0.5">Techniques Used</label>
+                                    <input value={reviewTechniques} onChange={e => setReviewTechniques(e.target.value)}
+                                        className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs"
+                                        placeholder="Line-by-line, boundary scan, interface check..." />
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                        <label className="block text-[10px] text-slate-500 mb-0.5">Issues Found</label>
+                                        <input type="number" value={reviewFound} onChange={e => setReviewFound(e.target.value)}
+                                            className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs" min="0" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] text-slate-500 mb-0.5">Issues Fixed</label>
+                                        <input type="number" value={reviewFixed} onChange={e => setReviewFixed(e.target.value)}
+                                            className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs" min="0" />
+                                    </div>
+                                </div>
+                                <div className="flex gap-2 justify-end">
+                                    <button onClick={() => setEditingReview(false)} className="px-2 py-1 text-slate-400 hover:text-white text-xs">Cancel</button>
+                                    <button onClick={saveReview} className="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 rounded text-xs">Save Review</button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+                
+                {/* === ARTIFACTS TAB === */}
+                {tab === 'artifacts' && (
+                    <div className="space-y-2">
+                        {(stream.artifacts || []).length === 0 ? (
+                            <div className="text-xs text-slate-500 text-center py-3">No artifacts tracked. Artifacts are auto-added from doc pushes.</div>
+                        ) : (
+                            (stream.artifacts || []).map((a, i) => (
+                                <div key={i} className="flex items-center gap-2 text-xs">
+                                    <span className="px-1.5 py-0.5 rounded bg-slate-700/50 border border-slate-600/40 text-[10px] text-slate-400">
+                                        {a.type || 'doc'}
+                                    </span>
+                                    <span className="flex-1 text-slate-300">{a.name}</span>
+                                    {a.date && <span className="text-slate-500">{a.date}</span>}
+                                    {a.repo && <span className="text-slate-500 text-[10px]">{a.repo}</span>}
+                                </div>
+                            ))
+                        )}
+                    </div>
+                )}
+                
+                {/* === SESSIONS TAB === */}
+                {tab === 'sessions' && (
+                    <div className="space-y-2">
+                        {(stream.sessions || []).length === 0 ? (
+                            <div className="text-xs text-slate-500 text-center py-3">No session history recorded.</div>
+                        ) : (
+                            [...(stream.sessions || [])].reverse().map((s, i) => (
+                                <div key={i} className="bg-slate-900/30 rounded-lg px-3 py-2 text-xs border border-slate-700/50">
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <span className="text-slate-400 font-medium">{s.date || 'Unknown date'}</span>
+                                        {s.conceptsAdded > 0 && <span className="text-purple-400 text-[10px]">+{s.conceptsAdded} concepts</span>}
+                                        {s.testsRun > 0 && <span className="text-green-400 text-[10px]">{s.testsRun} tests run</span>}
+                                    </div>
+                                    {s.summary && <div className="text-slate-300">{s.summary}</div>}
+                                </div>
+                            ))
+                        )}
+                    </div>
+                )}
+            </div>
+        );
+    }
+
     function StreamEditModal({ stream, apps, globalStreams, config, onSave, onCancel }) {
         const isNew = !stream;
         const [name, setName] = React.useState(stream?.name || '');
@@ -3798,6 +4264,233 @@
                     </div>
                 </div>
             </div>
+        );
+    }
+
+    // =========================================================================
+    // WORKSTREAM BRIEF GENERATOR (Streams Evolution — Session 2)
+    // =========================================================================
+    
+    const WorkstreamBriefGenerator = {
+        generate(stream, apps, versions) {
+            if (!stream) return '# Error\n\nNo stream data provided.';
+            
+            const now = new Date();
+            let md = '';
+            
+            // === Header: Identity ===
+            md += `# Stream: ${stream.name}\n`;
+            md += `Status: ${stream.status || 'active'}`;
+            if (stream.project) md += ` | Project: ${stream.project}`;
+            
+            const appIds = stream.appIds?.length > 0 ? stream.appIds : (stream.appId ? [stream.appId] : []);
+            if (appIds.length > 0) {
+                const appLabels = appIds.map(id => {
+                    const appDef = apps?.[id];
+                    const name = appDef?.name || id;
+                    const ver = versions?.[id];
+                    const verStr = ver?.prod || ver?.test;
+                    return verStr ? `${name} v${verStr}` : name;
+                });
+                md += ` | Apps: ${appLabels.join(', ')}`;
+            }
+            md += '\n';
+            
+            if (stream.owner) md += `Owner: ${stream.owner}`;
+            if (stream.goal) md += ` | Goal: ${stream.goal}`;
+            if (stream.owner || stream.goal) md += '\n';
+            if (stream.targetRelease) md += `Target: ${stream.targetRelease}\n`;
+            md += '\n';
+            
+            // === Active Concepts ===
+            const activeConcepts = (stream.concepts || []).filter(c => c.status === 'active');
+            if (activeConcepts.length > 0) {
+                md += `## Active Concepts\n`;
+                activeConcepts.forEach(c => {
+                    md += `- ${c.type.toUpperCase()}: ${c.text}`;
+                    if (c.scope?.length > 0) md += ` [${c.scope.join(', ')}]`;
+                    md += '\n';
+                });
+                md += '\n';
+            }
+            
+            // === Open Items ===
+            if (stream.openItems?.length > 0) {
+                md += `## Open Items\n`;
+                stream.openItems.forEach(item => {
+                    md += `- ${item}\n`;
+                });
+                md += '\n';
+            }
+            
+            // === Test Status ===
+            if (stream.tests?.coverage) {
+                const cov = stream.tests.coverage;
+                const parts = [];
+                if (cov.pass > 0) parts.push(`${cov.pass} pass`);
+                if (cov.fail > 0) parts.push(`${cov.fail} FAIL`);
+                if (cov.untested > 0) parts.push(`${cov.untested} untested`);
+                md += `## Test Status: ${parts.join(', ')} (${cov.total || 0} total)\n`;
+                
+                if (stream.tests.scenarios?.length > 0) {
+                    const failing = stream.tests.scenarios.filter(s => s.status === 'fail');
+                    if (failing.length > 0) {
+                        failing.forEach(s => {
+                            md += `- ❌ ${s.name}\n`;
+                        });
+                    }
+                }
+                md += '\n';
+            }
+            
+            // === Code Review ===
+            if (stream.codeReview) {
+                md += `## Code Review: ${stream.codeReview.status || 'pending'}\n`;
+                if (stream.codeReview.lastReview) md += `Last: ${stream.codeReview.lastReview}\n`;
+                if (stream.codeReview.techniques) md += `Techniques: ${stream.codeReview.techniques}\n`;
+                if (stream.codeReview.issuesFound != null) {
+                    md += `Issues: ${stream.codeReview.issuesFound} found, ${stream.codeReview.issuesFixed || 0} fixed\n`;
+                }
+                md += '\n';
+            }
+            
+            // === Last Session ===
+            if (stream.sessions?.length > 0) {
+                const last = stream.sessions[stream.sessions.length - 1];
+                md += `## Last Session (${last.date || 'unknown'})\n`;
+                if (last.summary) md += `${last.summary}\n`;
+                if (last.conceptsAdded > 0) md += `Concepts added: ${last.conceptsAdded}\n`;
+                if (last.testsRun > 0) md += `Tests run: ${last.testsRun}\n`;
+                md += '\n';
+            }
+            
+            // === Next ===
+            if (stream.next) {
+                md += `## Next\n`;
+                md += `${stream.next}\n\n`;
+            }
+            
+            // === Footer ===
+            md += `---\n`;
+            md += `*Generated ${now.toLocaleDateString()} by Command Center v${document.querySelector('meta[name="version"]')?.content || '?'}*\n`;
+            
+            console.log(`[StreamBrief] Generated brief for "${stream.name}" (${activeConcepts.length} concepts, ${stream.openItems?.length || 0} open items)`);
+            return md;
+        },
+        
+        hasData(stream) {
+            if (!stream) return false;
+            return !!(stream.name && (stream.concepts?.length > 0 || stream.openItems?.length > 0 ||
+                stream.sessions?.length > 0 || stream.tests?.coverage || stream.codeReview || stream.next || stream.goal));
+        }
+    };
+
+    // =========================================================================
+    // WORKSTREAM BRIEF MODAL
+    // =========================================================================
+    function WorkstreamBriefModal({ stream, apps, showAlert, onClose }) {
+        const [briefContent, setBriefContent] = React.useState(null);
+        const [copied, setCopied] = React.useState(false);
+        
+        React.useEffect(() => {
+            try {
+                // Build versions map from apps
+                const versions = {};
+                Object.entries(apps || {}).forEach(([id, app]) => {
+                    if (app.versions) versions[id] = app.versions;
+                });
+                
+                const brief = WorkstreamBriefGenerator.generate(stream, apps, versions);
+                setBriefContent(brief);
+            } catch (e) {
+                setBriefContent(`# Error\n\nCould not generate workstream brief: ${e.message}`);
+                console.error('[StreamBrief] Generation error:', e);
+            }
+        }, [stream?.id]);
+        
+        const copyBrief = () => {
+            if (briefContent) {
+                navigator.clipboard.writeText(briefContent).then(() => {
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                    showAlert('Workstream brief copied to clipboard', 'success');
+                }).catch(() => showAlert('Failed to copy to clipboard', 'error'));
+            }
+        };
+        
+        // Simple markdown renderer (matches ProductBriefModal pattern)
+        const renderMarkdown = (md) => {
+            if (!md) return null;
+            const lines = md.split('\n');
+            const elements = [];
+            
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                
+                if (line.startsWith('# ')) {
+                    elements.push(React.createElement('h1', { key: i, className: 'text-xl font-bold text-white mb-2 mt-4' }, line.slice(2)));
+                } else if (line.startsWith('## ')) {
+                    elements.push(React.createElement('h2', { key: i, className: 'text-lg font-semibold text-slate-200 mb-2 mt-4 border-b border-slate-700 pb-1' }, line.slice(3)));
+                } else if (line.startsWith('- ')) {
+                    // Highlight concept types
+                    const text = line.slice(2);
+                    const typeMatch = text.match(/^(RULE|DECISION|CONSTRAINT|PROCESS|LESSON|OPEN|FIX):/);
+                    if (typeMatch) {
+                        const typeColors = {
+                            RULE: 'text-red-400', DECISION: 'text-blue-400', CONSTRAINT: 'text-amber-400',
+                            PROCESS: 'text-green-400', LESSON: 'text-purple-400', OPEN: 'text-orange-400', FIX: 'text-cyan-400'
+                        };
+                        const color = typeColors[typeMatch[1]] || 'text-slate-300';
+                        elements.push(React.createElement('div', { key: i, className: 'text-sm ml-3 mb-0.5' },
+                            React.createElement('span', { className: color + ' font-medium' }, typeMatch[1] + ':'),
+                            React.createElement('span', { className: 'text-slate-300' }, text.slice(typeMatch[1].length + 1))
+                        ));
+                    } else if (text.startsWith('❌ ')) {
+                        elements.push(React.createElement('div', { key: i, className: 'text-sm text-red-400 ml-3 mb-0.5' }, '• ' + text));
+                    } else {
+                        elements.push(React.createElement('div', { key: i, className: 'text-sm text-slate-300 ml-3 mb-0.5' }, '• ' + text.replace(/\*\*([^*]+)\*\*/g, (_, t) => t)));
+                    }
+                } else if (line.startsWith('---')) {
+                    elements.push(React.createElement('hr', { key: i, className: 'border-slate-700 my-3' }));
+                } else if (line.startsWith('*') && line.endsWith('*') && !line.startsWith('**')) {
+                    elements.push(React.createElement('p', { key: i, className: 'text-xs text-slate-600 italic' }, line.replace(/\*/g, '')));
+                } else if (line.trim()) {
+                    elements.push(React.createElement('p', { key: i, className: 'text-sm text-slate-300 mb-1' }, line.replace(/\*\*([^*]+)\*\*/g, (_, t) => t)));
+                }
+            }
+            return elements;
+        };
+        
+        return React.createElement('div', {
+            className: 'fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4',
+            onClick: (e) => e.target === e.currentTarget && onClose()
+        },
+            React.createElement('div', { className: 'bg-slate-800 rounded-xl w-full max-w-2xl max-h-[85vh] flex flex-col border border-slate-700 shadow-2xl' },
+                // Header
+                React.createElement('div', { className: 'flex items-center justify-between p-4 border-b border-slate-700' },
+                    React.createElement('div', { className: 'flex items-center gap-2' },
+                        React.createElement('span', { className: 'text-lg' }, '📄'),
+                        React.createElement('h2', { className: 'text-lg font-semibold text-white' }, `Stream Brief — ${stream.name}`),
+                    ),
+                    React.createElement('div', { className: 'flex gap-2' },
+                        React.createElement('button', {
+                            onClick: copyBrief,
+                            className: `px-3 py-1.5 text-sm rounded transition-colors ${copied ? 'bg-green-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`,
+                            title: 'Copy markdown to clipboard'
+                        }, copied ? '✓ Copied' : '📋 Copy Brief'),
+                        React.createElement('button', {
+                            onClick: onClose,
+                            className: 'p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors'
+                        }, '✕')
+                    )
+                ),
+                // Content — preview panel
+                React.createElement('div', { className: 'flex-1 overflow-y-auto p-4' },
+                    briefContent
+                        ? renderMarkdown(briefContent)
+                        : React.createElement('div', { className: 'flex items-center justify-center py-12 text-slate-400' }, '⏳ Generating brief...')
+                )
+            )
         );
     }
 
