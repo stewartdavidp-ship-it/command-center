@@ -1,0 +1,7 @@
+# API keys and secrets
+.mcp.json
+.env
+
+# Node modules (MCP server)
+mcp-server/node_modules/
+mcp-server/dist/
