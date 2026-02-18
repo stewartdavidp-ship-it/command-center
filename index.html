@@ -7856,8 +7856,14 @@
                         const instructionsDismissed = localStorage.getItem('cc_instructions_setup_done');
                         const claudeCodeDismissed = localStorage.getItem('cc_claude_code_setup_done');
 
-                        /* Test mode: shows the wizard with all steps as incomplete so you can walk through the UX */
+                        /* All hooks MUST be declared before any conditional returns (React rules of hooks) */
                         const [wizardTestMode, setWizardTestMode] = React.useState(false);
+                        const [wizardStep, setWizardStep] = React.useState(0);
+                        const [setupTokenInput, setSetupTokenInput] = React.useState('');
+                        const [setupTokenTesting, setSetupTokenTesting] = React.useState(false);
+                        const [setupTokenResult, setSetupTokenResult] = React.useState(null);
+
+                        const stepIds = ['auth', 'token', 'project', 'mcp', 'instructions', 'claude-code'];
 
                         const stepDone = (id) => {
                             if (wizardTestMode) return false;
@@ -7872,9 +7878,7 @@
                             }
                         };
 
-                        const stepIds = ['auth', 'token', 'project', 'mcp', 'instructions', 'claude-code'];
                         const reallyAllDone = stepIds.every(id => {
-                            /* Check actual completion ignoring test mode */
                             switch(id) {
                                 case 'auth': return !!firebaseUser;
                                 case 'token': return !!githubToken;
@@ -7886,21 +7890,16 @@
                             }
                         });
                         const allDone = !wizardTestMode && reallyAllDone;
-                        /* If truly all done and not in test mode, show a subtle re-entry link */
+                        /* If truly all done and not in test mode, show a visible re-entry option */
                         if (allDone) return (
-                            <div className="mb-4 flex justify-end">
+                            <div className="mb-4 p-3 bg-slate-800/40 border border-slate-700/40 rounded-lg flex items-center justify-between">
+                                <span className="text-xs text-slate-400">Setup complete — all steps done.</span>
                                 <button onClick={() => { setWizardTestMode(true); setWizardStep(0); }}
-                                    className="text-xs text-slate-600 hover:text-slate-400 transition-colors">
-                                    Preview setup wizard
+                                    className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs text-slate-300 font-medium transition-colors">
+                                    Preview Setup Wizard
                                 </button>
                             </div>
                         );
-
-                        /* Wizard state: 0 = welcome, 1-6 = individual steps */
-                        const [wizardStep, setWizardStep] = React.useState(0);
-                        const [setupTokenInput, setSetupTokenInput] = React.useState('');
-                        const [setupTokenTesting, setSetupTokenTesting] = React.useState(false);
-                        const [setupTokenResult, setSetupTokenResult] = React.useState(null);
 
                         const testAndSaveToken = async () => {
                             if (!setupTokenInput.trim()) return;
