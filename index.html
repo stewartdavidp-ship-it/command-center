@@ -401,9 +401,8 @@
         DATA_KEYS: {
             'config': 'commandCenterConfig',
             'deploy-history': 'cc_history_v2',
-            'rules-history': 'cc_rulesHistory',
-            'session-log': 'cc_session_log',
-            'deletion-history': 'cc_deletion_history',
+            // v8.70.14: Removed dead sync slots — rules-history, session-log, deletion-history
+            // (no React state, no writers, no UI consumers)
             'rollback-snapshots': 'cc_rollback_snapshots'
         },
         
@@ -511,18 +510,8 @@
             return this.pushSmart('deploy-history', history);
         },
         
-        async pushRulesHistory(history) {
-            return this.push('rules-history', history);
-        },
-        
-        async pushSessionLog(log) {
-            return this.pushSmart('session-log', log);
-        },
-        
-        async pushDeletionHistory(history) {
-            return this.pushSmart('deletion-history', history);
-        },
-        
+        // v8.70.14: Removed pushRulesHistory, pushSessionLog, pushDeletionHistory (dead sync slots)
+
         async pushRollbackSnapshots(snapshots) {
             return this.push('rollback-snapshots', snapshots);
         },
@@ -551,21 +540,8 @@
             return data || [];
         },
         
-        async pullRulesHistory() {
-            const data = await this.pull('rules-history');
-            return data || [];
-        },
-        
-        async pullSessionLog() {
-            const data = await this.pull('session-log');
-            return data || { currentSession: null, sessions: [], issues: [], notes: '' };
-        },
-        
-        async pullDeletionHistory() {
-            const data = await this.pull('deletion-history');
-            return data || [];
-        },
-        
+        // v8.70.14: Removed pullRulesHistory, pullSessionLog, pullDeletionHistory (dead sync slots)
+
         async pullRollbackSnapshots() {
             const data = await this.pull('rollback-snapshots');
             return data || {};
@@ -584,23 +560,17 @@
             this._setStatus('syncing');
             
             try {
-                const [config, deployHistory, rulesHistory, sessionLog, deletionHistory, rollbackSnapshots] = await Promise.all([
+                const [config, deployHistory, rollbackSnapshots] = await Promise.all([
                     this.pullConfig(),
                     this.pullDeployHistory(),
-                    this.pullRulesHistory(),
-                    this.pullSessionLog(),
-                    this.pullDeletionHistory(),
                     this.pullRollbackSnapshots()
                 ]);
-                
+
                 this._setStatus('synced');
-                
+
                 return {
                     config,
                     deployHistory,
-                    rulesHistory,
-                    sessionLog,
-                    deletionHistory,
                     rollbackSnapshots,
                     _pulledAt: Date.now()
                 };
@@ -613,18 +583,15 @@
         
         // --- Push all non-sensitive data to Firebase (initial seed or manual sync) ---
         
-        async pushAll({ config, deployHistory, rulesHistory, sessionLog, deletionHistory, rollbackSnapshots }) {
+        async pushAll({ config, deployHistory, rollbackSnapshots }) {
             if (!this.initialized || !this.db) return false;
-            
+
             this._setStatus('syncing');
-            
+
             try {
                 const promises = [];
                 if (config) promises.push(this.pushConfig(config));
                 if (deployHistory) promises.push(this.pushDeployHistory(deployHistory));
-                if (rulesHistory) promises.push(this.pushRulesHistory(rulesHistory));
-                if (sessionLog) promises.push(this.pushSessionLog(sessionLog));
-                if (deletionHistory) promises.push(this.pushDeletionHistory(deletionHistory));
                 if (rollbackSnapshots) promises.push(this.pushRollbackSnapshots(rollbackSnapshots));
                 
                 await Promise.all(promises);
@@ -765,82 +732,10 @@
         }
     };
     
-    /**
-     * SessionLogService — Session log CRUD
-     * Wraps: localStorage 'cc_session_log' + FirebaseConfigSync session-log
-     * Used by: App() sessionLog state, FirebaseConfigSync
-     */
-    const SessionLogService = {
-        STORAGE_KEY: 'cc_session_log',
-        
-        DEFAULT_STATE: {
-            currentSession: null,
-            sessions: [],
-            issues: [],
-            notes: '',
-            recentEntries: []
-        },
-        
-        // Load session log from localStorage
-        load() {
-            try {
-                const s = localStorage.getItem(this.STORAGE_KEY);
-                return s ? JSON.parse(s) : { ...this.DEFAULT_STATE };
-            } catch {
-                return { ...this.DEFAULT_STATE };
-            }
-        },
-        
-        // Save full session log (localStorage + Firebase)
-        save(sessionLog) {
-            try {
-                StorageManager.safeSet(this.STORAGE_KEY, JSON.stringify(sessionLog));
-                if (FirebaseConfigSync.initialized) {
-                    FirebaseConfigSync.pushSessionLog(sessionLog).catch(() => {});
-                }
-                return true;
-            } catch (e) {
-                console.error('[SessionLogService] Save failed:', e);
-                return false;
-            }
-        },
-        
-        // Add a recent entry to the session log
-        addRecentEntry(entry, currentLog) {
-            const updated = {
-                ...currentLog,
-                recentEntries: [...(currentLog.recentEntries || []), entry].slice(-20)
-            };
-            this.save(updated);
-            return updated;
-        },
-        
-        // Update session notes
-        updateNotes(notes, currentLog) {
-            const updated = { ...currentLog, notes };
-            this.save(updated);
-            return updated;
-        },
-        
-        // Set current session
-        setCurrentSession(session, currentLog) {
-            const updated = { ...currentLog, currentSession: session };
-            this.save(updated);
-            return updated;
-        },
-        
-        // Overlay from Firebase (used during startup sync)
-        overlay(remoteData) {
-            if (!remoteData || !remoteData._updatedAt) return null;
-            const { _updatedAt, _updatedBy, ...clean } = remoteData;
-            try {
-                localStorage.setItem(this.STORAGE_KEY, JSON.stringify(clean));
-            } catch {}
-            return clean;
-        }
-    };
-    
-    
+    // v8.70.14: SessionLogService REMOVED — orphaned since v8.63.0 (view removed).
+    // App-level sessionLog state had no UI consumer. idea.sessionLog is a separate, active feature.
+
+
     /**
      * IssueService — Minimal issues interface (full UI in Quality satellite)
      * Retained methods: listen (for globalIssues), update, linkToVersion (for deploy flow)
@@ -956,9 +851,7 @@
         PRUNABLE_KEYS: [
             { key: 'cc_rollback_snapshots', type: 'object', strategy: 'keep-latest', maxAge: 7 * 24 * 60 * 60 * 1000, label: 'Rollback Snapshots' },
             { key: 'cc_history_v2', type: 'array', strategy: 'trim', keepCount: 30, label: 'Deploy History' },
-            { key: 'cc_session_log', type: 'object', strategy: 'trim-entries', keepCount: 10, label: 'Session Log' },
-            { key: 'cc_deletion_history', type: 'array', strategy: 'trim', keepCount: 20, label: 'Deletion History' },
-            { key: 'cc_rulesHistory', type: 'array', strategy: 'trim', keepCount: 10, label: 'Rules History' },
+            // v8.70.14: Removed cc_session_log, cc_deletion_history, cc_rulesHistory (dead slots)
             { key: 'cc_tld_prices', type: 'object', strategy: 'clear', label: 'TLD Price Cache' },
             { key: 'cc_domain_health', type: 'object', strategy: 'clear', label: 'Domain Health Cache' },
         ],
@@ -8056,7 +7949,7 @@ The router (\\\`cc-skill-router\\\`) is the single source of truth for skill loa
         const [deployingRepos, setDeployingRepos] = React.useState({}); // { appId: { version, startTime, repo } }
         
         // Session log state (persisted to localStorage)
-        const [sessionLog, setSessionLog] = React.useState(() => SessionLogService.load());
+        // v8.70.14: Removed orphaned App-level sessionLog state (SessionLogService removed)
         
         // Global issues state (synced with Firebase)
         const [globalIssues, setGlobalIssues] = React.useState([]);
@@ -8297,7 +8190,7 @@ The router (\\\`cc-skill-router\\\`) is the single source of truth for skill loa
         React.useEffect(() => { try { if (githubToken) { SecretManager.set('token', githubToken); } } catch {} }, [githubToken]);
         React.useEffect(() => { try { StorageManager.safeSet('cc_apps_v6', JSON.stringify(apps)); } catch {} }, [apps]);
         React.useEffect(() => { DeployService.save(deployments); }, [deployments]);
-        React.useEffect(() => { SessionLogService.save(sessionLog); }, [sessionLog]);
+        // v8.70.14: Removed SessionLogService.save effect (service removed)
         
         // v8.17.0: Firebase Config Sync — startup overlay
         // Load localStorage first (instant), then pull from Firebase and overlay if newer.
@@ -8409,13 +8302,7 @@ The router (\\\`cc-skill-router\\\`) is the single source of truth for skill loa
                         });
                     }
                     
-                    // Overlay session log if Firebase has data
-                    if (remote.sessionLog && remote.sessionLog._updatedAt) {
-                        const overlaid = SessionLogService.overlay(remote.sessionLog);
-                        if (overlaid) {
-                            setSessionLog(overlaid);
-                        }
-                    }
+                    // v8.70.14: Removed sessionLog overlay (SessionLogService removed)
                     
                     console.log('[ConfigSync] Startup overlay complete');
                 } else {
@@ -8441,9 +8328,6 @@ The router (\\\`cc-skill-router\\\`) is the single source of truth for skill loa
                     await FirebaseConfigSync.pushAll({
                         config: freshConfig,
                         deployHistory: [],
-                        rulesHistory: [],
-                        sessionLog: { currentSession: null, sessions: [], issues: [], notes: '' },
-                        deletionHistory: [],
                         rollbackSnapshots: {}
                     });
 
@@ -8486,10 +8370,7 @@ The router (\\\`cc-skill-router\\\`) is the single source of truth for skill loa
                     setDeployments(Array.isArray(remote.deployHistory) ? remote.deployHistory : []);
                 }
                 
-                if (remote.sessionLog && remote.sessionLog._updatedAt) {
-                    const overlaid = SessionLogService.overlay(remote.sessionLog);
-                    if (overlaid) setSessionLog(overlaid);
-                }
+                // v8.70.14: Removed sessionLog overlay (SessionLogService removed)
             }
         };
         
@@ -25125,17 +25006,11 @@ The developer uses Claude for iterative development — each session should:
             try {
                 const localConfig = ConfigManager.load();
                 const localDeployments = DeployService.load();
-                const localRulesHistory = (() => { try { return JSON.parse(localStorage.getItem('cc_rulesHistory') || '[]'); } catch { return []; } })();
-                const localSessionLog = SessionLogService.load();
-                const localDeletionHistory = (() => { try { return JSON.parse(localStorage.getItem('cc_deletion_history') || '[]'); } catch { return []; } })();
                 const localRollbackSnapshots = RollbackService.load();
-                
+
                 const ok = await FirebaseConfigSync.pushAll({
                     config: localConfig,
                     deployHistory: localDeployments,
-                    rulesHistory: localRulesHistory,
-                    sessionLog: localSessionLog,
-                    deletionHistory: localDeletionHistory,
                     rollbackSnapshots: localRollbackSnapshots
                 });
                 
