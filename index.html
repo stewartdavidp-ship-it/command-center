@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Command Center</title>
-    <meta name="version" content="8.70.18">
+    <meta name="version" content="8.70.19">
     <meta name="gs-app-id" content="command-center">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -4041,6 +4041,21 @@
         return ODRC_TRANSITIONS[fromType].includes(toType);
     }
 
+    // Position (ODRC) display styles — used by ProjectsDrillDown
+    const POSITION_TYPE_STYLES = {
+        'RULE':       { color: 'bg-red-900/50 text-red-300 border-red-800/50', icon: '📏' },
+        'CONSTRAINT': { color: 'bg-amber-900/50 text-amber-300 border-amber-800/50', icon: '🔒' },
+        'DECISION':   { color: 'bg-blue-900/50 text-blue-300 border-blue-800/50', icon: '🎯' },
+        'OPEN':       { color: 'bg-purple-900/50 text-purple-300 border-purple-800/50', icon: '❓' }
+    };
+    const POSITION_STATUS_STYLES = {
+        'active': 'bg-green-900/50 text-green-300',
+        'built': 'bg-emerald-900/50 text-emerald-300',
+        'superseded': 'bg-slate-700 text-slate-400 line-through',
+        'resolved': 'bg-emerald-900/50 text-emerald-300',
+        'transitioned': 'bg-indigo-900/50 text-indigo-300'
+    };
+
     // ODRC Concept Manager — Firebase CRUD + state machine
     const ConceptManager = {
         // Get Firebase ref for concepts under a user
@@ -6412,12 +6427,11 @@ The router (\\\`cc-skill-router\\\`) is the single source of truth for skill loa
                             {/* v8.70.15: Removed Refresh versions button */}
                             <div className="flex items-center gap-1">
                                 {/* v8.63.0: Flat tab navigation (N1-N4 nav restructure) */}
-                                {/* v8.70.18: Restored Jobs + Sessions tabs (read-only MCP views) */}
+                                {/* v8.70.19: Projects absorbs Ideas tab (Phase 3 drill-down) */}
                                 {[
                                     { id: 'projects', icon: '📁', label: 'Projects', view: 'projects' },
                                     { id: 'jobs', icon: '🔨', label: 'Jobs', view: 'jobs' },
-                                    { id: 'sessions', icon: '💬', label: 'Sessions', view: 'sessions' },
-                                    { id: 'ideas', icon: '💡', label: 'Ideas', view: 'ideas' }
+                                    { id: 'sessions', icon: '💬', label: 'Sessions', view: 'sessions' }
                                 ].map(tab => (
                                     <button
                                         key={tab.id}
@@ -6649,51 +6663,26 @@ The router (\\\`cc-skill-router\\\`) is the single source of truth for skill loa
                     
                     {/* v8.70.15: Removed dashboard view routing */}
 
+                    {/* v8.70.19: Projects drill-down replaces ProjectsTab + IdeasView */}
                     {view === 'projects' && (
                         <div className="max-w-6xl mx-auto">
-                            <div className="flex items-center gap-3 mb-6">
-                                <span className="text-2xl">📂</span>
-                                <div>
-                                    <h1 className="text-2xl font-bold">Projects & Apps</h1>
-                                    <p className="text-slate-400 text-sm">Manage project groupings and app configurations</p>
-                                </div>
-                            </div>
-                            <ProjectsTab 
+                            <ProjectsDrillDown
                                 config={config}
                                 updateConfig={handleConfigChange}
-                                activeEnvs={ConfigManager.getActiveEnvironments(config)}
-                                envColors={{
-                                    test: { text: 'text-blue-400', border: 'border-blue-700' },
-                                    prod: { text: 'text-green-400', border: 'border-green-700' },
-                                    dev: { text: 'text-yellow-400', border: 'border-yellow-700' },
-                                    beta: { text: 'text-purple-400', border: 'border-purple-700' }
-                                }}
-                                github={github}
-                                githubOwner={availableRepos[0]?.owner || 'stewartdavidp-ship-it'}
-                                availableRepos={availableRepos}
+                                apps={apps}
+                                globalIdeas={globalIdeas}
+                                globalConcepts={globalConcepts}
+                                globalSessions={globalSessions}
+                                globalJobs={globalJobs}
+                                firebaseUid={firebaseUid}
                                 showAlert={showAlert}
                                 showConfirm={showConfirm}
                                 showPrompt={showPrompt}
-                                onRefreshRepos={refreshRepos}
-                                deployments={[]}
-                                globalWorkItems={globalWorkItems}
-                                firebaseUid={firebaseUid}
-                                globalStreams={globalStreams}
+                                github={github}
+                                availableRepos={availableRepos}
+                                setView={setView}
                             />
                         </div>
-                    )}
-                    
-                    {/* [v8.63.2] Deploy History moved to slide-out panel (N6) */}
-                    
-                    {/* v8.70.15: Removed session view routing placeholder */}
-
-                    {/* v8.70.15: Removed backlog view routing */}
-
-                    {view === 'ideas' && (
-                        <IdeasView apps={apps} globalIdeas={globalIdeas} globalConcepts={globalConcepts}
-                            firebaseUid={firebaseUid} showAlert={showAlert} showConfirm={showConfirm}
-                            showPrompt={showPrompt} config={config} setView={setView} github={github}
-                            viewPayload={viewPayload} setViewPayload={setViewPayload} />
                     )}
 
                     {/* v8.70.18: Jobs + Sessions read-only views */}
@@ -10083,7 +10072,657 @@ The router (\\\`cc-skill-router\\\`) is the single source of truth for skill loa
     }
 
     // =========================================================================
-    // PROJECTS TAB (v8.8.0) — Replaces Apps tab in Configure
+    // PROJECTS DRILL-DOWN (v8.70.19) — 4-level hierarchy: Projects → Apps → Ideas → Positions
+    // Replaces both ProjectsTab and IdeasView in the routing.
+    // =========================================================================
+    function ProjectsDrillDown({ config, updateConfig, apps, globalIdeas, globalConcepts,
+        globalSessions, globalJobs, firebaseUid, showAlert, showConfirm, showPrompt,
+        github, availableRepos, setView }) {
+
+        // ─── Navigation State ───────────────────────────────────────
+        const [drillLevel, setDrillLevel] = React.useState('projects');
+        const [selectedProjectId, setSelectedProjectId] = React.useState(null);
+        const [selectedAppId, setSelectedAppId] = React.useState(null);
+        const [expandedIdeaId, setExpandedIdeaId] = React.useState(null);
+
+        // ─── Level 4 Filters ────────────────────────────────────────
+        const [positionTypeFilter, setPositionTypeFilter] = React.useState('all');
+        const [positionStatusFilter, setPositionStatusFilter] = React.useState('all');
+        const [positionSearch, setPositionSearch] = React.useState('');
+
+        // ─── Navigation Helpers ─────────────────────────────────────
+        const drillToProject = (projectId) => {
+            setSelectedProjectId(projectId);
+            setSelectedAppId(null);
+            setExpandedIdeaId(null);
+            setDrillLevel('project-detail');
+        };
+
+        const drillToApp = (appId) => {
+            setSelectedAppId(appId);
+            setExpandedIdeaId(null);
+            setPositionTypeFilter('all');
+            setPositionStatusFilter('all');
+            setPositionSearch('');
+            setDrillLevel('app-detail');
+        };
+
+        const goBack = () => {
+            if (drillLevel === 'app-detail') {
+                setSelectedAppId(null);
+                setExpandedIdeaId(null);
+                setDrillLevel('project-detail');
+            } else if (drillLevel === 'project-detail') {
+                setSelectedProjectId(null);
+                setDrillLevel('projects');
+            }
+        };
+
+        // ─── Computed Data ──────────────────────────────────────────
+        const projectsData = React.useMemo(() => {
+            const projectDefs = config.projects || {};
+            const projectMap = {};
+
+            // Initialize from project definitions
+            Object.entries(projectDefs).forEach(([id, projDef]) => {
+                projectMap[id] = {
+                    ...projDef,
+                    id: projDef.id || id,
+                    state: projDef.state || 'active',
+                    apps: [],
+                    ideaCount: 0,
+                    openCount: 0
+                };
+            });
+
+            // Assign apps to projects
+            Object.values(config.apps || {}).forEach(app => {
+                const projId = app.project || 'other';
+                if (!projectMap[projId]) {
+                    projectMap[projId] = {
+                        id: projId, name: projId, icon: '📦', color: 'slate',
+                        order: 99, state: 'active', apps: [], ideaCount: 0, openCount: 0
+                    };
+                }
+                projectMap[projId].apps.push(app);
+            });
+
+            // Count ideas and OPENs per project
+            Object.values(projectMap).forEach(proj => {
+                const appIds = proj.apps.map(a => a.id);
+                const projIdeas = globalIdeas.filter(i =>
+                    (i.appId && appIds.includes(i.appId)) || i.projectId === proj.id
+                );
+                proj.ideaCount = projIdeas.length;
+                const ideaIds = projIdeas.map(i => i.id);
+                proj.openCount = globalConcepts.filter(c =>
+                    ideaIds.includes(c.ideaOrigin) && c.type === 'OPEN' && c.status === 'active'
+                ).length;
+            });
+
+            return Object.values(projectMap)
+                .sort((a, b) => (a.order || 99) - (b.order || 99));
+        }, [config.apps, config.projects, globalIdeas, globalConcepts]);
+
+        // App-level stats helper
+        const getAppStats = React.useCallback((appId) => {
+            const ideas = globalIdeas.filter(i => i.appId === appId);
+            const ideaIds = ideas.map(i => i.id);
+            const concepts = globalConcepts.filter(c => ideaIds.includes(c.ideaOrigin));
+            const active = concepts.filter(c => c.status === 'active');
+            return {
+                ideaCount: ideas.length,
+                positionCount: active.length,
+                openCount: active.filter(c => c.type === 'OPEN').length,
+                unbuiltDecisions: active.filter(c => c.type === 'DECISION').length
+            };
+        }, [globalIdeas, globalConcepts]);
+
+        // Ideas for selected app (Level 3)
+        const appIdeas = React.useMemo(() => {
+            if (!selectedAppId) return [];
+            return globalIdeas
+                .filter(i => i.appId === selectedAppId)
+                .sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
+        }, [globalIdeas, selectedAppId]);
+
+        // Genesis ideas for selected project (ideas without appId)
+        const genesisIdeas = React.useMemo(() => {
+            if (!selectedProjectId) return [];
+            return globalIdeas.filter(i =>
+                !i.appId && i.projectId === selectedProjectId && i.status !== 'archived'
+            );
+        }, [globalIdeas, selectedProjectId]);
+
+        // Positions for expanded idea (Level 4)
+        const ideaPositions = React.useMemo(() => {
+            if (!expandedIdeaId) return [];
+            let list = globalConcepts.filter(c => c.ideaOrigin === expandedIdeaId);
+            if (positionTypeFilter !== 'all') list = list.filter(c => c.type === positionTypeFilter);
+            if (positionStatusFilter !== 'all') list = list.filter(c => c.status === positionStatusFilter);
+            if (positionSearch) {
+                const q = positionSearch.toLowerCase();
+                list = list.filter(c => (c.content || '').toLowerCase().includes(q));
+            }
+            return list.sort((a, b) => {
+                // Sort by type priority: OPEN first, then DECISION, RULE, CONSTRAINT
+                const order = { 'OPEN': 0, 'DECISION': 1, 'RULE': 2, 'CONSTRAINT': 3 };
+                return (order[a.type] || 4) - (order[b.type] || 4);
+            });
+        }, [globalConcepts, expandedIdeaId, positionTypeFilter, positionStatusFilter, positionSearch]);
+
+        // ─── Write Handlers (Light Edits Only) ─────────────────────
+        const handleArchiveIdea = async (ideaId) => {
+            const confirmed = await showConfirm('Archive this idea? It will be hidden from the drill-down.', '📦 Archive Idea');
+            if (!confirmed) return;
+            try {
+                await IdeaManager.archive(firebaseUid, ideaId);
+                showAlert('Idea archived', '✅ Archived');
+            } catch (e) { showAlert(`Error: ${e.message}`, '❌ Error'); }
+        };
+
+        const handleIdeaStatusChange = async (ideaId, newStatus) => {
+            try {
+                await IdeaManager.update(firebaseUid, ideaId, { status: newStatus });
+                showAlert(`Status changed to ${newStatus}`, '✅ Updated');
+            } catch (e) { showAlert(`Error: ${e.message}`, '❌ Error'); }
+        };
+
+        // ─── Breadcrumb ─────────────────────────────────────────────
+        const renderBreadcrumb = () => {
+            if (drillLevel === 'projects') return null;
+            const proj = (config.projects || {})[selectedProjectId];
+            const app = apps && apps[selectedAppId];
+            return (
+                <div className="flex items-center gap-2 mb-4 text-sm">
+                    <button onClick={() => { setDrillLevel('projects'); setSelectedProjectId(null); setSelectedAppId(null); setExpandedIdeaId(null); }}
+                        className="text-indigo-400 hover:text-indigo-300">Projects</button>
+                    {drillLevel === 'project-detail' && proj && (
+                        <React.Fragment>
+                            <span className="text-slate-600">›</span>
+                            <span className="text-slate-300">{proj.icon} {proj.name}</span>
+                        </React.Fragment>
+                    )}
+                    {drillLevel === 'app-detail' && (
+                        <React.Fragment>
+                            <span className="text-slate-600">›</span>
+                            <button onClick={goBack} className="text-indigo-400 hover:text-indigo-300">
+                                {proj?.icon} {proj?.name}
+                            </button>
+                            <span className="text-slate-600">›</span>
+                            <span className="text-slate-300">{app?.icon} {app?.name}</span>
+                        </React.Fragment>
+                    )}
+                </div>
+            );
+        };
+
+        // ═════════════════════════════════════════════════════════════
+        // LEVEL 1: Project Cards
+        // ═════════════════════════════════════════════════════════════
+        const renderProjectCards = () => {
+            const visibleProjects = projectsData.filter(p => p.state !== 'hidden');
+            return (
+                <div>
+                    <div className="flex items-center gap-3 mb-6">
+                        <span className="text-2xl">📂</span>
+                        <div>
+                            <h1 className="text-2xl font-bold">Projects</h1>
+                            <p className="text-slate-400 text-sm">
+                                {visibleProjects.length} project{visibleProjects.length !== 1 ? 's' : ''} · {Object.keys(config.apps || {}).length} apps
+                            </p>
+                        </div>
+                    </div>
+                    {visibleProjects.length === 0 ? (
+                        <div className="text-center py-12">
+                            <div className="text-4xl mb-3">📂</div>
+                            <div className="text-lg font-bold mb-2">No Projects Yet</div>
+                            <p className="text-slate-400">Projects are configured via MCP or the Settings tab.</p>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {visibleProjects.map(proj => {
+                                const colors = getProjectColor(proj.color);
+                                return (
+                                    <div key={proj.id}
+                                        className={`rounded-xl border p-4 cursor-pointer hover:border-indigo-500 transition-colors ${colors.border} ${colors.bg}`}
+                                        onClick={() => drillToProject(proj.id)}>
+                                        <div className="flex items-center gap-3 mb-2">
+                                            <AppIcon icon={proj.icon} size={28} />
+                                            <div className="flex-1 min-w-0">
+                                                <div className={`font-semibold ${colors.text}`}>{proj.name}</div>
+                                                {proj.description && (
+                                                    <div className="text-xs text-slate-500 truncate">{proj.description}</div>
+                                                )}
+                                            </div>
+                                            <span className="text-slate-600 text-lg">›</span>
+                                        </div>
+                                        <div className="flex gap-4 text-xs text-slate-400">
+                                            <span>{proj.apps.length} app{proj.apps.length !== 1 ? 's' : ''}</span>
+                                            <span>{proj.ideaCount} idea{proj.ideaCount !== 1 ? 's' : ''}</span>
+                                            {proj.openCount > 0 && (
+                                                <span className="text-purple-400">
+                                                    {proj.openCount} open position{proj.openCount !== 1 ? 's' : ''}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // ═════════════════════════════════════════════════════════════
+        // LEVEL 2: Project Detail (Apps + Genesis Ideas)
+        // ═════════════════════════════════════════════════════════════
+        const renderProjectDetail = () => {
+            const proj = (config.projects || {})[selectedProjectId];
+            if (!proj) return <div className="text-slate-500">Project not found</div>;
+
+            const projApps = Object.values(config.apps || {})
+                .filter(a => (a.project || 'other') === selectedProjectId)
+                .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+            return (
+                <div>
+                    {/* Project Header */}
+                    <div className="flex items-center gap-3 mb-6">
+                        <AppIcon icon={proj.icon} size={32} />
+                        <div>
+                            <h1 className="text-xl font-bold">{proj.name}</h1>
+                            {proj.description && <p className="text-slate-400 text-sm">{proj.description}</p>}
+                        </div>
+                    </div>
+
+                    {/* Apps Section */}
+                    <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-3">
+                        Apps ({projApps.length})
+                    </h2>
+                    {projApps.length === 0 ? (
+                        <div className="text-center py-6 text-slate-500 text-sm">No apps in this project</div>
+                    ) : (
+                        <div className="space-y-2 mb-6">
+                            {projApps.map(app => {
+                                const stats = getAppStats(app.id);
+                                const version = app.versions?.prod || app.versions?.test || '';
+                                return (
+                                    <div key={app.id}
+                                        className="flex items-center gap-3 p-3 rounded-lg border border-slate-700 hover:border-indigo-500 cursor-pointer transition-colors bg-slate-800/50"
+                                        onClick={() => drillToApp(app.id)}>
+                                        <AppIcon icon={app.icon} size={24} />
+                                        <div className="flex-1 min-w-0">
+                                            <div className="font-medium text-sm">{app.name}</div>
+                                            {version && <span className="text-xs text-slate-500">v{version}</span>}
+                                        </div>
+                                        <div className="flex gap-3 text-xs text-slate-400">
+                                            <span>{stats.ideaCount} idea{stats.ideaCount !== 1 ? 's' : ''}</span>
+                                            <span>{stats.positionCount} position{stats.positionCount !== 1 ? 's' : ''}</span>
+                                            {stats.openCount > 0 && (
+                                                <span className="text-purple-400">{stats.openCount} OPEN{stats.openCount !== 1 ? 's' : ''}</span>
+                                            )}
+                                        </div>
+                                        <span className="text-slate-600 text-sm">›</span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+
+                    {/* Genesis Ideas Section */}
+                    {genesisIdeas.length > 0 && (
+                        <div>
+                            <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-3">
+                                Genesis Ideas ({genesisIdeas.length})
+                            </h2>
+                            <div className="space-y-2">
+                                {genesisIdeas.map(idea => {
+                                    const ideaConcepts = globalConcepts.filter(c => c.ideaOrigin === idea.id);
+                                    const activeOPENs = ideaConcepts.filter(c => c.type === 'OPEN' && c.status === 'active').length;
+                                    return (
+                                        <div key={idea.id} className="p-3 rounded-lg border border-slate-700 bg-slate-800/50">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-sm">💡</span>
+                                                <span className="font-medium text-sm flex-1">{idea.name}</span>
+                                                <span className={`px-2 py-0.5 rounded text-xs ${
+                                                    idea.status === 'active' ? 'bg-indigo-900/40 text-indigo-300' :
+                                                    idea.status === 'graduated' ? 'bg-green-900/30 text-green-400' :
+                                                    'bg-slate-700 text-slate-500'
+                                                }`}>{idea.status}</span>
+                                                {activeOPENs > 0 && (
+                                                    <span className="text-xs text-purple-400">{activeOPENs} OPEN{activeOPENs !== 1 ? 's' : ''}</span>
+                                                )}
+                                            </div>
+                                            {idea.description && (
+                                                <p className="text-xs text-slate-400 mt-1 ml-6">{idea.description}</p>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // ═════════════════════════════════════════════════════════════
+        // LEVEL 3: App Detail (Ideas as Accordions)
+        // ═════════════════════════════════════════════════════════════
+        const renderAppDetail = () => {
+            const app = apps && apps[selectedAppId];
+            if (!app) return <div className="text-slate-500">App not found</div>;
+
+            const version = app.currentProdVersion || app.currentTestVersion || '';
+            const repoName = app.prodRepo || app.testRepo || '';
+
+            return (
+                <div>
+                    {/* App Header */}
+                    <div className="flex items-center gap-3 mb-4 pb-4 border-b border-slate-700">
+                        <AppIcon icon={app.icon} size={32} />
+                        <div className="flex-1">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                {app.name}
+                                {version && <span className="text-sm font-normal text-slate-400">v{version}</span>}
+                            </h1>
+                            {repoName && (
+                                <a href={`https://github.com/${repoName}`} target="_blank" rel="noopener noreferrer"
+                                    className="text-xs text-indigo-400 hover:text-indigo-300 font-mono">{repoName}</a>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Ideas as Accordions */}
+                    <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-3">
+                        Ideas ({appIdeas.length})
+                    </h2>
+                    {appIdeas.length === 0 ? (
+                        <div className="text-center py-8">
+                            <div className="text-3xl mb-2">💡</div>
+                            <div className="text-sm text-slate-400">No ideas linked to this app yet.</div>
+                            <div className="text-xs text-slate-500 mt-1">Ideas are created during ideation sessions via MCP.</div>
+                        </div>
+                    ) : (
+                        <div className="space-y-2">
+                            {appIdeas.map((idea, idx) => {
+                                const isExpanded = expandedIdeaId === idea.id;
+                                const ideaConcepts = globalConcepts.filter(c => c.ideaOrigin === idea.id);
+                                const activeConcepts = ideaConcepts.filter(c => c.status === 'active');
+                                const openCount = activeConcepts.filter(c => c.type === 'OPEN').length;
+                                const unbuiltDecisions = activeConcepts.filter(c => c.type === 'DECISION').length;
+                                const phase = idea.phase || computeIdeaPhase(ideaConcepts);
+                                const lastActivity = idea.updatedAt || idea.createdAt;
+
+                                const borderColor =
+                                    idea.status === 'active' ? 'border-l-indigo-500' :
+                                    idea.status === 'graduated' ? 'border-l-green-500' :
+                                    'border-l-slate-600';
+
+                                return (
+                                    <div key={idea.id}
+                                        className={`rounded-lg border border-slate-700 overflow-hidden border-l-2 ${borderColor}`}>
+                                        {/* Accordion Header */}
+                                        <div className="flex items-center gap-2 px-4 py-3 cursor-pointer hover:bg-slate-800/50 transition-colors"
+                                            onClick={() => {
+                                                if (isExpanded) {
+                                                    setExpandedIdeaId(null);
+                                                } else {
+                                                    setExpandedIdeaId(idea.id);
+                                                    setPositionTypeFilter('all');
+                                                    setPositionStatusFilter('all');
+                                                    setPositionSearch('');
+                                                }
+                                            }}>
+                                            <span className={`text-xs text-slate-500 transition-transform ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
+                                            <span className="text-xs text-slate-600 w-5 flex-shrink-0 text-center">{idx + 1}</span>
+                                            <span className="flex-1 text-sm font-medium truncate">{idea.name}</span>
+
+                                            {/* Status badge */}
+                                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                                                idea.status === 'active' ? 'bg-indigo-900/40 text-indigo-300' :
+                                                idea.status === 'graduated' ? 'bg-green-900/30 text-green-400' :
+                                                'bg-slate-700 text-slate-500'
+                                            }`}>{idea.status}</span>
+
+                                            {/* Phase badge */}
+                                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                                                phase === 'inception' ? 'bg-slate-700 text-slate-400' :
+                                                phase === 'exploring' ? 'bg-blue-900/50 text-blue-300' :
+                                                phase === 'converging' ? 'bg-amber-900/50 text-amber-300' :
+                                                phase === 'spec-ready' ? 'bg-green-900/50 text-green-300' :
+                                                phase === 'complete' ? 'bg-emerald-900/30 text-emerald-400' :
+                                                'bg-slate-700 text-slate-400'
+                                            }`}>{phase}</span>
+
+                                            {/* Counts */}
+                                            {openCount > 0 && (
+                                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-900/30 text-purple-400">
+                                                    {openCount} OPEN{openCount !== 1 ? 's' : ''}
+                                                </span>
+                                            )}
+                                            {unbuiltDecisions > 0 && (
+                                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-900/30 text-blue-400">
+                                                    {unbuiltDecisions} DECISION{unbuiltDecisions !== 1 ? 's' : ''}
+                                                </span>
+                                            )}
+                                            <span className="text-[10px] text-slate-500 ml-1">
+                                                {activeConcepts.length} pos
+                                            </span>
+                                            {lastActivity && (
+                                                <span className="text-[10px] text-slate-600 ml-1" title={lastActivity}>
+                                                    {formatTimeAgo(lastActivity)}
+                                                </span>
+                                            )}
+                                        </div>
+
+                                        {/* Expanded: Level 4 Inline */}
+                                        {isExpanded && renderIdeaDetail(idea, ideaConcepts)}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // ═════════════════════════════════════════════════════════════
+        // LEVEL 4: Idea Detail (Positions + Activity) — inline in accordion
+        // ═════════════════════════════════════════════════════════════
+        const renderIdeaDetail = (idea, allIdeaConcepts) => {
+            // Activity: sessions and jobs linked to this idea
+            const ideaSessions = globalSessions
+                .filter(s => s.ideaId === idea.id || s.idea === idea.id)
+                .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+                .slice(0, 5);
+            const ideaJobs = globalJobs
+                .filter(j => j.ideaId === idea.id)
+                .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+                .slice(0, 5);
+
+            return (
+                <div className="border-t border-slate-700 bg-slate-900/30 px-4 py-3">
+                    {/* Idea description + actions */}
+                    <div className="flex items-start gap-2 mb-3">
+                        <div className="flex-1">
+                            {idea.description && (
+                                <p className="text-xs text-slate-400 mb-2">{idea.description}</p>
+                            )}
+                            <div className="flex gap-3 text-[10px] text-slate-500">
+                                <span>Type: {idea.type || 'base'}</span>
+                                {idea.createdAt && <span>Created: {formatTimeAgo(idea.createdAt)}</span>}
+                                <span>Positions: {allIdeaConcepts.length} total, {allIdeaConcepts.filter(c => c.status === 'active').length} active</span>
+                            </div>
+                        </div>
+                        <div className="flex gap-1 flex-shrink-0">
+                            {idea.status === 'active' && (
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); handleArchiveIdea(idea.id); }}
+                                    className="px-2 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600 text-slate-300"
+                                    title="Archive this idea">
+                                    📦
+                                </button>
+                            )}
+                            <select
+                                value={idea.status}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={(e) => { e.stopPropagation(); handleIdeaStatusChange(idea.id, e.target.value); }}
+                                className="bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-slate-300">
+                                <option value="active">active</option>
+                                <option value="graduated">graduated</option>
+                                <option value="archived">archived</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    {/* ─── Positions Section ──────────────────────────── */}
+                    <div className="mb-3">
+                        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">
+                            Positions ({ideaPositions.length}{positionTypeFilter !== 'all' || positionStatusFilter !== 'all' || positionSearch ? ` of ${allIdeaConcepts.length}` : ''})
+                        </h3>
+
+                        {/* Filter bar */}
+                        <div className="flex gap-2 mb-2 flex-wrap">
+                            <input type="text" value={positionSearch}
+                                onChange={e => setPositionSearch(e.target.value)}
+                                placeholder="Search positions..."
+                                className="flex-1 min-w-[120px] bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs text-slate-200 placeholder-slate-500"
+                                onClick={e => e.stopPropagation()} />
+                            <select value={positionTypeFilter}
+                                onChange={e => setPositionTypeFilter(e.target.value)}
+                                onClick={e => e.stopPropagation()}
+                                className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs text-slate-300">
+                                <option value="all">All Types</option>
+                                {ODRC_TYPES.map(t => (
+                                    <option key={t} value={t}>{POSITION_TYPE_STYLES[t]?.icon || ''} {t}</option>
+                                ))}
+                            </select>
+                            <select value={positionStatusFilter}
+                                onChange={e => setPositionStatusFilter(e.target.value)}
+                                onClick={e => e.stopPropagation()}
+                                className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs text-slate-300">
+                                <option value="all">All Statuses</option>
+                                {['active', 'built', 'superseded', 'resolved', 'transitioned'].map(s => (
+                                    <option key={s} value={s}>{s}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {/* Position cards (read-only) */}
+                        {ideaPositions.length === 0 ? (
+                            <div className="text-xs text-slate-500 py-4 text-center">
+                                {allIdeaConcepts.length === 0 ? 'No positions in this idea yet' : 'No positions match current filters'}
+                            </div>
+                        ) : (
+                            <div className="space-y-1.5 max-h-[500px] overflow-y-auto">
+                                {ideaPositions.map(concept => {
+                                    const typeStyle = POSITION_TYPE_STYLES[concept.type] || { color: 'bg-slate-700 text-slate-400', icon: '?' };
+                                    const statusStyle = POSITION_STATUS_STYLES[concept.status] || 'bg-slate-700 text-slate-400';
+                                    return (
+                                        <div key={concept.id}
+                                            className="border border-slate-700 rounded-lg p-2.5 bg-slate-800/30">
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <span className="text-xs">{typeStyle.icon}</span>
+                                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${typeStyle.color}`}>
+                                                    {concept.type}
+                                                </span>
+                                                <span className={`px-1.5 py-0.5 rounded text-[10px] ${statusStyle}`}>
+                                                    {concept.status}
+                                                </span>
+                                                {concept.createdAt && (
+                                                    <span className="text-[10px] text-slate-600 ml-auto" title={concept.createdAt}>
+                                                        {formatTimeAgo(concept.createdAt)}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <p className="text-xs text-slate-200 leading-relaxed">{concept.content}</p>
+                                            {(concept.scopeTags || []).length > 0 && (
+                                                <div className="flex gap-1 mt-1.5 flex-wrap">
+                                                    {concept.scopeTags.map(tag => (
+                                                        <span key={tag}
+                                                            className="px-1.5 py-0.5 bg-slate-700/50 rounded text-[10px] text-slate-400">
+                                                            {tag}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* ─── Activity Section ───────────────────────────── */}
+                    {(ideaSessions.length > 0 || ideaJobs.length > 0 || (idea.sessionLog || []).length > 0) && (
+                        <details className="mt-2">
+                            <summary className="text-xs font-semibold text-slate-400 uppercase tracking-wide cursor-pointer hover:text-slate-300 select-none">
+                                Activity
+                            </summary>
+                            <div className="mt-2 space-y-0.5">
+                                {/* Session log entries */}
+                                {(idea.sessionLog || []).slice(-5).reverse().map((s, i) => (
+                                    <div key={`log-${i}`} className="flex items-center gap-2 text-[10px] text-slate-500 py-1.5 border-t border-slate-800">
+                                        <span>💬</span>
+                                        <span className="flex-1 truncate">{s.summary || s.sessionId || 'Session'}</span>
+                                        {s.date && <span className="text-slate-600 flex-shrink-0">{formatTimeAgo(s.date)}</span>}
+                                    </div>
+                                ))}
+                                {/* Recent sessions */}
+                                {ideaSessions.map(session => (
+                                    <div key={session.id} className="flex items-center gap-2 text-[10px] text-slate-500 py-1.5 border-t border-slate-800">
+                                        <span>💬</span>
+                                        <span className="flex-1 truncate">{session.sessionGoal || session.title || 'Session'}</span>
+                                        <span className={`px-1 py-0.5 rounded flex-shrink-0 ${
+                                            session.status === 'completed' ? 'bg-green-900/30 text-green-400' :
+                                            session.status === 'active' ? 'bg-blue-900/30 text-blue-400' :
+                                            'bg-slate-700 text-slate-400'
+                                        }`}>{session.status}</span>
+                                        {session.createdAt && (
+                                            <span className="text-slate-600 flex-shrink-0">{formatTimeAgo(session.createdAt)}</span>
+                                        )}
+                                    </div>
+                                ))}
+                                {/* Recent jobs */}
+                                {ideaJobs.map(job => (
+                                    <div key={job.id} className="flex items-center gap-2 text-[10px] text-slate-500 py-1.5 border-t border-slate-800">
+                                        <span>🔨</span>
+                                        <span className="flex-1 truncate">{job.title || job.type || 'Job'}</span>
+                                        <span className={`px-1 py-0.5 rounded flex-shrink-0 ${
+                                            job.status === 'completed' ? 'bg-green-900/30 text-green-400' :
+                                            job.status === 'active' ? 'bg-blue-900/30 text-blue-400' :
+                                            'bg-slate-700 text-slate-400'
+                                        }`}>{job.status}</span>
+                                        {job.createdAt && (
+                                            <span className="text-slate-600 flex-shrink-0">{formatTimeAgo(job.createdAt)}</span>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </details>
+                    )}
+                </div>
+            );
+        };
+
+        // ═════════════════════════════════════════════════════════════
+        // MAIN RENDER
+        // ═════════════════════════════════════════════════════════════
+        return (
+            <div>
+                {renderBreadcrumb()}
+                {drillLevel === 'projects' && renderProjectCards()}
+                {drillLevel === 'project-detail' && renderProjectDetail()}
+                {drillLevel === 'app-detail' && renderAppDetail()}
+            </div>
+        );
+    }
+
+    // =========================================================================
+    // PROJECTS TAB (v8.8.0) — Replaces Apps tab in Configure [LEGACY — no longer rendered, kept for reference]
     // =========================================================================
     function ProjectsTab({ config, updateConfig, activeEnvs, envColors, github, githubOwner, availableRepos, showAlert, showConfirm, showPrompt, onRefreshRepos, deployments, globalWorkItems, firebaseUid, globalStreams }) {
         const [expandedProject, setExpandedProject] = React.useState(null);
