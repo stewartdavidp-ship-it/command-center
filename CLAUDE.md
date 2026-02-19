@@ -18,6 +18,13 @@ On every fresh start, do these in order:
 4. Call `document receive` — check for messages from Chat
 5. Call `job list` with appId="command-center", status="draft" — check for work to claim
 
+## Compaction Recovery
+If you lost context mid-build (no jobId, user says "continue", or you don't remember loading skills):
+1. Call `skill get cc-build-resume` — compaction recovery procedure for Code
+2. Call `skill get cc-skill-router` — re-read the routing table
+3. Call `job list` with status="active" — find the orphaned job
+4. Do NOT start a new job — recover the existing one
+
 ## Critical Rules
 - Single-file HTML app. All features in index.html
 - Firebase RTDB under command-center/{uid}/
