@@ -5829,7 +5829,7 @@ The router (\\\`cc-skill-router\\\`) is the single source of truth for skill loa
     // =========================================================================
 
     function App() {
-        const [view, setView] = React.useState('dashboard');
+        const [view, setView] = React.useState('projects');  // v8.70.19: default to Projects (was 'dashboard')
         const [viewPayload, setViewPayload] = React.useState(null); // v8.65.0: cross-view deep-link payload
         // (multi-app zip state managed in DashboardView)
         // v8.70.15: Removed pendingSessionReturn + pendingOdrcImport state
@@ -6493,11 +6493,12 @@ The router (\\\`cc-skill-router\\\`) is the single source of truth for skill loa
                         {/* Quick Actions Bar (v8.53.0 simplified) */}
                         <div className="mt-3 pt-3 border-t border-slate-700 flex items-center gap-2 flex-wrap">
                             <span className="text-xs text-slate-500 mr-2">⚡ Quick:</span>
+                            {/* v8.70.19: Ideas now inside Projects drill-down */}
                             <button
-                                onClick={() => setView('ideas')}
+                                onClick={() => setView('projects')}
                                 className="px-3 py-1 text-xs bg-indigo-600 hover:bg-indigo-500 rounded-full font-medium transition-colors"
                             >
-                                💡 Ideas
+                                📂 Projects
                             </button>
                             {/* v8.70.15: Removed Deploy History + Deploy Staged quick action buttons */}
                             
