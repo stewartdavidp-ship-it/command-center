@@ -16563,7 +16563,8 @@ The developer uses Claude for iterative development — each session should:
                 </>)}
 
                 {/* ═══ INFRASTRUCTURE SECTION ═══ */}
-                {settingsSection === 'infrastructure' && (<>
+                {settingsSection === 'infrastructure' && (
+                <div className="space-y-6">
                 <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
                     <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
                         📋 Firebase Rules Manager
@@ -16593,10 +16594,12 @@ The developer uses Claude for iterative development — each session should:
                     </p>
                     <AuthorizedDomainsManager showAlert={showAlert} />
                 </div>
-                </>)}
+                </div>
+                )}
 
                 {/* ═══ CREDENTIALS SECTION ═══ */}
-                {settingsSection === 'credentials' && (<>
+                {settingsSection === 'credentials' && (
+                <div className="space-y-6">
                 {/* GitHub Token */}
                 <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
                     <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
@@ -16767,7 +16770,8 @@ The developer uses Claude for iterative development — each session should:
                     };
                     return <CredCard key={provider.id} />;
                 })}
-                </>)}
+                </div>
+                )}
             </div>
         );
     }
