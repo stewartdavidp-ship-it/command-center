@@ -16566,33 +16566,8 @@ The developer uses Claude for iterative development — each session should:
                 {settingsSection === 'infrastructure' && (
                 <div className="space-y-6">
                 <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
-                    <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                        📋 Firebase Rules Manager
-                    </h2>
-                    <p className="text-sm text-slate-400 mb-4">
-                        View, edit, and deploy Firebase Realtime Database security rules. Includes snapshot history with diff view.
-                    </p>
-                    <FirebaseRulesManager showAlert={showAlert} showConfirm={showConfirm} />
-                </div>
-
-                <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
-                    <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                        🌐 Domain Management
-                    </h2>
-                    <p className="text-sm text-slate-400 mb-4">
-                        Manage DNS records for Porkbun and GoDaddy domains. Wire domains for GitHub Pages with one click.
-                    </p>
-                    <DomainsView apps={apps} config={config} githubToken={token} showAlert={showAlert} showConfirm={showConfirm} />
-                </div>
-
-                <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
-                    <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                        🔐 Firebase Auth Domains
-                    </h2>
-                    <p className="text-sm text-slate-400 mb-4">
-                        Manage authorized domains for Firebase Authentication. Required for OAuth and sign-in flows.
-                    </p>
-                    <AuthorizedDomainsManager showAlert={showAlert} />
+                    <h2 className="text-lg font-semibold mb-4">🔧 Infrastructure</h2>
+                    <p className="text-sm text-slate-400">Infrastructure components loading test — if you see this, the tab switch works.</p>
                 </div>
                 </div>
                 )}
