@@ -12057,7 +12057,7 @@ ${repoStr || '- *No repos configured*'}
         const appOptions = React.useMemo(() => {
             const ids = [...new Set(globalSessions.map(s => s.appId).filter(Boolean))];
             return ids.map(id => {
-                const app = apps.find(a => a.id === id);
+                const app = apps && apps[id];
                 return { id, name: app ? app.name : id };
             }).sort((a, b) => a.name.localeCompare(b.name));
         }, [globalSessions, apps]);
@@ -12076,7 +12076,7 @@ ${repoStr || '- *No repos configured*'}
 
         const resolveAppName = (appId) => {
             if (!appId) return 'Unlinked';
-            const app = apps.find(a => a.id === appId);
+            const app = apps && apps[appId];
             return app ? app.name : appId;
         };
 
@@ -12265,7 +12265,7 @@ ${repoStr || '- *No repos configured*'}
         const appOptions = React.useMemo(() => {
             const ids = [...new Set(globalJobs.map(j => j.appId).filter(Boolean))];
             return ids.map(id => {
-                const app = apps.find(a => a.id === id);
+                const app = apps && apps[id];
                 return { id, name: app ? app.name : id };
             }).sort((a, b) => a.name.localeCompare(b.name));
         }, [globalJobs, apps]);
@@ -12289,7 +12289,7 @@ ${repoStr || '- *No repos configured*'}
 
         const resolveAppName = (appId) => {
             if (!appId) return 'Unlinked';
-            const app = apps.find(a => a.id === appId);
+            const app = apps && apps[appId];
             return app ? app.name : appId;
         };
 
