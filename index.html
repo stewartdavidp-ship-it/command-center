@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Command Center</title>
-    <meta name="version" content="8.70.15">
+    <meta name="version" content="8.70.16">
     <meta name="gs-app-id" content="command-center">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -6370,7 +6370,8 @@ The router (\\\`cc-skill-router\\\`) is the single source of truth for skill loa
                                     </div>
                                 </div>
                             </div>
-        // v8.70.15: Removed Refresh versions button
+                            {/* v8.70.15: Removed Refresh versions button */}
+                            <div className="flex items-center gap-1">
                                 {/* v8.63.0: Flat tab navigation (N1-N4 nav restructure) */}
                                 {/* v8.70.15: Simplified nav — removed Home, Jobs, Sessions */}
                                 {[
@@ -6443,7 +6444,7 @@ The router (\\\`cc-skill-router\\\`) is the single source of truth for skill loa
                             >
                                 💡 Ideas
                             </button>
-        // v8.70.15: Removed Deploy History + Deploy Staged quick action buttons
+                            {/* v8.70.15: Removed Deploy History + Deploy Staged quick action buttons */}
                             
                             {/* Status indicators */}
                             <div className="ml-auto flex items-center gap-3 text-xs">
@@ -6542,7 +6543,7 @@ The router (\\\`cc-skill-router\\\`) is the single source of truth for skill loa
                     </div>
                 )}
 
-        // v8.70.15: Removed Deploy History slide-out panel
+                {/* v8.70.15: Removed Deploy History slide-out panel */}
 
                 <main className="max-w-6xl mx-auto px-4 py-6">
                     {!githubToken && (
@@ -6605,7 +6606,7 @@ The router (\\\`cc-skill-router\\\`) is the single source of truth for skill loa
                         </div>
                     )}
                     
-        // v8.70.15: Removed dashboard view routing
+                    {/* v8.70.15: Removed dashboard view routing */}
 
                     {view === 'projects' && (
                         <div className="max-w-6xl mx-auto">
@@ -6643,9 +6644,9 @@ The router (\\\`cc-skill-router\\\`) is the single source of truth for skill loa
                     
                     {/* [v8.63.2] Deploy History moved to slide-out panel (N6) */}
                     
-        // v8.70.15: Removed session view routing placeholder
-                    
-        // v8.70.15: Removed backlog view routing
+                    {/* v8.70.15: Removed session view routing placeholder */}
+
+                    {/* v8.70.15: Removed backlog view routing */}
 
                     {view === 'ideas' && (
                         <IdeasView apps={apps} globalIdeas={globalIdeas} globalConcepts={globalConcepts}
@@ -6654,7 +6655,7 @@ The router (\\\`cc-skill-router\\\`) is the single source of truth for skill loa
                             viewPayload={viewPayload} setViewPayload={setViewPayload} />
                     )}
 
-        // v8.70.15: Removed jobHistory view routing
+                    {/* v8.70.15: Removed jobHistory view routing */}
 
                     {/* [v8.63.2] Environments moved to Infrastructure satellite (N5) */}
                     
@@ -6677,15 +6678,7 @@ The router (\\\`cc-skill-router\\\`) is the single source of truth for skill loa
                     )}
                     
                     {/* Modals */}
-        // v8.70.15: Removed promote modal routing
-                    
-
-        // v8.70.15: Removed rollback modal routing
-                    
-        // v8.70.15: Removed versionWarning modal routing
-        // v8.70.15: Removed DeployAll modal routing
-                    
-        // v8.70.15: Removed SyncEnvs modal routing
+                    {/* v8.70.15: Removed promote, rollback, versionWarning, DeployAll, SyncEnvs modal routing */}
                     
                     {/* v8.70.15: Removed VersionBumpModal (deploy pipeline eliminated) */}
                     
@@ -6703,7 +6696,7 @@ The router (\\\`cc-skill-router\\\`) is the single source of truth for skill loa
                         />
                     )}
 
-        // v8.70.15: Removed AutoReviewModal JSX block
+                    {/* v8.70.15: Removed AutoReviewModal JSX block */}
                     
                     {/* Custom Dialog Modal (replaces native alert/confirm/prompt) */}
                     {dialog && (
@@ -9483,7 +9476,7 @@ The router (\\\`cc-skill-router\\\`) is the single source of truth for skill loa
                     />
                 )}
                 {/* [v8.63.0] GenerateCLAUDEModal removed */}
-        // v8.70.15: Removed ExploreInChatModal trigger in IdeasView
+                {/* v8.70.15: Removed ExploreInChatModal trigger in IdeasView */}
                 {showCreateIdeaModal && (
                     <CreateIdeaModal onClose={() => setShowCreateIdeaModal(false)} />
                 )}
@@ -13568,7 +13561,7 @@ The developer uses Claude for iterative development — each session should:
                     );
                 })()}
 
-        // v8.70.15: Removed Settings completion files block
+                {/* v8.70.15: Removed Settings completion files block */}
 
                 {/* Team Management (v8.46.0 — Phase 5.7) */}
                 <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
