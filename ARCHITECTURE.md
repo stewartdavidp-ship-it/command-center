@@ -1,6 +1,6 @@
 # Command Center — Architecture
 
-> **Last updated:** 2026-02-19 (v8.71.4)
+> **Last updated:** 2026-02-20 (v8.71.6)
 >
 > **Companion document:** For MCP server architecture, see `mcp-server/architecture/SYSTEM-CONTEXT.md` (Rev 27).
 
@@ -176,7 +176,7 @@ Three zombie bash scripts from orphaned Claude Code sessions polled `document(re
 
 ## Cloud Functions Inventory
 
-All functions run in the `word-boxing` Firebase project. Source: `/Developer/gameshelf-functions/functions/index.js`.
+All functions run in the `word-boxing` Firebase project. CC functions source: `stewartdavidp-ship-it/firebase-functions`. Game Shelf functions source: `/Developer/gameshelf-functions/functions/index.js`.
 
 ### Game Shelf Functions
 | Function | Trigger | Purpose |
@@ -208,7 +208,8 @@ All functions run in the `word-boxing` Firebase project. Source: `/Developer/gam
 ### CC Utility
 | Function | Trigger | Purpose | Note |
 |----------|---------|---------|------|
-| `domainProxy` | HTTPS onRequest | CORS proxy for Porkbun/GoDaddy DNS APIs | ⚠️ Unauthenticated, CORS wildcard |
+| `domainProxy` | HTTPS onRequest | CORS proxy for Porkbun/GoDaddy DNS APIs | ✅ Auth required (Firebase ID token), restricted CORS origins |
+| `documentCleanup` | Scheduled (4am ET daily) | Purge delivered/failed documents older than 7 days | Per-user error handling, won't abort on single failure |
 
 ### Admin
 | Function | Purpose |
@@ -259,7 +260,7 @@ Captured from security & performance audit (2026-02-20). Tracked as OPENs for fu
 |----|------|----------|-------|
 | SEC-1 | **In-memory OAuth token store** — Cloud Run cold starts wipe all OAuth tokens. Claude.ai users must reconnect after every deploy or idle period. | Medium | Fix: Firebase-backed token store. `store.ts` line 6 has a TODO for this. Cost vs UX tradeoff — `minInstances: 1` adds ~$18/month. |
 | SEC-2 | **`Math.random()` for API key secret** — CC API keys use `Math.random()` which is not cryptographically secure. Predictable given enough observations. | Low | Acceptable single-user. Upgrade to `crypto.randomBytes()` if/when multi-user. Located in `index.html` line ~5479. |
-| SEC-3 | **Dev mode auth bypass (`SKIP_AUTH`)** — If `SKIP_AUTH=true` env var is accidentally set on Cloud Run, all auth is bypassed. | Low | Verified not set in production. Add a startup check that logs a warning if `SKIP_AUTH` is set in non-development. |
+| ~~SEC-3~~ | ~~**Dev mode auth bypass (`SKIP_AUTH`)**~~ | ~~Low~~ | **RESOLVED v8.71.6** (2026-02-20). Added production guard: if `K_SERVICE` is set (Cloud Run) and `SKIP_AUTH=true`, process exits immediately. |
 | SEC-4 | **Game Shelf world-writable paths** — `games`, `lobby`, `battles`, `public-battles` are writable by any authenticated user. | Info | By design for multiplayer. Validated by game code format (`/^[A-Z]{5}$/`). Separate concern from CC. |
 | SEC-5 | **`teamMembership` write rule** — `generateRulesTemplate()` in `index.html` allows any auth user to write `teamMembership` under any `$uid`. Not currently deployed (template only), but would be a risk if deployed. | Low | Fix the template to restrict writes to `auth.uid === $uid` before deploying team features. |
 
@@ -281,7 +282,16 @@ Captured from security & performance audit (2026-02-20). Tracked as OPENs for fu
 | ~~DEBT-2~~ | ~~**`command-center/command-center/domainProxy.js` is dead code**~~ | **RESOLVED** (2026-02-20). File deleted. |
 | ~~DEBT-3~~ | ~~**`firebase-rules-updated.json` in Downloads is stale**~~ | **RESOLVED** (2026-02-20). File deleted. Canonical rules: `firebase-functions/database.rules.json`. |
 | DEBT-4 | **Second CC user (`ptYPWbTDlCPvrKTq2NmWWHuEvkv1`) has only an apiKeyHash** — Likely a test account. Consider cleaning up if not needed. |
-| DEBT-5 | **CC line count documentation stale** — ARCHITECTURE.md says ~16,900 lines but v8.71.5 changes haven't been counted. Update after next deploy. |
+| DEBT-5 | **CC line count documentation stale** — ARCHITECTURE.md says ~16,900 lines but v8.71.6 changes haven't been counted. Update after next deploy. |
+| ~~DEBT-6~~ | ~~**Debug scripts with hardcoded UID in public repo**~~ | **RESOLVED v8.71.6** (2026-02-20). 17 `cc-*.cjs` files removed from git, added to `.gitignore`. |
+| ~~DEBT-7~~ | ~~**Legacy domainProxy.js not committed as deleted**~~ | **RESOLVED v8.71.6** (2026-02-20). `git rm` committed. |
+| ~~DEBT-8~~ | ~~**activityLog vs activity rules mismatch**~~ | **RESOLVED v8.71.6** (2026-02-20). Rules updated to match code path `activity`. |
+| ~~DEBT-9~~ | ~~**debug-sessions paths world-writable**~~ | **RESOLVED v8.71.6** (2026-02-20). Restricted to admin UID. |
+| ~~DEBT-10~~ | ~~**OAuth clients Map unbounded**~~ | **RESOLVED v8.71.6** (2026-02-20). Max 100 clients, auto-cleanup of expired tokens/codes. |
+| ~~DEBT-11~~ | ~~**SA email in browser console.log**~~ | **RESOLVED v8.71.6** (2026-02-20). Redacted to `[configured]`. |
+| DEBT-12 | **Firebase service account JSON in Downloads folder** — Should be moved to `~/.config/firebase/` or similar secure location. Rotation recommended after move. |
+| DEBT-13 | **Game Shelf functions not in firebase-functions repo** — 22 functions deployed from separate `/Developer/gameshelf-functions/` codebase. Consider consolidating or at minimum documenting the relationship. |
+| DEBT-14 | **Firebase Functions SDK upgrade needed** — Using `firebase-functions@4.9.0`, warned to upgrade to ≥5.1.0. Node.js 20 deprecates 2026-04-30. |
 
 ---
 
@@ -304,7 +314,7 @@ All source code is now in GitHub. Updated 2026-02-20.
 |---------|----------|---------------|
 | CC browser app | GitHub Pages | Auto-deploys from `command-center-test` repo push |
 | MCP server | Cloud Run (`cc-mcp-server`) | `cd mcp-server && gcloud run deploy cc-mcp-server --source . --region us-central1 --project word-boxing --allow-unauthenticated` |
-| Cloud Functions | Firebase (`domainProxy`, `documentCleanup`) | `cd firebase-functions && firebase deploy --only functions` |
+| Cloud Functions | Firebase (`domainProxy`, `documentCleanup`) | `cd firebase-functions && firebase deploy --only functions:domainProxy,functions:documentCleanup` (must target specific functions — Game Shelf functions deployed separately) |
 | RTDB security rules | Firebase | `cd firebase-functions && firebase deploy --only database` |
 
 ### Data
