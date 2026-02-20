@@ -277,8 +277,53 @@ Captured from security & performance audit (2026-02-20). Tracked as OPENs for fu
 
 | ID | Item | Notes |
 |----|------|-------|
-| DEBT-1 | **Push v8.71.5 to GitHub Pages** — domainProxy auth changes in CC browser app need deployment. Domains tab is broken on the live site until this is pushed. |
-| DEBT-2 | **`command-center/command-center/domainProxy.js` is now dead code** — The function was integrated into `firebase-functions/functions/index.js`. The standalone file can be archived or deleted. |
-| DEBT-3 | **`firebase-rules-updated.json` in Downloads is stale** — The canonical rules file is now `firebase-functions/database.rules.json`. The old file in Downloads should be deleted to avoid confusion. |
+| ~~DEBT-1~~ | ~~**Push v8.71.5 to GitHub Pages**~~ | **RESOLVED** (2026-02-20). Pushed to `command-center-test` repo. |
+| ~~DEBT-2~~ | ~~**`command-center/command-center/domainProxy.js` is dead code**~~ | **RESOLVED** (2026-02-20). File deleted. |
+| ~~DEBT-3~~ | ~~**`firebase-rules-updated.json` in Downloads is stale**~~ | **RESOLVED** (2026-02-20). File deleted. Canonical rules: `firebase-functions/database.rules.json`. |
 | DEBT-4 | **Second CC user (`ptYPWbTDlCPvrKTq2NmWWHuEvkv1`) has only an apiKeyHash** — Likely a test account. Consider cleaning up if not needed. |
 | DEBT-5 | **CC line count documentation stale** — ARCHITECTURE.md says ~16,900 lines but v8.71.5 changes haven't been counted. Update after next deploy. |
+
+---
+
+## Disaster Recovery
+
+All source code is now in GitHub. Updated 2026-02-20.
+
+### Source Repositories
+
+| Asset | Repository | Visibility | Notes |
+|-------|-----------|------------|-------|
+| CC browser app (`index.html`) | `stewartdavidp-ship-it/command-center` | Public | Main app, ARCHITECTURE.md, CLAUDE.md, skills/ |
+| CC GitHub Pages deploy | `stewartdavidp-ship-it/command-center-test` | Public | Live site at `stewartdavidp-ship-it.github.io/command-center-test/` |
+| MCP server source | `stewartdavidp-ship-it/command-center` → `mcp-server/` | Public | OAuth, API key auth, tools, Firebase integration. Added 2026-02-20. |
+| Firebase Functions + RTDB rules | `stewartdavidp-ship-it/firebase-functions` | **Private** | domainProxy, documentCleanup, database.rules.json. Created 2026-02-20. |
+
+### Deployed Services
+
+| Service | Platform | Recovery Path |
+|---------|----------|---------------|
+| CC browser app | GitHub Pages | Auto-deploys from `command-center-test` repo push |
+| MCP server | Cloud Run (`cc-mcp-server`) | `cd mcp-server && gcloud run deploy cc-mcp-server --source . --region us-central1 --project word-boxing --allow-unauthenticated` |
+| Cloud Functions | Firebase (`domainProxy`, `documentCleanup`) | `cd firebase-functions && firebase deploy --only functions` |
+| RTDB security rules | Firebase | `cd firebase-functions && firebase deploy --only database` |
+
+### Data
+
+| Data | Location | Backup |
+|------|----------|--------|
+| Firebase RTDB | `word-boxing` project | Firebase automatic daily backups (Blaze plan) |
+| Cloud Run container images | Google Artifact Registry | Retained per GCP policy — previous revisions available |
+
+### Environment Variables (Cloud Run)
+
+Required env vars for MCP server rebuild (set via Cloud Run console or `gcloud run deploy --set-env-vars`):
+- `FIREBASE_PROJECT_ID` — `word-boxing`
+- `FIREBASE_WEB_API_KEY` — Firebase Web API key (from Firebase console → Project Settings)
+- `GITHUB_TOKEN` — GitHub PAT for repo operations
+- `BASE_URL` — `https://cc-mcp-server-300155036194.us-central1.run.app`
+
+### Not Version-Controlled (Accepted)
+
+- Firebase service account key (stored in Cloud Run as mounted secret)
+- Cloud Run service configuration (min/max instances, memory, CPU) — recreatable via console
+- Firebase budget alerts (PERF-4) — not yet configured
