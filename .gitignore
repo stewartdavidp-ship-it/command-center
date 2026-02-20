@@ -5,3 +5,10 @@
 # Node modules (MCP server)
 mcp-server/node_modules/
 mcp-server/dist/
+
+# Debug/test scripts (contain local paths)
+mcp-server/cc-*.cjs
+
+# Build artifacts and backups
+*.bak*
+skills/

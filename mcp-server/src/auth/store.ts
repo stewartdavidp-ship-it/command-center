@@ -34,9 +34,27 @@ export interface AccessToken {
   expires_at: number;
 }
 
+const MAX_CLIENTS = 100;
 const clients = new Map<string, OAuthClient>();
 const authCodes = new Map<string, AuthCode>();
 const accessTokens = new Map<string, AccessToken>();
+
+// Sweep expired auth codes and access tokens to prevent unbounded memory growth
+function cleanupExpired(): void {
+  const now = Date.now();
+  for (const [key, ac] of authCodes) {
+    if (ac.expires_at < now) authCodes.delete(key);
+  }
+  for (const [key, at] of accessTokens) {
+    if (at.expires_at < now) accessTokens.delete(key);
+  }
+  // Evict oldest clients if over limit (keep most recent by created_at)
+  if (clients.size > MAX_CLIENTS) {
+    const sorted = [...clients.entries()].sort((a, b) => a[1].created_at - b[1].created_at);
+    const toRemove = sorted.slice(0, clients.size - MAX_CLIENTS);
+    for (const [key] of toRemove) clients.delete(key);
+  }
+}
 
 // Dynamic Client Registration (RFC 7591)
 export function registerClient(registration: {
@@ -46,6 +64,8 @@ export function registerClient(registration: {
   response_types?: string[];
   token_endpoint_auth_method?: string;
 }): OAuthClient {
+  cleanupExpired();
+
   const client: OAuthClient = {
     client_id: uuidv4(),
     client_secret: uuidv4(),

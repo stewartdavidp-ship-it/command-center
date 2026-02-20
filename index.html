@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Command Center</title>
-    <meta name="version" content="8.71.5">
+    <meta name="version" content="8.71.6">
     <meta name="gs-app-id" content="command-center">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -99,7 +99,7 @@
                 const stored = SecretManager.get('firebase_sa') || localStorage.getItem('cc_firebase_sa');
                 if (stored) {
                     this.serviceAccount = JSON.parse(stored);
-                    console.log('Firebase SA loaded:', this.serviceAccount.client_email);
+                    console.log('Firebase SA loaded: [configured]');
                 }
             } catch (e) {
                 console.error('Failed to load service account:', e);
@@ -128,7 +128,7 @@
                 SecretManager.set('firebase_sa', JSON.stringify(sa));
                 this.cachedToken = null;
                 this.tokenExpiry = null;
-                console.log('Firebase SA saved:', sa.client_email);
+                console.log('Firebase SA saved: [configured]');
                 return { success: true, email: sa.client_email, project: sa.project_id };
             } catch (e) {
                 console.error('Failed to save service account:', e);

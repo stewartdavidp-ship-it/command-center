@@ -12,6 +12,12 @@ initFirebase();
 
 const PORT = parseInt(process.env.PORT || "8080");
 
+// SAFETY: Block SKIP_AUTH in production — prevents accidental auth bypass on Cloud Run
+if (process.env.K_SERVICE && process.env.SKIP_AUTH === "true") {
+  console.error("🛑 FATAL: SKIP_AUTH=true is set in a Cloud Run environment. This would bypass all authentication. Exiting.");
+  process.exit(1);
+}
+
 // BASE_URL is REQUIRED for production — OAuth metadata endpoints use it.
 // Cloud Run does not expose the service URL as an env var, so it must be set explicitly.
 // Without it, OAuth endpoints return localhost URLs and Claude.ai cannot authenticate.
@@ -25,6 +31,11 @@ if (!process.env.BASE_URL && process.env.K_SERVICE) {
   );
 }
 
+// Warn if FIREBASE_WEB_API_KEY is missing in production — Google Sign-In will silently fail
+if (!process.env.FIREBASE_WEB_API_KEY && process.env.K_SERVICE) {
+  console.error("⚠️  WARNING: FIREBASE_WEB_API_KEY env var is not set. Google Sign-In on the OAuth page will not work.");
+}
+
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 
 // Create MCP server
@@ -32,8 +43,8 @@ const mcpServer = createServer();
 
 // Create Express app
 const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
 // CORS — allow Claude.ai origins
 app.use((req: Request, res: Response, next: NextFunction) => {
