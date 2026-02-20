@@ -20,7 +20,7 @@
 | **Firebase project** | `word-boxing` |
 | **Firebase UID** | `oUt4ba0dYVRBfPREqoJ1yIsJKjr1` |
 | **MCP server URL** | `https://cc-mcp-server-300155036194.us-central1.run.app` |
-| **Latest MCP revision** | `cc-mcp-server-00048-w5d` |
+| **Latest MCP revision** | `cc-mcp-server-00049-dtr` |
 
 ### Deploy Commands
 

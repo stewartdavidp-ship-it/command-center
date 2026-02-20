@@ -732,11 +732,11 @@ You need:
 - The CC MCP server connected (you'll have access to tools like \`concept\`, \`session\`, \`idea\`, \`job\`, \`app\`, etc.)
 - An active Idea to work on (the user or seed prompt will specify this)
 
-**On startup:** Read \`cc-skill-router\` to load the command routing table. This tells you which skills to load for any user action. Then call \`repo_file\` with repo="stewartdavidp-ship-it/command-center" and path="ARCHITECTURE.md" to load the latest system context (file paths, deploy commands, safety rules, auth model).
+**On startup:** Read \`cc-skill-router\` to load the command routing table. This tells you which skills to load for any user action. The router includes an embedded Quick Reference with safety rules, auth model, and available tools — this is enough for ideation sessions.
 
 **When creating any job for Code:** Read \`cc-job-creation-protocol\` first. It defines the standard format for well-formed build jobs.
 
-**On compaction recovery:** Re-read \`cc-skill-router\` alongside \`cc-session-resume\`, and re-fetch ARCHITECTURE.md via \`repo_file\`. The router and architecture context may not survive compaction.
+**On compaction recovery:** Re-read \`cc-skill-router\` alongside \`cc-session-resume\`. The router may not survive compaction since it's loaded once at startup.
 
 ## Step 1: Initialize the Session (State Machine)
 
@@ -1013,9 +1013,11 @@ You need:
 - The CC MCP server connected (you'll have access to tools like \`document\`, \`job\`, \`concept\`, \`app\`, \`generate_claude_md\`, etc.)
 - An app to build for (the user or CLAUDE.md will specify this)
 
-**On startup:** Read \`cc-skill-router\` to load the command routing table. This tells you which skills are available and when to load them. Then call \`repo_file\` with repo="stewartdavidp-ship-it/command-center" and path="ARCHITECTURE.md" to load the latest system context (file paths, deploy commands, safety rules, auth model).
+**On startup:** Read \`cc-skill-router\` to load the command routing table. This tells you which skills are available and when to load them. The router includes an embedded Quick Reference with safety rules, auth model, and available tools.
 
-**On compaction recovery:** Re-read \`cc-skill-router\` alongside \`cc-build-resume\`, and re-fetch ARCHITECTURE.md via \`repo_file\`. The router and architecture context may not survive compaction.
+**For infrastructure/maintenance work** (not standard builds): Call \`repo_file\` with repo="stewartdavidp-ship-it/command-center" and path="ARCHITECTURE.md" to load full system context (file paths, deploy commands, ecosystem map). Standard builds get this context from CLAUDE.md instead.
+
+**On compaction recovery:** Re-read \`cc-skill-router\` alongside \`cc-build-resume\`. The router may not survive compaction since it's loaded once at startup.
 
 ## Step 1: Check for Pending Documents
 
@@ -1219,16 +1221,6 @@ You should suspect a compaction occurred if:
 
 ## Recovery Sequence
 
-### Step 0: Reload System Context
-
-Before anything else, re-fetch the architecture reference:
-\`\`\`
-Call: repo_file
-  repo: "stewartdavidp-ship-it/command-center"
-  path: "ARCHITECTURE.md"
-\`\`\`
-This restores file paths, deploy commands, safety rules, and auth model that were lost in compaction.
-
 ### Step 1: Find the Orphaned Job
 
 \`\`\`
@@ -1339,16 +1331,6 @@ You should suspect a compaction occurred if:
 Context-triggered recovery: if the \`contextEstimate\` on a session is high (>100K chars), compaction is likely. The session record tells you how much work was done.
 
 ## Recovery Sequence
-
-### Step 0: Reload System Context
-
-Before anything else, re-fetch the architecture reference:
-\`\`\`
-Call: repo_file
-  repo: "stewartdavidp-ship-it/command-center"
-  path: "ARCHITECTURE.md"
-\`\`\`
-This restores file paths, deploy commands, safety rules, and auth model that were lost in compaction.
 
 ### Step 1: Find the Orphaned Session
 
@@ -3081,21 +3063,15 @@ const SKILL_ROUTER = `# Skill Router — What Gets Loaded When
 This skill is the single source of truth for which skills to read for any action.
 Read this once at startup. Reference from memory. Re-read on compaction recovery.
 
-## Startup Directive — Load Architecture Context
+## Quick Reference (Embedded)
 
-On **every cold start** (new conversation or compaction recovery), fetch the latest ARCHITECTURE.md:
+These are the key facts for immediate orientation. This is enough for ideation sessions. For infrastructure/maintenance work that needs file paths, deploy commands, or ecosystem details, fetch the full version on demand:
 
 \\\`\\\`\\\`
 Call: repo_file
   repo: "stewartdavidp-ship-it/command-center"
   path: "ARCHITECTURE.md"
 \\\`\\\`\\\`
-
-This gives you the current Quick Reference (file paths, deploy commands, safety rules, versions, auth model) and full system context. Do this BEFORE starting any work.
-
-## Quick Reference (Embedded Snapshot)
-
-These are the key facts for immediate orientation. The full version lives in ARCHITECTURE.md.
 
 | Item | Value |
 |------|-------|
@@ -3135,7 +3111,7 @@ These are the key facts for immediate orientation. The full version lives in ARC
 
 | Trigger | Skill(s) to Read |
 |---|---|
-| Cold start (new conversation) | cc-session-protocol, cc-skill-router, cc-mcp-workflow, cc-retro-journal + repo_file(ARCHITECTURE.md) |
+| Cold start (new conversation) | cc-session-protocol, cc-skill-router, cc-mcp-workflow, cc-retro-journal |
 | "start ideation [idea/app]" | cc-odrc-framework, cc-session-structure |
 | "run [name] lens" | cc-lens-{name} (see inventory below) |
 | "start exploration" | cc-mode-exploration |
@@ -3147,14 +3123,15 @@ These are the key facts for immediate orientation. The full version lives in ARC
 | "prompt" | (uses this router already in context) |
 | "what state am I in" | (direct session read — no skill needed) |
 | "check job status" | (direct MCP call — no skill needed) |
-| Compaction detected | cc-session-resume + cc-skill-router + repo_file(ARCHITECTURE.md) |
+| Compaction detected | cc-session-resume + cc-skill-router |
 
 ## Code Routing
 
 | Trigger | Skill(s) to Read |
 |---|---|
-| Fresh start / claim job | cc-build-protocol, cc-skill-router, cc-retro-journal + repo_file(ARCHITECTURE.md) |
-| Compaction detected | cc-build-resume + cc-skill-router + repo_file(ARCHITECTURE.md) |
+| Fresh start / claim job | cc-build-protocol, cc-skill-router, cc-retro-journal |
+| Infra / maintenance task | cc-build-protocol, cc-skill-router + repo_file(ARCHITECTURE.md) |
+| Compaction detected | cc-build-resume + cc-skill-router |
 | Job complete | cc-build-hygiene |
 
 ## Available Skills Inventory
