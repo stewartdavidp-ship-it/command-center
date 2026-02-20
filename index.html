@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Command Center</title>
-    <meta name="version" content="8.71.6">
+    <meta name="version" content="8.71.7">
     <meta name="gs-app-id" content="command-center">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -16229,11 +16229,13 @@ The developer uses Claude for iterative development — each session should:
                 <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
                     <h2 className="text-lg font-semibold mb-2 flex items-center gap-2">
                         👥 Team
+                        <span className="px-2 py-0.5 bg-slate-600/50 text-slate-400 text-xs rounded-full font-medium">Coming Soon</span>
                     </h2>
-                    <p className="text-sm text-slate-400 mb-4">
+                    <p className="text-sm text-slate-500 mb-4">
                         Invite collaborators to share your Command Center workspace. Team members see your apps, work items, streams, and activity.
                     </p>
-                    
+
+                    <div style={{ opacity: 0.4, pointerEvents: 'none' }}>
                     {!firebaseUid ? (
                         <div className="text-sm text-amber-400 bg-amber-900/20 border border-amber-700/30 rounded-lg p-3">
                             ⚠️ Sign in with Google to manage team members
@@ -16336,57 +16338,13 @@ The developer uses Claude for iterative development — each session should:
                                     </button>
                                 </div>
                                 
-                                {/* Security rules template */}
-                                {(() => {
-                                    const [rulesDeploying, setRulesDeploying] = React.useState(false);
-                                    const [rulesResult, setRulesResult] = React.useState(null); // { ok, msg }
-                                    const handleDeployRules = async () => {
-                                        setRulesDeploying(true);
-                                        setRulesResult(null);
-                                        try {
-                                            const rulesJson = TeamService.generateRulesTemplate(firebaseUid);
-                                            await firebaseAdmin.deployRules(rulesJson);
-                                            setRulesResult({ ok: true, msg: 'Rules deployed successfully!' });
-                                        } catch (e) {
-                                            setRulesResult({ ok: false, msg: e.message });
-                                        } finally {
-                                            setRulesDeploying(false);
-                                        }
-                                    };
-                                    return (
-                                        <details className="text-xs">
-                                            <summary className="text-slate-500 cursor-pointer hover:text-slate-400">
-                                                🔒 Firebase Security Rules
-                                            </summary>
-                                            <div className="mt-2 bg-slate-900 rounded p-3 font-mono text-slate-400 overflow-x-auto whitespace-pre text-[11px]">
-                                                {TeamService.generateRulesTemplate(firebaseUid)}
-                                            </div>
-                                            <div className="flex items-center gap-2 mt-2">
-                                                <button onClick={() => navigator.clipboard.writeText(TeamService.generateRulesTemplate(firebaseUid))}
-                                                    className="text-indigo-400 hover:text-indigo-300 text-xs">📋 Copy Rules</button>
-                                                <button onClick={handleDeployRules} disabled={rulesDeploying || !firebaseAdmin.serviceAccount}
-                                                    className="text-green-400 hover:text-green-300 text-xs disabled:opacity-50 disabled:cursor-not-allowed">
-                                                    {rulesDeploying ? '⏳ Deploying...' : '🚀 Deploy to Firebase'}
-                                                </button>
-                                            </div>
-                                            {rulesResult && (
-                                                <div className={`mt-2 text-xs px-2 py-1 rounded ${rulesResult.ok ? 'bg-green-900/30 text-green-300' : 'bg-red-900/30 text-red-300'}`}>
-                                                    {rulesResult.ok ? '✅' : '❌'} {rulesResult.msg}
-                                                </div>
-                                            )}
-                                            {!firebaseAdmin.serviceAccount && (
-                                                <div className="mt-1 text-xs text-yellow-400/70">
-                                                    ⚠️ Add a Firebase Service Account key above to enable auto-deploy
-                                                </div>
-                                            )}
-                                        </details>
-                                    );
-                                })()}
+                                {/* v8.71.7: Firebase Security Rules viewer removed — rules will be automated when team capability is activated */}
                             </div>
                         );
                     })()}
+                    </div>
                 </div>
-                
+
                 {/* v8.71.0: GitHub Token + Firebase Admin moved to Credentials section */}
                 
                 {/* v8.71.0: Domain management moved to Infrastructure section */}
@@ -16678,7 +16636,7 @@ The developer uses Claude for iterative development — each session should:
                 {/* ═══ INFRASTRUCTURE SECTION ═══ */}
                 <div style={{ display: settingsSection === 'infrastructure' ? 'block' : 'none' }}>
                 <div className="space-y-6">
-                    <FirebaseRulesManager showAlert={showAlert} showConfirm={showConfirm} />
+                    {/* v8.71.7: FirebaseRulesManager removed — rules managed via firebase-functions repo, not UI */}
                     <DomainsView apps={apps} config={config} githubToken={token} showAlert={showAlert} showConfirm={showConfirm} />
                     <AuthorizedDomainsManager showAlert={showAlert} />
                 </div>
