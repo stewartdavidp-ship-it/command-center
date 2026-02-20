@@ -6,17 +6,56 @@
 
 ---
 
+## Quick Reference
+
+**Read this first.** Everything a new session needs to start working.
+
+| Item | Value |
+|------|-------|
+| **CC app** | `/Users/davidstewart/Downloads/command-center/index.html` (single-file, v8.71.6) |
+| **MCP server** | `/Users/davidstewart/Downloads/command-center/mcp-server/src/` |
+| **Firebase Functions** | `/Users/davidstewart/Downloads/firebase-functions/functions/index.js` |
+| **Firebase Rules** | `/Users/davidstewart/Downloads/firebase-functions/database.rules.json` |
+| **GH Pages site** | `/Users/davidstewart/Downloads/command-center-test/` → `stewartdavidp-ship-it.github.io/command-center-test/` |
+| **Firebase project** | `word-boxing` |
+| **Firebase UID** | `oUt4ba0dYVRBfPREqoJ1yIsJKjr1` |
+| **MCP server URL** | `https://cc-mcp-server-300155036194.us-central1.run.app` |
+| **Latest MCP revision** | `cc-mcp-server-00046-pbb` |
+
+### Deploy Commands
+
+```bash
+# CC browser app → GitHub Pages
+cp index.html ../command-center-test/ && cd ../command-center-test && git add index.html && git commit -m "v8.x.x" && git push
+
+# MCP server → Cloud Run
+cd mcp-server && npm run build && gcloud run deploy cc-mcp-server --source . --region us-central1 --project word-boxing --allow-unauthenticated
+
+# Firebase Functions (CC only — MUST target specific functions, Game Shelf deployed separately)
+cd /Users/davidstewart/Downloads/firebase-functions && firebase deploy --only functions:domainProxy,functions:documentCleanup --project word-boxing
+
+# Firebase RTDB Rules
+cd /Users/davidstewart/Downloads/firebase-functions && firebase deploy --only database --project word-boxing
+```
+
+### Safety Rules (Do Not Violate)
+
+1. **All `.on('value')` listeners MUST use `limitToLast(N)`** — unbounded listeners caused a $17/day billing crisis in Feb 2026
+2. **Never create polling scripts for `document(receive)`** — use MCP tools instead. See SYSTEM-CONTEXT.md Section 17.
+3. **`domainProxy` requires Firebase Auth token** — all 3 call sites in index.html pass Bearer token via `Authorization` header
+4. **Deploy Firebase Functions with `--only functions:NAME`** — bare `--only functions` will try to delete 22 Game Shelf functions
+
+---
+
 ## Overview
 
 Command Center (CC) is an **AI ideation rigor platform** — a structured system for turning vague ideas into well-formed, buildable specifications before code is written. It manages ODRC concepts (OPENs, DECISIONs, RULEs, CONSTRAINTs), ideation sessions, build jobs, and inter-agent messaging between Claude Chat and Claude Code.
 
-CC is a single-file React application (~16,900 lines after satellite extraction in v8.71.0) deployed via GitHub Pages. It uses React 18 via CDN, Tailwind CSS via CDN, and Firebase Realtime Database for persistence.
+CC is a single-file React application deployed via GitHub Pages. It uses React 18 via CDN, Tailwind CSS via CDN, and Firebase Realtime Database for persistence.
 
 ---
 
 ## Ecosystem Map
-
-CC is not just a browser app — it's part of a multi-service ecosystem:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -40,19 +79,27 @@ CC is not just a browser app — it's part of a multi-service ecosystem:
 │                                                                          │
 │  ┌──────────────────────────────────────────┐                           │
 │  │  Firebase Cloud Functions (word-boxing)    │                           │
-│  │  Game Shelf: hints, battles, tokens, etc. │                           │
-│  │  CC Utility: domainProxy (DNS API proxy)  │                           │
-│  │  Scheduled: cache cleanup, battle check   │                           │
+│  │  CC: domainProxy, documentCleanup         │                           │
+│  │  Game Shelf: 22 functions (separate repo) │                           │
 │  └──────────────────────────────────────────┘                           │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-| Service | Where It Runs | Purpose | Details |
-|---------|--------------|---------|---------|
-| CC Browser App | GitHub Pages | UI for ODRC management, jobs, sessions, settings | This file |
-| CC MCP Server | Cloud Run (`us-central1`) | Tools + skills for Claude Chat/Code | See `SYSTEM-CONTEXT.md` |
-| Firebase Cloud Functions | GCP (`word-boxing`) | Game Shelf features, DNS proxy, scheduled cleanup | See below |
-| Firebase RTDB | GCP (`word-boxing`) | All persistent data | `command-center/{uid}/` |
+| Service | Where It Runs | Purpose |
+|---------|--------------|---------|
+| CC Browser App | GitHub Pages | UI for ODRC management, jobs, sessions, settings |
+| CC MCP Server | Cloud Run (`us-central1`) | Tools + skills for Claude Chat/Code |
+| Firebase Cloud Functions | GCP (`word-boxing`) | CC: DNS proxy + doc cleanup. Game Shelf: 22 functions (separate codebase) |
+| Firebase RTDB | GCP (`word-boxing`) | All persistent data under `command-center/{uid}/` |
+
+### Authentication Model
+
+| Client | Auth Method | Flow |
+|--------|------------|------|
+| CC Browser App | Firebase Auth (Google Sign-In) | Client-side popup → Firebase UID |
+| Claude.ai (Chat) | OAuth 2.1 with PKCE | `/register` → `/authorize` → Google Sign-In or CC API Key → `/token` |
+| Claude Code (CLI) | CC API Key | `cc_{uid}_{secret}` validated against SHA-256 hash in Firebase RTDB |
+| domainProxy | Firebase ID Token | CC browser passes Bearer token in `Authorization` header |
 
 ---
 
@@ -60,7 +107,7 @@ CC is not just a browser app — it's part of a multi-service ecosystem:
 
 ```
 <CommandCenter>                          Root — state, Firebase auth, nav
-├── <ProjectsDrillDown>                  Projects with Ideas tab drill-down (v8.70.19)
+├── <ProjectsDrillDown>                  Projects with Ideas tab drill-down
 │   ├── Project cards (expandable)       Apps, ideas, lifecycle metadata
 │   │   └── App rows                     Structure, repos, versions
 │   ├── <AppsView>                       App detail with Ideas tab
@@ -68,22 +115,20 @@ CC is not just a browser app — it's part of a multi-service ecosystem:
 │   ├── <AppEditModal>                   Edit app definitions
 │   ├── <ProjectEditModal>              Create/edit/delete projects
 │   └── <DomainsView>                   Domain management (GoDaddy/Porkbun)
-├── <JobsView>                          Build job list + detail (v8.70.18)
-│   └── "Load older jobs" button         On-demand fetch via .once() (v8.71.4)
-├── <SessionsView>                      Ideation session list + detail (v8.70.18)
+├── <JobsView>                          Build job list + detail
+│   └── "Load older jobs" button         On-demand fetch via .once()
+├── <SessionsView>                      Ideation session list + detail
 ├── <SetupNewAppView>                   4-step new app wizard
 └── <SettingsView>                      Token, Firebase admin, preferences
 ```
 
-**Navigation tabs** (v8.70.19): Projects | Jobs | Sessions | Settings
-
-**Removed views** (extracted to satellites or eliminated in v8.71.0): DashboardView, SmartDeployView, HistoryView, FirebaseView, IntegrationsView, UsersView, BetaProgramView, IssuesView, BacklogView, SessionLogView, CleanupView, FilesView, ConfigView.
+**Navigation tabs:** Projects | Jobs | Sessions | Settings
 
 ---
 
 ## Firebase Realtime Listeners
 
-### Active Listeners (v8.71.4)
+### Active Listeners (v8.71.4+)
 
 These are persistent `.on('value')` subscriptions set up once at auth time. Each listener re-downloads its entire query result set whenever any child in the query window changes.
 
@@ -94,23 +139,18 @@ These are persistent `.on('value')` subscriptions set up once at auth time. Each
 | Concepts | `limitToLast(50)` | `updatedAt` | ~0.5KB | ~25KB | `ConceptManager.listen()` |
 | Ideas | `limitToLast(20)` | `updatedAt` | ~0.5KB | ~10KB | `IdeaManager.listen()` |
 
-**On-demand loading:** `JobService.loadBefore(uid, oldestCreatedAt, limit)` fetches older jobs via `.once()` reads when the user clicks "Load older jobs". Same pattern can be added for Sessions, Concepts, Ideas as needed.
+**On-demand loading:** `JobService.loadBefore(uid, oldestCreatedAt, limit)` fetches older jobs via `.once()` reads when the user clicks "Load older jobs".
 
-### Suspended Listeners (v8.70.11 / v8.71.0)
+### Suspended Listeners
 
-These listeners are disabled because they either have no data (single-user) or the features they serve are inactive:
-
-| Listener | Suspended In | Reason | Impact |
-|----------|-------------|--------|--------|
-| Activity | v8.70.11 | No data, zero cost | Activity log shows empty |
-| Team | v8.70.11 | No data, single-user | Team views show empty |
-| TeamMembership | v8.70.11 | No data, single-user | Team views show empty |
-| WorkItems | v8.70.11 | Feature lightly used | Backlog view shows empty |
-| Streams | v8.70.11 | No data | Feature inactive |
-| Orphan Commits | v8.70.11 | 5.2MB/13K records | Cleanup view doesn't auto-detect |
-| Documents | v8.71.0 | Removed from browser | Documents managed via MCP tools only |
-
-**To re-enable:** Add back to the auth `useEffect` (line ~6450) with appropriate `limitToLast()` bounds. See Cost Architecture section for limits guidance.
+| Listener | Reason |
+|----------|--------|
+| Activity | No data, zero cost |
+| Team / TeamMembership | Single-user, no data |
+| WorkItems | Feature lightly used |
+| Streams | Feature inactive |
+| Orphan Commits | 5.2MB/13K records, expensive to listen |
+| Documents | Managed via MCP tools only (v8.71.0) |
 
 ---
 
@@ -135,7 +175,7 @@ These listeners are disabled because they either have no data (single-user) or t
           ▼           ▼           ▼
     CC Browser    MCP Server    Cloud Functions
     (listeners)   (reads/writes) (triggers/scheduled)
-    4 active      10 tools       ~20 functions
+    4 active      10 tools       domainProxy, documentCleanup
 ```
 
 ### Browser → Firebase
@@ -150,9 +190,8 @@ These listeners are disabled because they either have no data (single-user) or t
 - **Debounced:** `contextEstimate` flushed every 30 seconds (not per-call)
 
 ### Cloud Functions → Firebase
-- **Triggers:** `calculateBattleScore` on participant data write
-- **Scheduled:** `dailyCacheCleanup` (3am), `checkBattleCompletion` (hourly), `dailyUserStatsEmail` (8am)
-- **On-demand:** Hint cache, morning review, AI help — all write to their own Firebase paths
+- **domainProxy:** Authenticated CORS proxy for Porkbun/GoDaddy APIs (requires Firebase ID token)
+- **documentCleanup:** Daily 4am ET scheduled purge of delivered/failed docs older than 7 days
 
 ---
 
@@ -162,11 +201,11 @@ Firebase RTDB charges ~$1/GB for bandwidth. The primary cost driver is listener 
 
 ### Cost Guardrails
 
-1. **Listener limits:** All `.on('value')` listeners use `limitToLast(N)` to bound per-trigger download size. See listener table above.
-2. **Server-side query filtering:** MCP server uses `orderByChild().equalTo()` on document queries. No full-collection reads.
-3. **Firebase indexes:** `.indexOn` rules on all queried fields (status, createdAt, updatedAt). Without indexes, Firebase downloads the entire collection and filters client-side.
-4. **Write debouncing:** `contextEstimate` batched over 30-second windows instead of per-call.
-5. **No background polling:** Claude Code must never create persistent scripts to poll `document(receive)`. See `SYSTEM-CONTEXT.md` Section 17 for the full incident report.
+1. **Listener limits:** All `.on('value')` listeners use `limitToLast(N)` to bound per-trigger download size
+2. **Server-side query filtering:** MCP server uses `orderByChild().equalTo()` — no full-collection reads
+3. **Firebase indexes:** `.indexOn` rules on all queried fields. Without indexes, Firebase downloads the entire collection and filters client-side.
+4. **Write debouncing:** `contextEstimate` batched over 30-second windows
+5. **No background polling:** Claude Code must never create persistent scripts to poll `document(receive)`
 
 ### Historical Incident (Feb 2026)
 
@@ -174,60 +213,26 @@ Three zombie bash scripts from orphaned Claude Code sessions polled `document(re
 
 ---
 
-## Cloud Functions Inventory
+## CC Cloud Functions
 
-All functions run in the `word-boxing` Firebase project. CC functions source: `stewartdavidp-ship-it/firebase-functions`. Game Shelf functions source: `/Developer/gameshelf-functions/functions/index.js`.
+Source: `stewartdavidp-ship-it/firebase-functions` (private repo).
 
-### Game Shelf Functions
-| Function | Trigger | Purpose |
-|----------|---------|---------|
-| `getHint` | HTTPS callable | AI puzzle hints via Claude Haiku, cached globally |
-| `getHintUsage` | HTTPS callable | Rate limit status |
-| `getDailyInsight` | HTTPS callable | AI puzzle analysis, cached daily |
-| `submitInsightReaction` | HTTPS callable | User votes on insights |
-| `getMorningReview` | HTTPS callable | Pre-puzzle preview for up to 10 games |
-| `getAIHelp` | HTTPS callable | In-app AI assistant (20/day limit) |
-| `createCoinCheckout` | HTTPS callable | Stripe checkout for token purchase |
-| `stripeWebhook` | HTTPS onRequest | Stripe payment processing |
-| `getGiftOptions` / `redeemGift` / `getGiftHistory` | HTTPS callable | Token gift system |
-| `completeBetaRegistration` | HTTPS callable | Beta signup with referral bonuses |
-| `getUserType` | HTTPS callable | User type lookup |
-
-### Database Triggers
-| Function | Trigger Path | Purpose |
-|----------|-------------|---------|
-| `calculateBattleScore` | `battles/{id}/participants/{id}` | Server-side authoritative scoring |
-
-### Scheduled
-| Function | Schedule | Purpose |
-|----------|---------|---------|
-| `dailyCacheCleanup` | 3am ET daily | Purge stale hint/review caches |
-| `checkBattleCompletion` | Hourly | Mark ended battles as completed |
-| `dailyUserStatsEmail` | 8am ET daily | Stats email via SendGrid |
-
-### CC Utility
 | Function | Trigger | Purpose | Note |
 |----------|---------|---------|------|
-| `domainProxy` | HTTPS onRequest | CORS proxy for Porkbun/GoDaddy DNS APIs | ✅ Auth required (Firebase ID token), restricted CORS origins |
-| `documentCleanup` | Scheduled (4am ET daily) | Purge delivered/failed documents older than 7 days | Per-user error handling, won't abort on single failure |
+| `domainProxy` | HTTPS onRequest | CORS proxy for Porkbun/GoDaddy DNS APIs | Auth required (Firebase ID token), restricted CORS origins |
+| `documentCleanup` | Scheduled (4am ET daily) | Purge delivered/failed documents older than 7 days | Per-user error handling |
 
-### Admin
-| Function | Purpose |
-|----------|---------|
-| `getUserStats` | Aggregate user stats (admin-restricted) |
-| `getBetaAnalytics` | Beta onboarding analytics (admin-restricted) |
-| `testDailyStatsEmail` | Manual trigger for stats email |
+Game Shelf functions (22 functions) are deployed from a separate codebase at `/Developer/gameshelf-functions/`. They share the `word-boxing` Firebase project but are not in the `firebase-functions` repo.
 
 ---
 
-## Repository Structure
+## Repositories
 
-| Repo | Environment | URL | Purpose |
-|------|------------|-----|---------|
-| `command-center-test` | Test | `stewartdavidp-ship-it.github.io/command-center-test/` | Test deploys |
-| `command-center` | Prod | `aicommandcenter.dev` | Production |
-
-**Deploy rule:** Always deploy to test first. Verify, then promote to prod.
+| Repo | Visibility | Content |
+|------|-----------|---------|
+| `stewartdavidp-ship-it/command-center` | Public | CC app, MCP server source, ARCHITECTURE.md, CLAUDE.md |
+| `stewartdavidp-ship-it/command-center-test` | Public | GitHub Pages deploy target |
+| `stewartdavidp-ship-it/firebase-functions` | **Private** | domainProxy, documentCleanup, database.rules.json |
 
 ---
 
@@ -239,94 +244,84 @@ All functions run in the `word-boxing` Firebase project. CC functions source: `s
 
 ---
 
-## Known Issues / OPENs
+## Known Issues
 
-1. **Sessions have no "Load More"** — only 15 most recent visible in browser. Older sessions accessible via MCP `session(list)` only.
-2. ~~**domainProxy is unauthenticated**~~ — **RESOLVED v8.71.5** (2026-02-20). Added Firebase ID token verification + origin-restricted CORS.
-3. ~~**Document TTL cleanup is lazy-only**~~ — **RESOLVED v8.71.5** (2026-02-20). Added `documentCleanup` scheduled Cloud Function (daily 4am ET).
-4. **MCP server cold starts lose OAuth tokens** — configured with 0 min instances. Claude.ai users must reconnect after deploys.
-5. **CLAUDE.md generator can produce duplicates** — same concept appears multiple times when linked across ideas.
-6. **Shared Firebase project** — `word-boxing` hosts CC, Game Shelf, and all experiments. Causes naming confusion.
+| # | Issue | Status |
+|---|-------|--------|
+| 1 | Sessions have no "Load More" — only 15 most recent visible in browser | Open |
+| 2 | MCP server cold starts lose OAuth tokens — configured with 0 min instances | Open (SEC-1) |
+| 3 | CLAUDE.md generator can produce duplicates across ideas | Open |
+| 4 | Shared Firebase project `word-boxing` hosts CC + Game Shelf | Accepted |
 
 ---
 
 ## Architecture Backlog
 
-Captured from security & performance audit (2026-02-20). Tracked as OPENs for future sessions.
-
-### Security
+### Open Items
 
 | ID | Item | Severity | Notes |
 |----|------|----------|-------|
-| SEC-1 | **In-memory OAuth token store** — Cloud Run cold starts wipe all OAuth tokens. Claude.ai users must reconnect after every deploy or idle period. | Medium | Fix: Firebase-backed token store. `store.ts` line 6 has a TODO for this. Cost vs UX tradeoff — `minInstances: 1` adds ~$18/month. |
-| SEC-2 | **`Math.random()` for API key secret** — CC API keys use `Math.random()` which is not cryptographically secure. Predictable given enough observations. | Low | Acceptable single-user. Upgrade to `crypto.randomBytes()` if/when multi-user. Located in `index.html` line ~5479. |
-| ~~SEC-3~~ | ~~**Dev mode auth bypass (`SKIP_AUTH`)**~~ | ~~Low~~ | **RESOLVED v8.71.6** (2026-02-20). Added production guard: if `K_SERVICE` is set (Cloud Run) and `SKIP_AUTH=true`, process exits immediately. |
-| SEC-4 | **Game Shelf world-writable paths** — `games`, `lobby`, `battles`, `public-battles` are writable by any authenticated user. | Info | By design for multiplayer. Validated by game code format (`/^[A-Z]{5}$/`). Separate concern from CC. |
-| SEC-5 | **`teamMembership` write rule** — `generateRulesTemplate()` in `index.html` allows any auth user to write `teamMembership` under any `$uid`. Not currently deployed (template only), but would be a risk if deployed. | Low | Fix the template to restrict writes to `auth.uid === $uid` before deploying team features. |
+| SEC-1 | **In-memory OAuth token store** — Cold starts wipe tokens. Claude.ai users must reconnect. | Medium | Fix: Firebase-backed store. Cost vs UX tradeoff — `minInstances: 1` adds ~$18/month. |
+| SEC-2 | **`Math.random()` for API key secret** — Not cryptographically secure. | Low | Acceptable single-user. Upgrade to `crypto.randomBytes()` if multi-user. |
+| SEC-5 | **`teamMembership` write rule template** — Allows any auth user to write under any `$uid`. Not deployed. | Low | Fix template before deploying team features. |
+| PERF-1 | **`documentCleanup` full tree read** — Downloads ~787KB daily. | Low | Optimize if CC data grows past 10MB. |
+| PERF-3 | **Jobs collection is heaviest listener** — 60KB per trigger at current size. | Low | Monitor. Reduce limit if job payloads grow. |
+| PERF-4 | **No Firebase budget alerts** — Blaze plan has no spending caps. | Medium | Enable Cloud Billing Budget API, set $25/month alert. |
+| PERF-5 | **Firebase Functions SDK upgrade needed** — `firebase-functions@4.9.0`, Node.js 20 deprecates 2026-04-30. | Medium | Upgrade to v5.x + nodejs22 before April 2026. |
+| DEBT-4 | **Second CC user** (`ptYPWbTDlCPvrKTq2NmWWHuEvkv1`) — Test account? Clean up if unneeded. | Low | |
+| DEBT-5 | **CC line count documentation stale** | Low | Update after next major change. |
+| DEBT-12 | **Firebase SA JSON in Downloads folder** — Should move to secure location. | Medium | User action required. |
+| DEBT-13 | **Game Shelf functions not in firebase-functions repo** — 22 functions in separate codebase. | Low | Consider consolidating. |
+| DEBT-14 | **Firebase Functions SDK upgrade** — Same as PERF-5. | Medium | Before April 2026. |
 
-### Performance
+### Resolved (2026-02-20)
 
-| ID | Item | Severity | Notes |
-|----|------|----------|-------|
-| PERF-1 | **`documentCleanup` full tree read** — The new cleanup function does `db.ref("command-center").once("value")` downloading ~787KB. Runs daily = negligible now. | Low | If CC data grows past 10MB, optimize to shallow-read user list first, then query each user's documents separately. |
-| PERF-2 | **Firebase indexes not file-backed before v8.71.5** — Prior to the `database.rules.json` file, indexes were only in the live Firebase console with no version control or rollback. | Resolved | Fixed in v8.71.5 — `database.rules.json` in `firebase-functions/` repo now tracks all rules. |
-| PERF-3 | **Jobs collection is heaviest listener** — 30 jobs at 176KB total. `limitToLast(10)` bounds it to ~60KB per trigger. If job payloads grow (larger instructions/attachments), consider reducing limit or trimming completed job data. | Low | Monitor. Current cost: ~$0.06/KB × triggers/day. |
-| PERF-4 | **No Firebase budget alerts configured** — The Blaze plan has no spending caps or alerts. The billing budgets API isn't enabled on the project. | Medium | Enable Cloud Billing Budget API and set a $25/month alert. |
-| PERF-5 | **Firebase SDK upgrade warning** — Cloud Functions using `firebase-functions@4.9.0` (SDK warns to upgrade to ≥5.1.0). Runtime Node.js 20 will be deprecated 2026-04-30. | Medium | Schedule upgrade to `firebase-functions@5.x` and `nodejs22` before April 2026. |
+<details>
+<summary>Click to expand resolved items from v8.71.5 and v8.71.6 security hardening</summary>
 
-### Technical Debt
+| ID | Resolution |
+|----|-----------|
+| DEBT-1 | v8.71.5 pushed to GitHub Pages |
+| DEBT-2 | `domainProxy.js` dead code deleted |
+| DEBT-3 | `firebase-rules-updated.json` deleted. Canonical: `firebase-functions/database.rules.json` |
+| DEBT-6 | 17 debug scripts removed from git, added to `.gitignore` |
+| DEBT-7 | Legacy `domainProxy.js` deletion committed |
+| DEBT-8 | `activityLog` → `activity` rules index mismatch fixed |
+| DEBT-9 | `debug-sessions` paths restricted to admin UID |
+| DEBT-10 | OAuth clients Map bounded (max 100, auto-cleanup) |
+| DEBT-11 | SA email redacted from browser console.log |
+| SEC-3 | SKIP_AUTH production guard added (process exits on Cloud Run) |
+| PERF-2 | Firebase rules version-controlled in `database.rules.json` |
+| Known-2 | domainProxy authenticated (Firebase ID token + restricted CORS) |
+| Known-3 | `documentCleanup` scheduled Cloud Function added (daily 4am ET) |
 
-| ID | Item | Notes |
-|----|------|-------|
-| ~~DEBT-1~~ | ~~**Push v8.71.5 to GitHub Pages**~~ | **RESOLVED** (2026-02-20). Pushed to `command-center-test` repo. |
-| ~~DEBT-2~~ | ~~**`command-center/command-center/domainProxy.js` is dead code**~~ | **RESOLVED** (2026-02-20). File deleted. |
-| ~~DEBT-3~~ | ~~**`firebase-rules-updated.json` in Downloads is stale**~~ | **RESOLVED** (2026-02-20). File deleted. Canonical rules: `firebase-functions/database.rules.json`. |
-| DEBT-4 | **Second CC user (`ptYPWbTDlCPvrKTq2NmWWHuEvkv1`) has only an apiKeyHash** — Likely a test account. Consider cleaning up if not needed. |
-| DEBT-5 | **CC line count documentation stale** — ARCHITECTURE.md says ~16,900 lines but v8.71.6 changes haven't been counted. Update after next deploy. |
-| ~~DEBT-6~~ | ~~**Debug scripts with hardcoded UID in public repo**~~ | **RESOLVED v8.71.6** (2026-02-20). 17 `cc-*.cjs` files removed from git, added to `.gitignore`. |
-| ~~DEBT-7~~ | ~~**Legacy domainProxy.js not committed as deleted**~~ | **RESOLVED v8.71.6** (2026-02-20). `git rm` committed. |
-| ~~DEBT-8~~ | ~~**activityLog vs activity rules mismatch**~~ | **RESOLVED v8.71.6** (2026-02-20). Rules updated to match code path `activity`. |
-| ~~DEBT-9~~ | ~~**debug-sessions paths world-writable**~~ | **RESOLVED v8.71.6** (2026-02-20). Restricted to admin UID. |
-| ~~DEBT-10~~ | ~~**OAuth clients Map unbounded**~~ | **RESOLVED v8.71.6** (2026-02-20). Max 100 clients, auto-cleanup of expired tokens/codes. |
-| ~~DEBT-11~~ | ~~**SA email in browser console.log**~~ | **RESOLVED v8.71.6** (2026-02-20). Redacted to `[configured]`. |
-| DEBT-12 | **Firebase service account JSON in Downloads folder** — Should be moved to `~/.config/firebase/` or similar secure location. Rotation recommended after move. |
-| DEBT-13 | **Game Shelf functions not in firebase-functions repo** — 22 functions deployed from separate `/Developer/gameshelf-functions/` codebase. Consider consolidating or at minimum documenting the relationship. |
-| DEBT-14 | **Firebase Functions SDK upgrade needed** — Using `firebase-functions@4.9.0`, warned to upgrade to ≥5.1.0. Node.js 20 deprecates 2026-04-30. |
+</details>
 
 ---
 
 ## Disaster Recovery
 
-All source code is now in GitHub. Updated 2026-02-20.
-
-### Source Repositories
-
-| Asset | Repository | Visibility | Notes |
-|-------|-----------|------------|-------|
-| CC browser app (`index.html`) | `stewartdavidp-ship-it/command-center` | Public | Main app, ARCHITECTURE.md, CLAUDE.md, skills/ |
-| CC GitHub Pages deploy | `stewartdavidp-ship-it/command-center-test` | Public | Live site at `stewartdavidp-ship-it.github.io/command-center-test/` |
-| MCP server source | `stewartdavidp-ship-it/command-center` → `mcp-server/` | Public | OAuth, API key auth, tools, Firebase integration. Added 2026-02-20. |
-| Firebase Functions + RTDB rules | `stewartdavidp-ship-it/firebase-functions` | **Private** | domainProxy, documentCleanup, database.rules.json. Created 2026-02-20. |
+All source code is in GitHub. Updated 2026-02-20.
 
 ### Deployed Services
 
 | Service | Platform | Recovery Path |
 |---------|----------|---------------|
-| CC browser app | GitHub Pages | Auto-deploys from `command-center-test` repo push |
-| MCP server | Cloud Run (`cc-mcp-server`) | `cd mcp-server && gcloud run deploy cc-mcp-server --source . --region us-central1 --project word-boxing --allow-unauthenticated` |
-| Cloud Functions | Firebase (`domainProxy`, `documentCleanup`) | `cd firebase-functions && firebase deploy --only functions:domainProxy,functions:documentCleanup` (must target specific functions — Game Shelf functions deployed separately) |
-| RTDB security rules | Firebase | `cd firebase-functions && firebase deploy --only database` |
+| CC browser app | GitHub Pages | Push to `command-center-test` repo |
+| MCP server | Cloud Run (`cc-mcp-server`) | See deploy commands in Quick Reference |
+| Cloud Functions | Firebase | See deploy commands in Quick Reference |
+| RTDB rules | Firebase | See deploy commands in Quick Reference |
 
 ### Data
 
 | Data | Location | Backup |
 |------|----------|--------|
 | Firebase RTDB | `word-boxing` project | Firebase automatic daily backups (Blaze plan) |
-| Cloud Run container images | Google Artifact Registry | Retained per GCP policy — previous revisions available |
+| Cloud Run images | Google Artifact Registry | Retained per GCP policy |
 
 ### Environment Variables (Cloud Run)
 
-Required env vars for MCP server rebuild (set via Cloud Run console or `gcloud run deploy --set-env-vars`):
+Required for MCP server rebuild:
 - `FIREBASE_PROJECT_ID` — `word-boxing`
 - `FIREBASE_WEB_API_KEY` — Firebase Web API key (from Firebase console → Project Settings)
 - `GITHUB_TOKEN` — GitHub PAT for repo operations
@@ -334,6 +329,6 @@ Required env vars for MCP server rebuild (set via Cloud Run console or `gcloud r
 
 ### Not Version-Controlled (Accepted)
 
-- Firebase service account key (stored in Cloud Run as mounted secret)
-- Cloud Run service configuration (min/max instances, memory, CPU) — recreatable via console
-- Firebase budget alerts (PERF-4) — not yet configured
+- Firebase service account key (Cloud Run mounted secret)
+- Cloud Run service config (min/max instances, memory, CPU)
+- Firebase budget alerts (PERF-4 — not yet configured)
