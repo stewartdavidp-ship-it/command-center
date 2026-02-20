@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Command Center</title>
-    <meta name="version" content="8.71.7">
+    <meta name="version" content="8.71.8">
     <meta name="gs-app-id" content="command-center">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -6456,6 +6456,7 @@ The router (\\\`cc-skill-router\\\`) is the single source of truth for skill loa
                     SecretManager.setUid(u.uid);
                     FirebaseConfigSync.setUid(u.uid);
                     SecretManager.migrateFromGlobal();
+                    firebaseAdmin.loadServiceAccount(); // v8.71.8: Reload SA now that UID-namespaced key is available
                     FirebaseConfigSync.migrateFromGlobal().catch(e =>
                         console.error('[CC] ConfigSync migration failed:', e)
                     );
