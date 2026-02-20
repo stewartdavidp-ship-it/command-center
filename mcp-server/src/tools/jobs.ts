@@ -80,8 +80,9 @@ Actions:
       deployId: z.string().optional().describe("Deploy record ID (optional for complete)"),
       limit: z.number().int().optional().describe("Max results to return for list action (default: 20)"),
       offset: z.number().int().optional().describe("Number of items to skip for pagination (default: 0)"),
+      includeSnapshot: z.boolean().optional().describe("For 'get': include claudeMdSnapshot in response (default: false — saves context window)"),
     },
-    async ({ action, jobId, appId, ideaId, title, instructions, attachments, conceptSnapshot, jobType, createdBy, claudeMdSnapshot, preConditions, exceptionsNoted, concerns, resolutions, eventType, detail, refId, status, summary, conceptsAddressed, filesChanged, testsRun, testsPassed, testsFailed, buildSuccess, linesAdded, linesRemoved, deployId, limit, offset }) => {
+    async ({ action, jobId, appId, ideaId, title, instructions, attachments, conceptSnapshot, jobType, createdBy, claudeMdSnapshot, preConditions, exceptionsNoted, concerns, resolutions, eventType, detail, refId, status, summary, conceptsAddressed, filesChanged, testsRun, testsPassed, testsFailed, buildSuccess, linesAdded, linesRemoved, deployId, limit, offset, includeSnapshot }) => {
       const uid = getCurrentUid();
 
       // ─── START ───
@@ -509,6 +510,24 @@ Actions:
         const job = snapshot.val();
 
         if (!job) return { content: [{ type: "text", text: `Job not found: ${jobId}` }], isError: true };
+
+        // Strip large claudeMdSnapshot by default to save context window
+        if (!includeSnapshot && job.claudeMdSnapshot) {
+          const snapshotLen = job.claudeMdSnapshot.length;
+          delete job.claudeMdSnapshot;
+          job._snapshotExcluded = `claudeMdSnapshot (${snapshotLen} chars) excluded. Use includeSnapshot=true to include.`;
+        }
+
+        // Cap events to last 20 to save context window
+        if (job.events && Array.isArray(job.events)) {
+          const totalEvents = job.events.length;
+          job.eventCount = totalEvents;
+          if (totalEvents > 20) {
+            job.events = job.events.slice(-20);
+            job._eventsTruncated = `Showing last 20 of ${totalEvents} events`;
+          }
+        }
+
         return { content: [{ type: "text", text: JSON.stringify(job, null, 2) }] };
       }
 

@@ -3312,41 +3312,32 @@ A shared learning surface for Chat and Code. Both agents read this on startup. E
 - The bar: "Would a future Chat or Code instance make a worse decision without knowing this?"
 - If the answer is no, don't write. This is not a log.
 - Max 2-3 sentences per entry. Include date, job ref, and who learned it.
-- Code writes entries directly via skill-update jobs. Chat creates skill-update jobs for Code to execute.
 
 ## Size Rules
-- Total skill: under 80 lines
-- Distilled Patterns: max ~30 lines
-- Recent Entries: max ~15 entries (~40 lines)
-- When Recent Entries exceeds 15: Chat consolidates — distills patterns, prunes consumed entries, ships skill-update job
-- When Distilled Patterns exceeds 30 lines: Chat prunes — merge overlapping, remove obvious, keep only what changes decisions
+- Total skill: under 60 lines
+- Distilled Patterns: max ~20 lines
+- Recent Entries: max ~10 entries (~30 lines)
+- When Recent Entries exceeds 10: consolidate — distill patterns, prune consumed entries
 
 ---
 
 ## Distilled Patterns
-*(Empty — patterns emerge after enough entries accumulate)*
+
+1. **Code sees what Chat imagines.** Chat works from described architecture; Code sees actual code. For scope analysis, dependency mapping, or dead code discovery — dispatch to Code with a review job, don't estimate in Chat.
+
+2. **One question can collapse complexity.** Before planning around assumed requirements, verify assumptions still hold with the user. A single strategic question eliminated an entire build phase.
+
+3. **CC data shapes are objects, not arrays.** \\\`apps\\\` is keyed by app ID (\\\`apps[appId]\\\`), not iterable (\\\`apps.find()\\\`). Same for \\\`concepts\\\`, \\\`sessions\\\`, \\\`jobs\\\`. Always use bracket notation.
 
 ---
 
 ## Recent Entries
 
-**2026-02-19** | Nav Redesign impact analysis | delegation-insight
-Code's codebase analysis (line counts, dependency maps, entanglement risks) was dramatically more accurate than Chat's estimates — 6,800 removable lines vs Chat's ~18,000 guess. For any task requiring codebase scope analysis, dispatch to Code with a review job rather than estimating in Chat.
-
-**2026-02-19** | Nav Redesign phasing | process-improvement
-Asking the user one strategic question ("do we still need deploy capabilities?") eliminated an entire HIGH-risk phase from the build plan. Before planning around assumed requirements, Chat should verify assumptions still hold — one question can collapse complexity.
-
-**2026-02-19** | Nav Redesign + v8.70.14 cleanup | delegation-insight
-Code discovered dead Firebase sync paths (session-log, deletion-history, rules-history) and dead state variables (globalInterfaces, globalDependencies, globalDependencyAlerts) that Chat's ideation sessions never surfaced. Chat works from described architecture; Code sees what's actually in the code. Dead code discovery is a Code task.
-
-**2026-02-19** | Phase 2 Jobs+Sessions build | codebase-gotcha
-The CC \\\`apps\\\` prop is an object keyed by app ID (e.g. \\\`{ "command-center": {...} }\\\`), not an array. Any new view that resolves app names must use \\\`apps[appId]\\\` not \\\`apps.find()\\\`. This pattern is not documented anywhere — discovered via runtime TypeError after deploy.
+**2026-02-19** | Firebase cost crisis | infrastructure-gotcha
+Background polling scripts outlived sessions — 3 scripts at 10s intervals, ~1MB/call, $17/day. NEVER create persistent background processes. All MCP calls happen inline. Every Firebase query MUST use server-side filtering.
 
 **2026-02-19** | Phase 2 deploy | deploy-gotcha
-\\\`gh api\\\` with \\\`-f content=@file\\\` silently truncates large files (856KB base64 → 13 byte blob). For files over ~100KB, use \\\`--input\\\` with a JSON payload file containing the base64 content. Always verify blob size after creation.
-
-**2026-02-19** | Firebase cost crisis | infrastructure-gotcha
-Background bash scripts created to poll \\\`document(receive)\\\` outlived their Claude Code sessions and became zombies — 3 scripts polling every 10s, downloading ~1MB/call, costing $17/day. NEVER create persistent background processes for polling. All MCP calls must happen inline within the conversation. Also: every Firebase query must use server-side filtering (orderByChild/equalTo/limitToLast) — unfiltered \\\`.once("value")\\\` on a collection path is the #1 cost risk.`;
+\\\`gh api\\\` with \\\`-f content=@file\\\` silently truncates files >100KB. For large files, use \\\`--input\\\` with a JSON payload file. Always verify blob size after creation.`;
 
 
 // ═══════════════════════════════════════════════════════════════════════

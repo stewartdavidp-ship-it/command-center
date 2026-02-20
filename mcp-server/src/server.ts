@@ -114,6 +114,7 @@ function registerPrompts(server: McpServer): void {
         .sort((a: any, b: any) => (a.sequence || 0) - (b.sequence || 0));
 
       const activeIdea = appIdeas.filter((i) => i.status === "active").pop();
+      const allOpens = active.filter((c) => c.type === "OPEN");
 
       const stateContext = {
         app: appName,
@@ -125,8 +126,16 @@ function registerPrompts(server: McpServer): void {
           decisions: active.filter((c) => c.type === "DECISION").length,
           opens: active.filter((c) => c.type === "OPEN").length,
         },
-        opens: active.filter((c) => c.type === "OPEN").map((c) => c.content),
+        opens: allOpens.slice(0, 10).map((c) => {
+          const text = c.content || "";
+          return text.length > 120 ? text.substring(0, 120) + "..." : text;
+        }),
+        opensTotal: allOpens.length,
       };
+
+      const opensNote = allOpens.length > 10
+        ? `\n*(Showing 10 of ${allOpens.length} OPENs. Use get_active_concepts for full list.)*`
+        : "";
 
       const prompt = `You are starting a live ideation session for **${appName}**.
 
@@ -154,7 +163,7 @@ When you identify a concept that doesn't fit the current idea's scope:
 ### 4. End the session
 Call \`session\` with action="complete", the sessionId, and a summary of what was accomplished.
 ${focusArea ? `\n## Focus Area\n${focusArea}` : ""}
-${stateContext.opens.length > 0 ? `\n## Unresolved OPENs to consider\n${stateContext.opens.map((o) => `- ${o}`).join("\n")}` : ""}
+${stateContext.opens.length > 0 ? `\n## Unresolved OPENs to consider\n${stateContext.opens.map((o: string) => `- ${o}`).join("\n")}${opensNote}` : ""}
 
 Begin by calling \`session\` with action="start", then review the current state and identify what to explore.`;
 

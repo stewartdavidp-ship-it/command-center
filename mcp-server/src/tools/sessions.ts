@@ -261,6 +261,17 @@ export function registerSessionTools(server: McpServer): void {
         const session = snapshot.val();
 
         if (!session) return { content: [{ type: "text" as const, text: `Session not found: ${sessionId}` }], isError: true };
+
+        // Cap events to last 15 to save context window
+        if (session.events && Array.isArray(session.events)) {
+          const totalEvents = session.events.length;
+          session.eventCount = totalEvents;
+          if (totalEvents > 15) {
+            session.events = session.events.slice(-15);
+            session._eventsTruncated = `Showing last 15 of ${totalEvents} events`;
+          }
+        }
+
         return { content: [{ type: "text" as const, text: JSON.stringify(session, null, 2) }] };
       }
 

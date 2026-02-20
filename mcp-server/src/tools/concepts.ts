@@ -530,17 +530,20 @@ export function registerConceptTools(server: McpServer): void {
   // get_active_concepts — kept standalone (computed aggregate, different return shape)
   server.tool(
     "get_active_concepts",
-    "Get all active ODRC concepts across all ideas for an app. This is the 'current truth' view — all active RULEs, CONSTRAINTs, DECISIONs, and unresolved OPENs.",
+    `Get all active ODRC concepts across all ideas for an app. This is the 'current truth' view — all active RULEs, CONSTRAINTs, DECISIONs, and unresolved OPENs.
+By default returns summary fields (content truncated to 150 chars, timestamps stripped). Set summary=false for full objects.`,
     {
       appId: z.string().describe("The app ID to get active concepts for"),
+      summary: z.boolean().optional().describe("If true (default), return lean summary with truncated content. Set false for full objects."),
     },
-    async ({ appId }) => {
+    async ({ appId, summary }) => {
+      const useSummary = summary !== false; // default true
       const uid = getCurrentUid();
       const appIdeasSnap = await getAppIdeasRef(uid, appId).once("value");
       const ideaIds: string[] = appIdeasSnap.val() || [];
 
       if (ideaIds.length === 0) {
-        return { content: [{ type: "text", text: JSON.stringify({ rules: [], constraints: [], decisions: [], opens: [] }, null, 2) }] };
+        return { content: [{ type: "text", text: JSON.stringify({ rules: [], constraints: [], decisions: [], opens: [], totalCount: 0 }, null, 2) }] };
       }
 
       const allSnap = await getConceptsRef(uid).once("value");
@@ -549,11 +552,23 @@ export function registerConceptTools(server: McpServer): void {
 
       const active = allConcepts.filter((c) => ideaIds.includes(c.ideaOrigin) && c.status === "active");
 
+      const project = useSummary
+        ? (c: any) => ({
+            id: c.id,
+            type: c.type,
+            content: c.content?.length > 150 ? c.content.substring(0, 150) + "..." : c.content,
+            status: c.status,
+            scopeTags: c.scopeTags || [],
+            ideaOrigin: c.ideaOrigin,
+          })
+        : (c: any) => c;
+
       const grouped = {
-        rules: active.filter((c) => c.type === "RULE"),
-        constraints: active.filter((c) => c.type === "CONSTRAINT"),
-        decisions: active.filter((c) => c.type === "DECISION"),
-        opens: active.filter((c) => c.type === "OPEN"),
+        rules: active.filter((c) => c.type === "RULE").map(project),
+        constraints: active.filter((c) => c.type === "CONSTRAINT").map(project),
+        decisions: active.filter((c) => c.type === "DECISION").map(project),
+        opens: active.filter((c) => c.type === "OPEN").map(project),
+        totalCount: active.length,
       };
 
       return { content: [{ type: "text", text: JSON.stringify(grouped, null, 2) }] };
