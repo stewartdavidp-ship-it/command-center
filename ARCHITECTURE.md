@@ -1,8 +1,30 @@
 # Command Center — Architecture
 
-> **Last updated:** 2026-02-20 (v8.71.6)
+> **Last updated:** 2026-02-22 (v8.71.6)
 >
 > **Companion document:** For MCP server architecture, see `mcp-server/architecture/SYSTEM-CONTEXT.md` (Rev 27).
+
+---
+
+## Index
+
+| Section | Description | ~Size |
+|---------|-------------|-------|
+| Quick Reference | File paths, deploy commands, safety rules | 2.2K |
+| Overview | What CC is, tech stack summary | 0.5K |
+| Ecosystem Map | Cloud Run, Firebase, GitHub, auth model | 2.7K |
+| Component Hierarchy | React component tree, navigation tabs | 1.1K |
+| Firebase Realtime Listeners | Active/suspended listeners, limits, costs | 1.8K |
+| Data Flow | Browser↔Firebase↔MCP↔Functions data paths | 2.8K |
+| Cost Architecture | Firebase billing, guardrails, incident history | 1.5K |
+| CC Cloud Functions | domainProxy, documentCleanup, Game Shelf note | 0.7K |
+| Repositories | GitHub repos (public/private) | 0.4K |
+| Styling | Tailwind, dark theme, no build system | 0.2K |
+| Known Issues | Open bugs and accepted limitations | 0.5K |
+| Architecture Backlog | Open/resolved tech debt and security items | 3.0K |
+| Disaster Recovery | Service recovery, env vars, backup strategy | 1.7K |
+
+**Usage:** Load this index only (~600 chars) via `repo_file(section="## Index")`, then load specific sections as needed via `repo_file(section="## Section Name")`.
 
 ---
 
@@ -20,7 +42,7 @@
 | **Firebase project** | `word-boxing` |
 | **Firebase UID** | `oUt4ba0dYVRBfPREqoJ1yIsJKjr1` |
 | **MCP server URL** | `https://cc-mcp-server-300155036194.us-central1.run.app` |
-| **Latest MCP revision** | `cc-mcp-server-00050-w4b` |
+| **Latest MCP revision** | `cc-mcp-server-00055-tw2` |
 
 ### Deploy Commands
 
