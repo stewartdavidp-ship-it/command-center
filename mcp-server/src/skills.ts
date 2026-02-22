@@ -570,10 +570,14 @@ There is no mode stacking. The session is always in exactly one mode.
 
 ### Session Lifecycle
 
-1. **Start** — Call \`session\` with action="start", the idea ID, app ID, title, mode, sessionGoal, presentationMode, and optionally targetOpens and configSnapshot
+1. **Auto-Create** — The MCP server auto-creates sessions on any tool call. Chat receives \`_session\` metadata in tool responses:
+   - \`autoCreated: true\` → Enrich with title/mode/goal/ideaId via \`session/update\`
+   - \`mismatch: true\` → Prompt user to continue existing session or start fresh
+   - \`id\` only → Use this sessionId for subsequent calls
+   - \`staleClosed\` → A stale session (>24h) was auto-closed and a new one created
 2. **Work** — Create concepts, transition/supersede/resolve existing ones, all with \`sessionId\` for tracking
 3. **Track** — Events are logged automatically; use \`session\` with action="add_event" for notable moments
-4. **Complete** — Call \`session\` with action="complete" with summary, closingSummary, nextSessionRecommendation, and conceptsResolved
+4. **Complete** — Call \`session\` with action="complete" with summary, closingSummary, nextSessionRecommendation, and conceptsResolved. Server auto-flushes pendingFlush documents.
 
 ### What Gets Tracked Automatically
 
@@ -601,6 +605,17 @@ The session state machine also tracks:
 Path: \`command-center/{uid}/sessions/{sessionId}\`
 
 The session record is the source of truth for what happened. CC's web UI reads this record to display session history and status. It also serves as the complete recovery document for compaction survival.
+
+### pendingFlush — Document Delivery Tracking
+
+Firebase map at \`sessions/{sessionId}/pendingFlush/{docId}: true\`
+
+When a document is pushed with a \`sessionId\`, the server atomically writes both the document AND a pendingFlush entry on the session record. This creates an audit trail of documents created during the session.
+
+- **Populated:** Atomically by the server when \`document(action="push")\` includes a \`sessionId\`
+- **Emptied:** Automatically during \`session/complete\` — the server iterates the map and attempts \`deliver-to-github\` for each document
+- **Recovery:** During compaction recovery, check pendingFlush to see if documents need attention
+- **_flushResults:** The \`session/complete\` response includes delivery outcomes for each flushed document
 
 ## Presentation Modes
 
@@ -637,10 +652,12 @@ The preference persists across sessions. Override per-session by passing \`prese
 When a session begins:
 
 1. **Check preferences** — \`session\` action="preferences" to get presentationMode
-2. **Call \`session\` with action="start"** — Creates the Firebase record with state machine fields
-3. **Pull context** — Use \`get_active_concepts\` and \`idea\` with action="get_active" to understand current state
-4. **Review unresolved OPENs** — These are the backlog driving the session
-5. **Confirm focus with the user** — What should this session accomplish?
+2. **Make any tool call** — The server auto-creates a session. Watch for \`_session\` in the response.
+3. **Enrich if auto-created** — If \`_session.autoCreated: true\`, call \`session/update\` with title, mode, sessionGoal, activeIdeaId, activeAppId, presentationMode
+4. **Handle mismatch** — If \`_session.mismatch: true\`, present the user with the existing session details and options
+5. **Pull context** — Use \`get_active_concepts\` and \`idea\` with action="get_active" to understand current state
+6. **Review unresolved OPENs** — These are the backlog driving the session
+7. **Confirm focus with the user** — What should this session accomplish?
 
 ## Session Pacing
 
@@ -703,13 +720,26 @@ Users can issue these commands during a session:
 
 When the user wants to wrap up or the session has run its course:
 
+### Question Capture
+- **Formal sessions (ideation/build-review/debrief):** Topic summaries should have been captured at concept block boundaries during the session via \`session(action="add_event", eventType="note", detail="[keyword-dense topic summary]")\`. No additional capture needed.
+- **Base-mode sessions:** Capture a single keyword-dense topic summary at close via add_event before calling session/complete.
+
+### Document Flush
+\`session/complete\` auto-flushes all documents in the session's \`pendingFlush\` map to GitHub. You do NOT need to manually iterate and deliver them.
+
+Optionally review what's pending before closing:
+1. Read session record to see pendingFlush map
+2. Inform user: "[N] documents will be delivered to GitHub on close"
+
+### Close
 1. **Summarize** — Review what was accomplished, key decisions, new OPENs
 2. **Call \`session\` with action="complete"** — Include closing data:
    - \`summary\` — Substantive summary of session outcomes
    - \`closingSummary\` — 2-3 sentence distillation for future session inheritance
    - \`nextSessionRecommendation\` — What the next session should focus on
    - \`conceptsResolved\` — Count of OPENs resolved this session
-3. **No packaging needed** — Everything is already in Firebase
+3. **Check \`_flushResults\`** — Review delivery outcomes in the response. Handle any failures (offer local download, review attention queue).
+4. **No packaging needed** — Everything is already in Firebase
 
 ## Session Principles
 
@@ -738,32 +768,48 @@ You need:
 
 **On compaction recovery:** Re-read \`cc-skill-router\` alongside \`cc-session-resume\`. The router may not survive compaction since it's loaded once at startup.
 
-## Step 1: Initialize the Session (State Machine)
+## Step 1: Session Initialization (Server-Managed)
 
-\`\`\`
-Call: session
-  action: "start"
-  ideaId: [the idea to work on]
-  appId: [the app, if idea is linked]
-  title: [brief description of session focus]
-  mode: "ideation"  (or "base", "build-review", "debrief")
-  sessionGoal: [declared purpose/focus for this session]
-  presentationMode: [from user preferences, or "interactive"]
-  targetOpens: [array of OPEN concept IDs to address, if known]
-  configSnapshot: [JSON string of session config at start]
+The MCP server auto-creates sessions on any tool call. You do NOT call \`session/start\` explicitly. Instead, watch for \`_session\` metadata in every tool response:
 
-Save the returned sessionId — you'll use it for every concept tool call.
-\`\`\`
+### Handling _session Metadata
 
-### State Machine Initialization
+Every tool response may include a \`_session\` block. Handle these cases:
 
-Every session starts in a **mode** that shapes its behavior:
+1. **\`_session.autoCreated: true\`** — The server just created a blank session. Enrich it immediately:
+   \`\`\`
+   Call: session
+     action: "update"
+     sessionId: [_session.id]
+     title: [brief description of session focus]
+     mode: "ideation"  (or "base", "build-review", "debrief")
+     sessionGoal: [declared purpose/focus for this session]
+     activeIdeaId: [the idea to work on]
+     activeAppId: [the app, if idea is linked]
+     presentationMode: [from user preferences, or "interactive"]
+     targetOpens: [array of OPEN concept IDs to address, if known]
+   \`\`\`
+
+2. **\`_session.mismatch: true\`** — An active session exists but its context (appId/ideaId) doesn't match the current tool call. Present the user with:
+   - The existing session details (\`_session.existingSession\`: id, title, appId, ideaId, startedAt)
+   - Options: (a) Continue with the existing session, (b) Complete the existing session and start fresh
+   - If user chooses (b): call \`session/complete\` on the existing session, then the next tool call will auto-create a new one
+
+3. **\`_session.id\` only (no flags)** — An active session matches context. Use this sessionId for all subsequent calls.
+
+4. **\`_session.staleClosed\`** — A stale session (>24h) was auto-closed and a new one was auto-created. Note this to the user: "Your previous session was auto-closed due to inactivity. Starting fresh."
+
+Save the sessionId from the first tool response — you'll use it for every concept tool call.
+
+### Session Modes
+
+Every session operates in a **mode** that shapes its behavior:
 - **base** — General purpose, no special framing. Default if unspecified.
 - **ideation** — Open exploration focused on surfacing OPENs and making Decisions
 - **build-review** — Reviewing build output, addressing concerns, post-build hygiene
 - **debrief** — Retrospective on what was built, lessons learned, next phase planning
 
-Set the mode at start. It can be changed mid-session via \`session\` action="update".
+Set the mode when enriching the auto-created session. It can be changed mid-session via \`session\` action="update".
 
 ### Presentation Mode Awareness
 
@@ -849,6 +895,34 @@ Every ~5-6 concepts created, do a brief check-in:
 
 When the user wants to stop or the session's focus is exhausted:
 
+### Step 6.1: Question Capture
+
+Before closing, ensure topic summaries have been captured:
+- **Formal sessions (ideation/build-review/debrief):** Questions and topic summaries should have been captured at concept block boundaries during the session via \`session(action="add_event", eventType="note", detail="[keyword-dense topic summary]")\`. No additional capture needed at close.
+- **Base-mode sessions:** Capture a single keyword-dense topic summary at close:
+  \`\`\`
+  Call: session
+    action: "add_event"
+    sessionId: [your session ID]
+    eventType: "note"
+    detail: "[keyword-dense summary of what this session covered]"
+  \`\`\`
+
+### Step 6.2: Review Pending Documents (Optional)
+
+Before closing, optionally review what documents are pending delivery:
+\`\`\`
+Call: session
+  action: "get"
+  sessionId: [your session ID]
+\`\`\`
+
+If \`pendingFlush\` is non-empty, inform the user: "This session has [N] documents pending GitHub delivery. They will be automatically delivered when the session closes."
+
+### Step 6.3: Close the Session
+
+\`session/complete\` automatically flushes all pendingFlush documents to GitHub. You do NOT need to manually iterate and deliver them.
+
 1. **Summarize** what was accomplished
 2. **Write closing data** to the session:
    \`\`\`
@@ -862,18 +936,25 @@ When the user wants to stop or the session's focus is exhausted:
      nextSessionRecommendation: "Next session should focus on [specific area/OPENs]"
      conceptsResolved: [count of OPENs resolved this session]
    \`\`\`
+3. **Check \`_flushResults\` in the response** — the server returns delivery outcomes for each pendingFlush document:
+   - Successfully delivered docs: note in closing summary
+   - Failed deliveries: offer local file download as fallback, and review attention queue entries the server created
 
 The \`closingSummary\`, \`nextSessionRecommendation\`, and \`conceptsResolved\` fields are used by future sessions for inheritance and by CC for session history display.
+
+**Important:** Any document pushes during closing should pass the active sessionId for atomic pendingFlush tracking.
 
 ## What NOT to Do
 
 - **Don't produce ZIP packages or session.json files** — everything is in Firebase
 - **Don't wait until session end to write concepts** — write them immediately
 - **Don't create concepts without sessionId** — the session record won't track them
+- **Don't call session/start explicitly** — the server auto-creates sessions. Enrich with session/update.
 - **Use the consolidated tool names** — \`session\` (not start_session), \`concept\` (not create_concept), \`idea\` (not create_idea)
 - **Don't assign tangent concepts to the wrong idea** — use idea affinity
 - **Don't produce restart docs or link briefs** — the session record IS the manifest
 - **Don't ignore presentation mode** — check preferences, respect the user's choice
+- **Don't manually flush pendingFlush before session/complete** — the server handles this automatically
 - **Consider cc-retro-journal** — when completing or reviewing jobs, consider whether the session surfaced a genuine discovery (delegation insight, process improvement, assumption that collapsed). If yes, create a skill-update job to append an entry.`;
 
 
@@ -1015,7 +1096,7 @@ You need:
 
 **On startup:** Read \`cc-skill-router\` to load the command routing table. This tells you which skills are available and when to load them. The router includes an embedded Quick Reference with safety rules, auth model, and available tools.
 
-**For infrastructure/maintenance work** (not standard builds): Call \`repo_file\` with repo="stewartdavidp-ship-it/command-center" and path="ARCHITECTURE.md" to load full system context (file paths, deploy commands, ecosystem map). Standard builds get this context from CLAUDE.md instead.
+**For infrastructure/maintenance work** (not standard builds): Call \`repo_file\` with repo="stewartdavidp-ship-it/command-center", path="ARCHITECTURE.md", and section="## Index" to see available sections. Then load specific sections as needed. Standard builds get this context from CLAUDE.md instead.
 
 **On compaction recovery:** Re-read \`cc-skill-router\` alongside \`cc-build-resume\`. The router may not survive compaction since it's loaded once at startup.
 
@@ -1366,6 +1447,17 @@ The session record contains everything needed for recovery:
 - **configSnapshot** — Original session configuration
 - **lastActivityAt** — When the session was last active
 
+### Step 2.5: Check pendingFlush State
+
+Check if the session has documents pending GitHub delivery:
+
+If \`session.pendingFlush\` is a non-empty map:
+- Note the count and document IDs
+- Add to the recovery summary: "⚠️ This session has N documents pending GitHub delivery"
+- List the pending document IDs for user visibility
+
+These documents were created during the session but haven't been flushed to GitHub yet. They need to be handled during recovery.
+
 ### Step 3: Recover Concept Content
 
 The session record has concept IDs but not full content. Pull the concepts:
@@ -1399,31 +1491,48 @@ This gives you the full active concept landscape — rules, decisions, constrain
 - **Idea:** [idea name from idea record]
 - **Concepts created this session:** [count] — [breakdown by type]
 - **Context consumed:** ~[contextEstimate] chars
+- **Pending documents:** [N] documents awaiting GitHub delivery (if any)
 - **Key items created:**
   [list 3-5 most important concepts with content]
 - **Current OPENs remaining:** [list unresolved OPENs]
 
 Would you like to:
-1. **Resume** — Continue where we left off
-2. **Abandon** — Mark this session as abandoned, start fresh
-3. **Start Fresh** — Complete this session with current state, begin a new one"
+1. **Resume** — Continue where we left off (pending documents will flush on session close)
+2. **Flush Now** — Deliver pending documents to GitHub immediately, then resume
+3. **Abandon** — Mark this session as abandoned, start fresh
+4. **Start Fresh** — Complete this session with current state, begin a new one"
 
 **CLI recovery:**
 
 \`\`\`
 RECOVERED: [title] | mode=[mode] | concepts=[count] | ctx=[contextEstimate]
+⚠️ PENDING FLUSH: [N] documents awaiting delivery
 Goal: [sessionGoal]
 Created: [N] OPENs, [N] DECISIONs, [N] RULEs, [N] CONSTRAINTs
 Remaining OPENs: [count]
 
-[R]esume / [A]bandon / [S]tart Fresh?
+[R]esume / [F]lush Now / [A]bandon / [S]tart Fresh?
 \`\`\`
 
 ### Step 6: Handle User Choice
 
-**Resume:** Continue the session using the SAME sessionId. All subsequent calls use the recovered sessionId.
+**Resume:** Continue the session using the SAME sessionId. All subsequent calls use the recovered sessionId. Pending documents will auto-flush when the session completes.
 
-**Abandon:** Mark the session as abandoned:
+**Flush Now:** Immediately attempt \`document(action="deliver-to-github")\` for each document in pendingFlush:
+\`\`\`
+For each docId in session.pendingFlush:
+  Call: document
+    action: "deliver-to-github"
+    docId: [docId]
+\`\`\`
+Report results (success/failure for each). Then continue the session using the recovered sessionId.
+
+**Abandon:** If pendingFlush is non-empty, present sub-options before abandoning:
+- "Flush documents to GitHub first, then abandon" — deliver all, then abandon
+- "Download documents locally, then abandon" — use \`document(action="get")\` to retrieve content for each, present for local save
+- "Discard documents and abandon" — requires explicit user confirmation: "Are you sure? [N] documents will be lost."
+
+Then mark the session as abandoned:
 \`\`\`
 Call: session
   action: "complete"
@@ -1431,9 +1540,9 @@ Call: session
   summary: "Session abandoned after compaction recovery"
   closingSummary: "Abandoned at user request. [N] concepts were created before compaction."
 \`\`\`
-Then start a fresh session on the same idea.
+The next tool call will auto-create a new session on the same idea.
 
-**Start Fresh:** Complete the current session gracefully:
+**Start Fresh:** Complete the current session gracefully (session/complete auto-flushes pendingFlush):
 \`\`\`
 Call: session
   action: "complete"
@@ -1443,16 +1552,17 @@ Call: session
   nextSessionRecommendation: "[what to focus on next based on remaining OPENs]"
   conceptsResolved: [count]
 \`\`\`
-Then start a new session with inheritance from the completed one.
+Check \`_flushResults\` for delivery outcomes. Then the next tool call will auto-create a new session with inheritance from the completed one.
 
 ## Critical Rules
 
-- **NEVER call session/start without user direction** — on recovery, always present options first
+- **NEVER call session/start** — the server auto-creates sessions. On recovery, always present options first.
 - **Always show the recovery summary** — even in CLI mode, the user needs to see what was recovered
 - **Reuse the recovered sessionId** if resuming — don't create duplicates
 - **Don't re-announce concepts that are already in the session record** — check conceptsCreated before creating duplicates
 - **The session events[] are your conversation history** — use them to understand the flow of the discussion
 - **Respect the session's presentationMode** after recovery — match the mode it was in
+- **Never silently drop pending documents** — always present pendingFlush status during recovery and give the user options
 
 ## What if No Active Session Is Found?
 
@@ -1630,8 +1740,28 @@ This:
 
 Tell the user: "The spec has been generated and queued. When Claude Code next checks for pending documents, it will deliver the CLAUDE.md to the project root and begin the build protocol."
 
+If a session is active, the server handles pendingFlush tracking atomically — Chat does NOT need to manually manage pendingFlush for generate_claude_md pushes.
+
+## Document Tracking
+
+All documents created during a session should pass the active sessionId to \`document(action="push", sessionId=...)\` for automatic pendingFlush tracking. This is the key behavioral change: Chat doesn't manage pendingFlush directly. It passes sessionId on every document push; the server handles atomic tracking.
+
+Example:
+\`\`\`
+Call: document
+  action: "push"
+  type: "spec"
+  appId: "my-app"
+  content: "[spec content]"
+  targetPath: "specs/feature.md"
+  sessionId: "[active session ID]"
+\`\`\`
+
+The server atomically writes both the document AND a pendingFlush entry on the session record, creating an audit trail.
+
 ## After Push
 
+- The pushed document is now tracked in the session's pendingFlush. It will be delivered to GitHub when the session closes (\`session/complete\` auto-flushes), or can be delivered immediately via \`document(action="deliver-to-github", docId=...)\`.
 - The session should be completed with a summary noting "Spec generated and pushed for build"
 - Monitor the document queue status if desired: \`document\` action="list" with status="pending"
 - The job state machine takes over from here — Claude Code will start a job, review the spec, and build`;
@@ -1744,9 +1874,9 @@ This skill describes how the full lifecycle works across Claude Chat, Claude Cod
 
 ## The Players
 
-- **Claude Chat** — Runs ideation sessions. Creates ideas, concepts, sessions. Generates and pushes CLAUDE.md specs. Monitors job status.
-- **Claude Code** — Executes builds. Checks document queue, delivers files locally, starts jobs, reviews specs, builds code, completes jobs.
-- **CC MCP Server** — The shared backend. Both Chat and Code connect to the same server. Firebase is the persistence layer.
+- **Claude Chat** — Runs ideation sessions. Creates ideas, concepts, sessions. Generates and pushes CLAUDE.md specs. Monitors job status. Enriches server-created sessions with context.
+- **Claude Code** — Executes builds. Checks document queue, delivers files locally, claims jobs, reviews specs, builds code, completes jobs.
+- **CC MCP Server** — The shared backend. Both Chat and Code connect to the same server. Firebase is the persistence layer. Auto-creates and manages session lifecycle (creation, stale detection, context matching). Tracks pendingFlush documents per session. Manages user profile and attention queue.
 - **CC Web UI** — The user's dashboard. Shows apps, ideas, concepts, sessions, jobs. Read-only for now.
 
 ## The Lifecycle
@@ -1763,12 +1893,13 @@ IDEATE ──→ SPECIFY ──→ DELIVER ──→ BUILD ──→ COMPLETE �
 
 1. User opens Claude.ai Chat with CC MCP connected
 2. **Check preferences**: \`session\` action="preferences" — get presentationMode
-3. **Start session with state machine**: session/start with mode, sessionGoal, presentationMode, targetOpens, configSnapshot
+3. **React to server-created session**: Check \`_session\` metadata in first tool response. If \`autoCreated: true\`, enrich with \`session/update\` (title, mode, sessionGoal, activeIdeaId, activeAppId, presentationMode). If \`mismatch: true\`, present user with existing session details and options.
 4. ODRC loop: discuss, identify concepts, write to Firebase immediately
 5. **Monitor context**: contextEstimate auto-increments — use for pacing decisions
 6. **Mode transitions**: switch between ideation/build-review/debrief as needed
-7. Session completes with closing data: closingSummary, nextSessionRecommendation, conceptsResolved
-8. Repeat for multiple sessions until the idea converges
+7. **Document pushes**: when pushing documents, pass sessionId for atomic pendingFlush tracking
+8. Session completes with closing data: closingSummary, nextSessionRecommendation, conceptsResolved. Server auto-flushes pendingFlush. Check \`_flushResults\` for delivery outcomes.
+9. Repeat for multiple sessions until the idea converges
 
 ### Phase 2: SPECIFY (Claude Chat)
 
@@ -1855,11 +1986,21 @@ Pass \`presentationMode\` to session/start to override the preference for a spec
 
 ## State Machine Summary
 
+### Session Lifecycle (Server-Managed)
+\`server auto-creates\` → \`Chat enriches via session/update\` → \`active\` → \`completed\`
+
+Server handles: auto-creation on any tool call, stale detection (>24h auto-close), context matching (appId/ideaId mismatch detection).
+
 ### Session Modes
 \`base\` ↔ \`ideation\` ↔ \`build-review\` ↔ \`debrief\` (flat, any-to-any transitions)
 
 ### Session Status
 \`active\` → \`completed\` | \`abandoned\`
+
+### pendingFlush Lifecycle
+\`document pushed with sessionId\` → \`pendingFlush entry created atomically\` → \`session/complete\` → \`server auto-delivers to GitHub\` → \`pendingFlush cleared\`
+
+Failed deliveries → attention queue entry created → user notified via \`_flushResults\`
 
 ### Document Status
 \`pending\` → \`delivered\` (success) or \`failed\` (error)
@@ -1880,10 +2021,10 @@ Pass \`presentationMode\` to session/start to override the preference for a spec
 All state lives in Firebase. If either Claude Chat or Claude Code loses context:
 
 - **Claude Code mid-build:** Use cc-build-resume — find job via job/list, reconstruct from events
-- **Claude Chat mid-session:** Use cc-session-resume — find session via session/list, reconstruct from session record (mode, goal, concepts, context estimate)
-- **Claude Chat new conversation:** Load prior sessions for the idea, read closingSummary and nextSessionRecommendation for session inheritance
+- **Claude Chat mid-session:** Use cc-session-resume — find session via session/list, reconstruct from session record (mode, goal, concepts, context estimate). cc-session-resume now checks pendingFlush state and presents document-aware recovery options (Resume, Flush Now, Abandon with document handling, Start Fresh).
+- **Claude Chat new conversation:** The server auto-creates a new session on any tool call. Load prior sessions for the idea, read closingSummary and nextSessionRecommendation for session inheritance.
 
-The session record is the complete recovery document: it has configSnapshot, mode, goal, context estimate, concept lists, and event history.
+The session record is the complete recovery document: it has configSnapshot, mode, goal, context estimate, concept lists, pendingFlush map, and event history.
 
 The Firebase records ARE the state. The conversation is ephemeral — Firebase is the truth.
 
@@ -1891,7 +2032,9 @@ The Firebase records ARE the state. The conversation is ephemeral — Firebase i
 
 10 tools total: app, idea, session, concept, job, document, skill, list_concepts, get_active_concepts, generate_claude_md
 
-24 skills total: cc-odrc-framework, cc-session-structure, cc-session-protocol, cc-mode-exploration, cc-lens-technical, cc-build-protocol, cc-build-resume, cc-session-resume, cc-session-continuity, cc-spec-generation, cc-build-hygiene, cc-mcp-workflow, cc-lens-stress-test, cc-lens-voice-of-customer, cc-lens-competitive, cc-lens-economics, cc-protocol-messaging, cc-lens-integration, cc-lens-ux-deep-dive, cc-lens-content, cc-lens-growth, cc-lens-accessibility, cc-lens-operations, cc-lens-security`;
+The \`session\` tool includes profile and attentionQueue capabilities (via action="profile").
+
+27 skills total: cc-odrc-framework, cc-session-structure, cc-session-protocol, cc-mode-exploration, cc-lens-technical, cc-build-protocol, cc-build-resume, cc-session-resume, cc-session-continuity, cc-spec-generation, cc-build-hygiene, cc-mcp-workflow, cc-lens-stress-test, cc-lens-voice-of-customer, cc-lens-competitive, cc-lens-economics, cc-protocol-messaging, cc-lens-integration, cc-lens-ux-deep-dive, cc-lens-content, cc-lens-growth, cc-lens-accessibility, cc-lens-operations, cc-lens-security, cc-skill-router, cc-job-creation-protocol, cc-retro-journal`;
 
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -3065,13 +3208,15 @@ Read this once at startup. Reference from memory. Re-read on compaction recovery
 
 ## Quick Reference (Embedded)
 
-These are the key facts for immediate orientation. This is enough for ideation sessions. For infrastructure/maintenance work that needs file paths, deploy commands, or ecosystem details, fetch the full version on demand:
+These are the key facts for immediate orientation. This is enough for ideation sessions. For infrastructure/maintenance work, load only the section you need:
 
 \\\`\\\`\\\`
 Call: repo_file
   repo: "stewartdavidp-ship-it/command-center"
   path: "ARCHITECTURE.md"
+  section: "## Index"
 \\\`\\\`\\\`
+Then load specific sections via \`section="## Section Name"\`.
 
 | Item | Value |
 |------|-------|
@@ -3124,6 +3269,15 @@ Call: repo_file
 | "what state am I in" | (direct session read — no skill needed) |
 | "check job status" | (direct MCP call — no skill needed) |
 | Compaction detected | cc-session-resume + cc-skill-router |
+| _session.autoCreated in tool response | cc-session-protocol (session enrichment section) |
+| _session.mismatch in tool response | cc-session-protocol (mismatch handling section) |
+| Session close with pendingFlush | cc-session-protocol (document flush section) |
+| needsAttention > 0 from profile | (direct profile read — no skill needed) |
+| Stale/orphan session at startup | cc-session-resume |
+
+### Cold Start Sequence
+
+On cold start: (1) Load router, (2) Check \`session(action="profile")\` for needsAttention, (3) Check \`job(list, status="review")\` and \`job(list, status="draft")\`, (4) First tool response will include \`_session\` metadata — react per cc-session-protocol. Server handles session detection automatically — no explicit \`session(list, status="active")\` check needed.
 
 ## Code Routing
 
