@@ -6959,7 +6959,8 @@
                                 {[
                                     { id: 'projects', icon: '📁', label: 'Projects', view: 'projects' },
                                     { id: 'jobs', icon: '🔨', label: 'Jobs', view: 'jobs' },
-                                    { id: 'sessions', icon: '💬', label: 'Sessions', view: 'sessions' }
+                                    { id: 'sessions', icon: '💬', label: 'Sessions', view: 'sessions' },
+                                    { id: 'pod-fleet', icon: '🛰️', label: 'Pod Fleet', view: 'pod-fleet' }
                                 ].map(tab => (
                                     <button
                                         key={tab.id}
@@ -7190,6 +7191,10 @@
                     {view === 'sessions' && (
                         <SessionsView globalSessions={globalSessions} apps={apps} globalIdeas={globalIdeas}
                             firebaseUid={firebaseUid} setView={setView} />
+                    )}
+                    {view === 'pod-fleet' && (
+                        <PodFleetView firebaseUid={firebaseUid} firebaseUser={firebaseUser}
+                            showAlert={showAlert} showConfirm={showConfirm} setView={setView} />
                     )}
 
                     {/* [v8.63.2] Environments moved to Infrastructure satellite (N5) */}
@@ -17047,9 +17052,418 @@ The developer uses Claude for iterative development — each session should:
     }
 
     // =========================================================================
+    // POD FLEET VIEW (CC Idea -Orzrdt17-fnqCGX2Kby — Pod creation production workflow)
+    // =========================================================================
+    // Scaffold-only. Reads/writes go through callable CFs that don't yet exist:
+    //   getPodFleet, proposePod, approvePod, decommissionPod
+    // Authoritative pod state lives in mast-platform-registry Firestore (NOT RTDB).
+    // CC is the data layer; this view captures + presents, never decides.
+
+    // Hardcoded approver UID per D-pod-approver-model-v1 (Dave-only, v1).
+    // OPEN: lift to a Firebase config / claim once approver model expands.
+    const POD_APPROVER_UID = 'TmiUwd3ucVSRFzxg4OTxGNJdY9G3'; // Dave's CC uid (placeholder — confirm at wire-up)
+    const POD_ID_REGEX = /^(dev|prod)-(us-east|us-west)-\d+$/;
+    const POD_REGIONS = ['us-east-1', 'us-west-1']; // C-us-only-v1
+    const POD_CAPACITY_TIERS = ['standard']; // v1; future: high-traffic, high-availability
+
+    // ---- Mock CF stubs ------------------------------------------------------
+    // These resolve like httpsCallable wrappers. Replace with real fetch() calls
+    // to https://<region>-<project>.cloudfunctions.net/<fn> when CFs ship.
+    function podFleetApi() {
+        const wait = (ms) => new Promise(r => setTimeout(r, ms));
+        return {
+            async getPodFleet() {
+                await wait(300);
+                return [
+                    { id: 'prod-us-east-1', region: 'us-east-1', state: 'active',
+                      capacityPct: 0.42, tenantCount: 5, lastUpdated: '2026-05-08T13:00:00Z',
+                      lifecycle: [
+                        { ts: '2026-04-01T10:00:00Z', state: 'proposed',  by: 'system' },
+                        { ts: '2026-04-01T11:00:00Z', state: 'approved', by: 'dave' },
+                        { ts: '2026-04-01T11:30:00Z', state: 'active',   by: 'executor' }
+                      ] },
+                    { id: 'dev-us-east-1', region: 'us-east-1', state: 'active',
+                      capacityPct: 0.08, tenantCount: 1, lastUpdated: '2026-05-08T13:00:00Z',
+                      lifecycle: [{ ts: '2026-05-07T09:00:00Z', state: 'active', by: 'rehearsal' }] },
+                    { id: 'prod-us-west-1', region: 'us-west-1', state: 'proposed',
+                      capacityPct: 0, tenantCount: 0, lastUpdated: '2026-05-08T12:30:00Z',
+                      lifecycle: [{ ts: '2026-05-08T12:30:00Z', state: 'proposed', by: 'system' }] }
+                ];
+            },
+            async proposePod({ podId, region, capacityTier, reason }) {
+                await wait(400);
+                return {
+                    plan: {
+                        podId, region, capacityTier, reason,
+                        firestoreLocation: 'nam5',
+                        artifactRegistry: { repos: ['containers', 'functions'] },
+                        iamGrants: [
+                            'cloudbuild.builds.builder on Compute SA',
+                            'artifactregistry.reader on Cloud Run Service Agent',
+                            'datastore.user on mast-deploy-cli@'
+                        ],
+                        secrets: { count: 18, gaps: 0 },
+                        services: ['mast-mcp-server', 'mast-tenant-template (4 tenant default)', 'events-functions', 'platform-functions'],
+                        estimatedMonthlyCost: '$120 - $180',
+                        estimatedStandupMinutes: 35
+                    },
+                    planHash: 'mock-' + Math.random().toString(36).slice(2, 10)
+                };
+            },
+            async approvePod({ planHash, podId }) {
+                await wait(400);
+                return { ok: true, podId, planHash, state: 'approved',
+                         approvalSignature: 'stub-signature-' + planHash,
+                         approvedAt: new Date().toISOString() };
+            },
+            async decommissionPod({ podId }) {
+                await wait(200);
+                return { ok: false, stub: true, message: 'Decommission is T4 (chat-confirmation only). Logged intent.', podId };
+            }
+        };
+    }
+
+    function PodFleetView({ firebaseUid, firebaseUser, showAlert, showConfirm, setView }) {
+        const api = React.useMemo(() => podFleetApi(), []);
+        const [pods, setPods] = React.useState(null);
+        const [loadError, setLoadError] = React.useState(null);
+        const [selectedPodId, setSelectedPodId] = React.useState(null);
+        const [showRequestForm, setShowRequestForm] = React.useState(false);
+
+        // Plan-preview state
+        const [pendingPlan, setPendingPlan] = React.useState(null); // { plan, planHash, form }
+        const [planLoading, setPlanLoading] = React.useState(false);
+        const [approving, setApproving] = React.useState(false);
+
+        const isApprover = firebaseUid && firebaseUid === POD_APPROVER_UID;
+
+        const refresh = React.useCallback(async () => {
+            try {
+                setLoadError(null);
+                const list = await api.getPodFleet();
+                setPods(list);
+            } catch (e) {
+                setLoadError(String(e && e.message || e));
+            }
+        }, [api]);
+
+        React.useEffect(() => { refresh(); }, [refresh]);
+
+        const POD_STATE_STYLES = {
+            'proposed':       'bg-slate-700 text-slate-300',
+            'approved':       'bg-blue-900/50 text-blue-300',
+            'provisioning':   'bg-amber-900/50 text-amber-300',
+            'active':         'bg-green-900/50 text-green-300',
+            'draining':       'bg-amber-900/50 text-amber-300',
+            'decommissioned': 'bg-red-900/30 text-red-400/70'
+        };
+
+        const capacityBar = (pct) => {
+            const p = Math.max(0, Math.min(1, pct || 0));
+            const colour = p >= 0.75 ? 'bg-red-500' : p >= 0.5 ? 'bg-amber-500' : 'bg-emerald-500';
+            return (
+                <div className="w-32 h-2 bg-slate-700 rounded overflow-hidden">
+                    <div className={`h-full ${colour}`} style={{ width: `${Math.round(p * 100)}%` }} />
+                </div>
+            );
+        };
+
+        // --- request form ----------------------------------------------------
+        function RequestForm({ onCancel, onProposed }) {
+            const [podId, setPodId] = React.useState('');
+            const [region, setRegion] = React.useState(POD_REGIONS[0]);
+            const [capacityTier, setCapacityTier] = React.useState(POD_CAPACITY_TIERS[0]);
+            const [reason, setReason] = React.useState('');
+            const [submitting, setSubmitting] = React.useState(false);
+
+            const idValid = POD_ID_REGEX.test(podId);
+            const reasonValid = reason.trim().length >= 20;
+            const formValid = idValid && reasonValid && POD_REGIONS.includes(region);
+
+            const submit = async (e) => {
+                e.preventDefault();
+                if (!formValid) return;
+                setSubmitting(true);
+                try {
+                    const res = await api.proposePod({ podId, region, capacityTier, reason });
+                    onProposed({ ...res, form: { podId, region, capacityTier, reason } });
+                } catch (err) {
+                    showAlert && showAlert('Propose failed: ' + (err && err.message || err));
+                } finally {
+                    setSubmitting(false);
+                }
+            };
+
+            return (
+                <form onSubmit={submit} className="bg-slate-800 border border-slate-700 rounded-lg p-4 space-y-3">
+                    <h3 className="text-lg font-semibold text-white">Request New Pod</h3>
+                    <div>
+                        <label className="block text-xs uppercase tracking-wide text-slate-400 mb-1">Pod ID</label>
+                        <input type="text" value={podId} onChange={e => setPodId(e.target.value)}
+                            placeholder="prod-us-east-2"
+                            className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500" />
+                        <div className={`text-xs mt-1 ${podId ? (idValid ? 'text-emerald-400' : 'text-red-400') : 'text-slate-500'}`}>
+                            Must match <code>^(dev|prod)-(us-east|us-west)-\d+$</code> (D-pod-naming-region)
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <label className="block text-xs uppercase tracking-wide text-slate-400 mb-1">Region</label>
+                            <select value={region} onChange={e => setRegion(e.target.value)}
+                                className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-white">
+                                {POD_REGIONS.map(r => <option key={r} value={r}>{r}</option>)}
+                            </select>
+                            <div className="text-xs text-slate-500 mt-1">US-only (C-us-only-v1)</div>
+                        </div>
+                        <div>
+                            <label className="block text-xs uppercase tracking-wide text-slate-400 mb-1">Capacity Tier</label>
+                            <select value={capacityTier} onChange={e => setCapacityTier(e.target.value)}
+                                className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-white">
+                                {POD_CAPACITY_TIERS.map(t => <option key={t} value={t}>{t}</option>)}
+                            </select>
+                        </div>
+                    </div>
+                    <div>
+                        <label className="block text-xs uppercase tracking-wide text-slate-400 mb-1">Reason (min 20 chars)</label>
+                        <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3}
+                            placeholder="Why does this pod need to exist? Capacity trigger fired? New region launch? Customer-driven?"
+                            className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500" />
+                        <div className={`text-xs mt-1 ${reason ? (reasonValid ? 'text-emerald-400' : 'text-amber-400') : 'text-slate-500'}`}>
+                            {reason.trim().length} / 20 characters minimum
+                        </div>
+                    </div>
+                    <div className="flex gap-2 pt-2">
+                        <button type="submit" disabled={!formValid || submitting}
+                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 disabled:text-slate-500 rounded text-sm font-medium">
+                            {submitting ? 'Generating plan…' : 'Preview Plan'}
+                        </button>
+                        <button type="button" onClick={onCancel}
+                            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm">Cancel</button>
+                    </div>
+                </form>
+            );
+        }
+
+        // --- plan preview / approval ----------------------------------------
+        const renderPlanPreview = () => {
+            if (!pendingPlan) return null;
+            const { plan, planHash, form } = pendingPlan;
+            const onApprove = async () => {
+                if (!isApprover) {
+                    showAlert && showAlert('Only the designated approver (Dave) can approve pods. (D-pod-approver-model-v1)');
+                    return;
+                }
+                setApproving(true);
+                try {
+                    // NOTE: planHash + signature are computed server-side by approvePod CF.
+                    // CC never holds the HMAC secret — that lives in Firebase Secrets.
+                    const res = await api.approvePod({ planHash, podId: form.podId });
+                    showAlert && showAlert(`Pod ${res.podId} approved. Executor will provision.\nSignature: ${res.approvalSignature}`);
+                    setPendingPlan(null);
+                    setShowRequestForm(false);
+                    refresh();
+                } catch (err) {
+                    showAlert && showAlert('Approval failed: ' + (err && err.message || err));
+                } finally {
+                    setApproving(false);
+                }
+            };
+            const Row = ({ k, v, hi }) => (
+                <div className="flex justify-between gap-4 py-1.5 border-b border-slate-800 last:border-0">
+                    <span className="text-xs uppercase tracking-wide text-slate-500">{k}</span>
+                    <span className={`text-sm ${hi ? 'text-amber-300 font-medium' : 'text-slate-200'} text-right`}>{v}</span>
+                </div>
+            );
+            return (
+                <div className="bg-slate-800 border border-indigo-700/50 rounded-lg p-4 mt-4">
+                    <div className="flex items-start justify-between mb-3">
+                        <div>
+                            <h3 className="text-lg font-semibold text-white">Plan Preview</h3>
+                            <div className="text-xs text-slate-500">planHash: <code>{planHash}</code></div>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-full bg-slate-700 text-xs text-slate-300">diff vs. empty pod</span>
+                    </div>
+                    <Row k="Pod ID"        v={plan.podId} hi />
+                    <Row k="Region"        v={plan.region} hi />
+                    <Row k="Capacity Tier" v={plan.capacityTier} />
+                    <Row k="Firestore"     v={plan.firestoreLocation} />
+                    <Row k="Artifact Registry repos" v={(plan.artifactRegistry?.repos || []).join(', ')} />
+                    <Row k="Services to deploy" v={(plan.services || []).join(', ')} />
+                    <Row k="Secrets" v={`${plan.secrets?.count} declared, ${plan.secrets?.gaps} gaps`} hi={plan.secrets?.gaps > 0} />
+                    <div className="py-1.5 border-b border-slate-800">
+                        <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">IAM grants planned</div>
+                        <ul className="text-sm text-slate-200 list-disc list-inside">
+                            {(plan.iamGrants || []).map((g, i) => <li key={i}>{g}</li>)}
+                        </ul>
+                    </div>
+                    <Row k="Est. monthly cost" v={plan.estimatedMonthlyCost} hi />
+                    <Row k="Est. standup time" v={`~${plan.estimatedStandupMinutes} min`} />
+                    <Row k="Reason" v={plan.reason} />
+                    <div className="flex gap-2 pt-3">
+                        <button onClick={onApprove} disabled={!isApprover || approving}
+                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:text-slate-500 rounded text-sm font-medium"
+                            title={isApprover ? 'Approve and signal executor' : 'Approver-only action'}>
+                            {approving ? 'Approving…' : (isApprover ? '✅ Approve' : '🔒 Approver-only')}
+                        </button>
+                        <button onClick={() => setPendingPlan(null)}
+                            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm">Discard</button>
+                    </div>
+                    {!isApprover && (
+                        <div className="text-xs text-amber-400 mt-2">
+                            Plan generated. Only Dave (uid <code>{POD_APPROVER_UID.slice(0,6)}…</code>) can approve.
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // --- detail view -----------------------------------------------------
+        const renderPodDetail = () => {
+            if (!selectedPodId || !pods) return null;
+            const pod = pods.find(p => p.id === selectedPodId);
+            if (!pod) return null;
+            const onRetire = async () => {
+                const ok = showConfirm
+                    ? await showConfirm('Retire ' + pod.id + '?', 'This is T4 — explicit chat confirmation only. UI stub will not modify pod state.')
+                    : window.confirm('Retire ' + pod.id + '? (stub)');
+                if (!ok) return;
+                try {
+                    const r = await api.decommissionPod({ podId: pod.id });
+                    showAlert && showAlert(r.message || 'Logged retire intent.');
+                } catch (e) {
+                    showAlert && showAlert('Decommission failed: ' + (e && e.message || e));
+                }
+            };
+            return (
+                <div className="bg-slate-800 border border-slate-700 rounded-lg p-4 mt-4">
+                    <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-lg font-semibold text-white">{pod.id}</h3>
+                        <button onClick={() => setSelectedPodId(null)}
+                            className="text-xs text-slate-400 hover:text-white">✕ close</button>
+                    </div>
+                    <div className="grid grid-cols-4 gap-4 text-sm mb-4">
+                        <div><div className="text-xs text-slate-500 uppercase">Region</div><div className="text-slate-200">{pod.region}</div></div>
+                        <div><div className="text-xs text-slate-500 uppercase">State</div>
+                            <span className={`px-2 py-0.5 rounded-full text-xs ${POD_STATE_STYLES[pod.state] || 'bg-slate-700'}`}>{pod.state}</span>
+                        </div>
+                        <div><div className="text-xs text-slate-500 uppercase">Tenants</div><div className="text-slate-200">{pod.tenantCount}</div></div>
+                        <div><div className="text-xs text-slate-500 uppercase">Capacity</div>
+                            <div className="flex items-center gap-2">{capacityBar(pod.capacityPct)}<span className="text-xs text-slate-300">{Math.round((pod.capacityPct || 0) * 100)}%</span></div>
+                        </div>
+                    </div>
+                    <div className="mb-4">
+                        <h4 className="text-sm font-semibold text-slate-300 mb-2">Lifecycle history</h4>
+                        <ul className="space-y-1">
+                            {(pod.lifecycle || []).map((ev, i) => (
+                                <li key={i} className="flex gap-3 text-xs text-slate-400">
+                                    <span className="text-slate-500 w-44">{ev.ts}</span>
+                                    <span className="px-2 rounded-full bg-slate-700 text-slate-200">{ev.state}</span>
+                                    <span>by {ev.by}</span>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                    <div className="text-xs text-slate-500 mb-3">
+                        Audit rows from <code>deploy_events</code> and reconciler diffs will render here once
+                        <code className="text-slate-300"> getPodFleet </code> CF returns them.
+                    </div>
+                    {pod.state === 'active' && (
+                        <button onClick={onRetire}
+                            className="px-3 py-1.5 bg-red-900/40 border border-red-800 hover:bg-red-900/60 rounded text-xs text-red-300">
+                            Retire pod (stub)
+                        </button>
+                    )}
+                </div>
+            );
+        };
+
+        // --- main render -----------------------------------------------------
+        return (
+            <div className="max-w-6xl mx-auto p-4">
+                <div className="flex items-center justify-between mb-4">
+                    <div>
+                        <h2 className="text-2xl font-bold text-white">🛰️ Pod Fleet</h2>
+                        <div className="text-xs text-slate-500">
+                            Multi-pod control plane · Idea <code>-Orzrdt17-fnqCGX2Kby</code> ·
+                            authoritative state in <code>mast-platform-registry</code> Firestore
+                        </div>
+                    </div>
+                    <button onClick={() => { setShowRequestForm(s => !s); setPendingPlan(null); }}
+                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded text-sm font-medium">
+                        {showRequestForm ? 'Close form' : '+ Request New Pod'}
+                    </button>
+                </div>
+
+                {!isApprover && (
+                    <div className="mb-3 px-3 py-2 bg-amber-900/20 border border-amber-800/40 rounded text-xs text-amber-300">
+                        You are not the designated pod approver. You can request and preview plans but cannot approve. (D-pod-approver-model-v1)
+                    </div>
+                )}
+
+                {showRequestForm && !pendingPlan && (
+                    <RequestForm
+                        onCancel={() => setShowRequestForm(false)}
+                        onProposed={(p) => setPendingPlan(p)} />
+                )}
+
+                {renderPlanPreview()}
+
+                <div className="mt-4">
+                    <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wide mb-2">Existing pods</h3>
+                    {loadError && <div className="text-sm text-red-400">Failed to load: {loadError}</div>}
+                    {!pods && !loadError && <div className="text-sm text-slate-400">Loading…</div>}
+                    {pods && pods.length === 0 && <div className="text-sm text-slate-500">No pods yet.</div>}
+                    {pods && pods.length > 0 && (
+                        <div className="bg-slate-800 border border-slate-700 rounded-lg overflow-hidden">
+                            <table className="w-full text-sm">
+                                <thead className="bg-slate-900 text-xs uppercase tracking-wide text-slate-400">
+                                    <tr>
+                                        <th className="text-left px-3 py-2">Pod ID</th>
+                                        <th className="text-left px-3 py-2">Region</th>
+                                        <th className="text-left px-3 py-2">State</th>
+                                        <th className="text-left px-3 py-2">Capacity</th>
+                                        <th className="text-left px-3 py-2">Tenants</th>
+                                        <th className="text-left px-3 py-2">Updated</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {pods.map(p => (
+                                        <tr key={p.id} className={`border-t border-slate-700 hover:bg-slate-700/40 cursor-pointer ${selectedPodId === p.id ? 'bg-slate-700/30' : ''}`}
+                                            onClick={() => setSelectedPodId(p.id === selectedPodId ? null : p.id)}>
+                                            <td className="px-3 py-2 font-mono text-slate-200">{p.id}</td>
+                                            <td className="px-3 py-2 text-slate-300">{p.region}</td>
+                                            <td className="px-3 py-2">
+                                                <span className={`px-2 py-0.5 rounded-full text-xs ${POD_STATE_STYLES[p.state] || 'bg-slate-700'}`}>{p.state}</span>
+                                            </td>
+                                            <td className="px-3 py-2"><div className="flex items-center gap-2">{capacityBar(p.capacityPct)}<span className="text-xs text-slate-400">{Math.round((p.capacityPct || 0) * 100)}%</span></div></td>
+                                            <td className="px-3 py-2 text-slate-300">{p.tenantCount}</td>
+                                            <td className="px-3 py-2 text-xs text-slate-500">{p.lastUpdated}</td>
+                                            <td className="px-3 py-2 text-right text-xs text-slate-400">{selectedPodId === p.id ? '▾' : '▸'}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
+
+                {renderPodDetail()}
+
+                <div className="mt-6 text-xs text-slate-600 leading-relaxed">
+                    <strong>Wiring TODO (out-of-scope for this PR):</strong> <code>getPodFleet</code>,
+                    <code> proposePod</code>, <code>approvePod</code>, <code>decommissionPod</code> callable CFs.
+                    Approval HMAC + planHash signing must run server-side; CC never holds the secret.
+                    Cross-project read of <code>mast-platform-registry</code> Firestore is unresolved (see PR description).
+                </div>
+            </div>
+        );
+    }
+
+    // =========================================================================
     // RENDER
     // =========================================================================
-    
+
     try {
         ReactDOM.createRoot(document.getElementById('root')).render(<App />);
     } catch (error) {
