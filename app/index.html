@@ -17054,8 +17054,20 @@ The developer uses Claude for iterative development — each session should:
     // =========================================================================
     // POD FLEET VIEW (CC Idea -Orzrdt17-fnqCGX2Kby — Pod creation production workflow)
     // =========================================================================
+    // Operational model: LOAD-BALANCING-AT-SIGNUP, not fill-up-and-move-on.
+    //   - R-load-balance-at-signup-not-fill: placement at signup is THE mechanism;
+    //     pods are not filled sequentially and tenants are not redirected post-placement.
+    //   - D-signup-router-architecture: the registry-side router handles cross-pod placement.
+    // The UI leads with relative load distribution across the fleet — even bars mean
+    // the signup router is healthy, skew = placement-logic bug or region-skew worth
+    // investigating. Per-pod stats are secondary to the cohort comparison.
+    // Capacity additions are framed as FLEET GROWTH (any pod approaching the 75%
+    // subsystem-ceiling trigger from O12), not "pod-A is filling up, redirect to pod-B".
+    // Each pod has placement.acceptsNewTenants: boolean (D-pod-naming-region pod
+    // schema) — UI exposes a toggle for drain mode without code changes.
+    //
     // Scaffold-only. Reads/writes go through callable CFs that don't yet exist:
-    //   getPodFleet, proposePod, approvePod, decommissionPod
+    //   getPodFleet, proposePod, approvePod, decommissionPod, setPodAcceptsNewTenants
     // Authoritative pod state lives in mast-platform-registry Firestore (NOT RTDB).
     // CC is the data layer; this view captures + presents, never decides.
 
@@ -17074,9 +17086,15 @@ The developer uses Claude for iterative development — each session should:
         return {
             async getPodFleet() {
                 await wait(300);
+                // capacityPct = ceiling-driver utilization (0..1).
+                // placement.acceptsNewTenants = signup-router eligibility flag.
+                // tenantsPlaced{7d,30d} = signal that placement is even across the fleet.
                 return [
                     { id: 'prod-us-east-1', region: 'us-east-1', state: 'active',
                       capacityPct: 0.42, tenantCount: 5, lastUpdated: '2026-05-08T13:00:00Z',
+                      placement: { acceptsNewTenants: true },
+                      ceilingSubsystem: 'cloudFunctions',
+                      tenantsPlacedLast7d: 2, tenantsPlacedLast30d: 4,
                       lifecycle: [
                         { ts: '2026-04-01T10:00:00Z', state: 'proposed',  by: 'system' },
                         { ts: '2026-04-01T11:00:00Z', state: 'approved', by: 'dave' },
@@ -17084,11 +17102,21 @@ The developer uses Claude for iterative development — each session should:
                       ] },
                     { id: 'dev-us-east-1', region: 'us-east-1', state: 'active',
                       capacityPct: 0.08, tenantCount: 1, lastUpdated: '2026-05-08T13:00:00Z',
+                      placement: { acceptsNewTenants: true },
+                      ceilingSubsystem: 'cloudFunctions',
+                      tenantsPlacedLast7d: 1, tenantsPlacedLast30d: 1,
                       lifecycle: [{ ts: '2026-05-07T09:00:00Z', state: 'active', by: 'rehearsal' }] },
                     { id: 'prod-us-west-1', region: 'us-west-1', state: 'proposed',
                       capacityPct: 0, tenantCount: 0, lastUpdated: '2026-05-08T12:30:00Z',
+                      placement: { acceptsNewTenants: false },
+                      ceilingSubsystem: 'cloudFunctions',
+                      tenantsPlacedLast7d: 0, tenantsPlacedLast30d: 0,
                       lifecycle: [{ ts: '2026-05-08T12:30:00Z', state: 'proposed', by: 'system' }] }
                 ];
+            },
+            async setPodAcceptsNewTenants({ podId, acceptsNewTenants }) {
+                await wait(150);
+                return { ok: true, podId, acceptsNewTenants, stub: true };
             },
             async proposePod({ podId, region, capacityTier, reason }) {
                 await wait(400);
@@ -17347,8 +17375,45 @@ The developer uses Claude for iterative development — each session should:
                             <span className={`px-2 py-0.5 rounded-full text-xs ${POD_STATE_STYLES[pod.state] || 'bg-slate-700'}`}>{pod.state}</span>
                         </div>
                         <div><div className="text-xs text-slate-500 uppercase">Tenants</div><div className="text-slate-200">{pod.tenantCount}</div></div>
-                        <div><div className="text-xs text-slate-500 uppercase">Capacity</div>
+                        <div><div className="text-xs text-slate-500 uppercase">Ceiling driver</div>
                             <div className="flex items-center gap-2">{capacityBar(pod.capacityPct)}<span className="text-xs text-slate-300">{Math.round((pod.capacityPct || 0) * 100)}%</span></div>
+                            <div className="text-xs text-slate-500 mt-0.5">{pod.ceilingSubsystem || '—'}</div>
+                        </div>
+                    </div>
+
+                    {/* Placement trend — the signal that the signup router is balancing.
+                        Even placement counts (relative to fleet share) = healthy router.
+                        Disproportionately few placements = region affinity, drain mode,
+                        or a scoring rule locking this pod out. */}
+                    <div className="mb-4">
+                        <h4 className="text-sm font-semibold text-slate-300 mb-2">Placement trend</h4>
+                        <div className="grid grid-cols-3 gap-3 mb-2">
+                            <div className="bg-slate-900 rounded p-2">
+                                <div className="text-xs text-slate-500">Last 7 days</div>
+                                <div className="text-lg font-bold text-white">{pod.tenantsPlacedLast7d ?? '—'}</div>
+                                <div className="text-xs text-slate-500">tenants placed</div>
+                            </div>
+                            <div className="bg-slate-900 rounded p-2">
+                                <div className="text-xs text-slate-500">Last 30 days</div>
+                                <div className="text-lg font-bold text-white">{pod.tenantsPlacedLast30d ?? '—'}</div>
+                                <div className="text-xs text-slate-500">tenants placed</div>
+                            </div>
+                            <div className="bg-slate-900 rounded p-2">
+                                <div className="text-xs text-slate-500">Total on pod</div>
+                                <div className="text-lg font-bold text-white">{pod.tenantCount ?? '—'}</div>
+                                <div className="text-xs text-slate-500">tenants</div>
+                            </div>
+                        </div>
+                        <div className="text-xs text-slate-400 leading-relaxed">
+                            <strong className="text-slate-300">Read this as:</strong> placement counts are the signup-router signal.
+                            Even counts across pods (relative to fleet share) means the router is balancing correctly.
+                            Disproportionately few placements may indicate region affinity, drain mode, or a scoring rule
+                            that's locking this pod out.
+                            {pod.placement?.acceptsNewTenants === false && (
+                                <span className="block mt-1 text-amber-300">
+                                    This pod is in drain mode — receiving zero new placements by design.
+                                </span>
+                            )}
                         </div>
                     </div>
                     <div className="mb-4">
@@ -17377,22 +17442,172 @@ The developer uses Claude for iterative development — each session should:
             );
         };
 
+        // --- fleet-level load-distribution stats ----------------------------
+        // Spread = max-min utilization. Low spread = healthy router; high spread =
+        // placement-logic bug or region-skew. The 75% trigger (O12) on any pod's
+        // ceiling-driver subsystem is the fleet-growth signal.
+        const fleetStats = React.useMemo(() => {
+            if (!pods || pods.length === 0) return null;
+            const utils = pods.map(p => (p.capacityPct || 0) * 100);
+            const mean = utils.reduce((a, b) => a + b, 0) / utils.length;
+            const max = Math.max(...utils);
+            const min = Math.min(...utils);
+            const spread = max - min;
+            const fleetGrowthSignal = max >= 75;
+            const balanceHealth = spread <= 15 ? 'even' : spread <= 30 ? 'mild-skew' : 'skewed';
+            return { mean, max, min, spread, fleetGrowthSignal, balanceHealth };
+        }, [pods]);
+
+        const sortedForHistogram = React.useMemo(() => {
+            if (!pods) return [];
+            return [...pods].sort((a, b) => (b.capacityPct || 0) - (a.capacityPct || 0));
+        }, [pods]);
+
+        // Toggle a pod in/out of the signup router's eligibility set.
+        // This is drain mode — no code changes, just a flag flip on the pod doc.
+        const toggleAccepts = async (pod) => {
+            const next = !(pod.placement?.acceptsNewTenants !== false);
+            const nextBool = pod.placement?.acceptsNewTenants === false; // flipping FROM drain TO accepts
+            const target = pod.placement?.acceptsNewTenants === false; // currently draining → enable
+            const willAccept = !(pod.placement?.acceptsNewTenants !== false);
+            const enabling = pod.placement?.acceptsNewTenants === false;
+            const verb = enabling ? 'resume placement on' : 'drain';
+            const ok = showConfirm
+                ? await showConfirm(
+                    `${enabling ? 'Resume' : 'Drain'} ${pod.id}?`,
+                    `This will ${verb} ${pod.id}. The signup router will ${enabling ? 'start including' : 'stop including'} this pod when placing new tenants. Existing tenants on the pod are unaffected.`)
+                : window.confirm(`${enabling ? 'Resume' : 'Drain'} ${pod.id}?`);
+            if (!ok) return;
+            try {
+                await api.setPodAcceptsNewTenants({ podId: pod.id, acceptsNewTenants: enabling });
+                // Optimistic: refresh from CF — in production the registry reconciler
+                // is the source of truth.
+                refresh();
+                showAlert && showAlert(`Pod ${pod.id} ${enabling ? 'now accepting placements' : 'in drain mode'} (stub — CF not yet wired).`);
+            } catch (e) {
+                showAlert && showAlert('Toggle failed: ' + (e && e.message || e));
+            }
+        };
+
+        const balanceLabel = {
+            'even':      { text: 'Even — signup router is balancing correctly',                    color: 'text-emerald-300', icon: '✓' },
+            'mild-skew': { text: 'Mild skew — monitor; could be early region demand asymmetry',     color: 'text-amber-300',   icon: '⚠' },
+            'skewed':    { text: 'Skewed — investigate placement logic or region demand',          color: 'text-red-300',     icon: '✗' }
+        }[fleetStats?.balanceHealth || 'even'];
+
+        const utilColor = (p) => p >= 0.75 ? 'bg-amber-500' : p >= 0.5 ? 'bg-indigo-500' : 'bg-emerald-500';
+
         // --- main render -----------------------------------------------------
         return (
             <div className="max-w-6xl mx-auto p-4">
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
                     <div>
                         <h2 className="text-2xl font-bold text-white">🛰️ Pod Fleet</h2>
                         <div className="text-xs text-slate-500">
                             Multi-pod control plane · Idea <code>-Orzrdt17-fnqCGX2Kby</code> ·
-                            authoritative state in <code>mast-platform-registry</code> Firestore
+                            authoritative state in <code>mast-platform-registry</code> Firestore ·
+                            <span className="text-slate-400"> placement = load-balanced at signup</span>
                         </div>
                     </div>
                     <button onClick={() => { setShowRequestForm(s => !s); setPendingPlan(null); }}
-                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded text-sm font-medium">
-                        {showRequestForm ? 'Close form' : '+ Request New Pod'}
+                        className={`px-4 py-2 rounded text-sm font-medium ${
+                            fleetStats?.fleetGrowthSignal
+                                ? 'bg-amber-600 hover:bg-amber-500 text-white'
+                                : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                        }`}
+                        title={fleetStats?.fleetGrowthSignal
+                            ? `Fleet ceiling at ${Math.round(fleetStats.max)}% — adding a pod recommended for placement variety`
+                            : 'Add a pod for placement variety / fleet growth'}>
+                        {showRequestForm
+                            ? 'Close form'
+                            : fleetStats?.fleetGrowthSignal
+                                ? `+ Request New Pod (ceiling ${Math.round(fleetStats.max)}%)`
+                                : '+ Request New Pod'}
                     </button>
                 </div>
+
+                {/* PRIMARY VIEW: Load distribution across the fleet.
+                    Lead with relative comparison — even bars = healthy signup router,
+                    skew = problem worth investigating. Per-pod stats come second. */}
+                {fleetStats && pods && pods.length > 0 && (
+                    <div className="bg-slate-800 border border-slate-700 rounded-lg p-4 mb-4">
+                        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                            <div>
+                                <div className="text-sm font-semibold text-white">Load Distribution</div>
+                                <div className="text-xs text-slate-500">
+                                    Signup router places each new tenant; even bars mean the router is balancing correctly across the fleet.
+                                </div>
+                            </div>
+                            {balanceLabel && (
+                                <div className={`text-xs font-medium ${balanceLabel.color}`}>
+                                    {balanceLabel.icon} {balanceLabel.text}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="space-y-2">
+                            {sortedForHistogram.map(pod => {
+                                const pct = (pod.capacityPct || 0) * 100;
+                                const deltaFromMean = pct - (fleetStats.mean || 0);
+                                const isOutlier = Math.abs(deltaFromMean) > 20;
+                                const draining = pod.placement?.acceptsNewTenants === false;
+                                return (
+                                    <button
+                                        key={pod.id}
+                                        onClick={() => setSelectedPodId(pod.id === selectedPodId ? null : pod.id)}
+                                        className={`w-full text-left ${selectedPodId === pod.id ? 'ring-1 ring-indigo-500 rounded' : ''}`}>
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-44 shrink-0 flex items-center gap-2">
+                                                <span className="text-sm text-slate-300 font-mono truncate">{pod.id}</span>
+                                                {draining && (
+                                                    <span className="text-[10px] px-1.5 py-0.5 bg-amber-900/50 text-amber-300 rounded">drain</span>
+                                                )}
+                                            </div>
+                                            <div className="flex-1 h-6 bg-slate-900 rounded relative overflow-hidden">
+                                                <div
+                                                    className={`h-full ${utilColor(pod.capacityPct || 0)} ${draining ? 'opacity-40' : ''} transition-all`}
+                                                    style={{ width: `${Math.min(100, pct)}%` }} />
+                                                <div
+                                                    className="absolute top-0 bottom-0 w-px bg-slate-400/50"
+                                                    style={{ left: `${Math.min(100, fleetStats.mean)}%` }}
+                                                    title={`Fleet mean: ${Math.round(fleetStats.mean)}%`} />
+                                            </div>
+                                            <div className="w-16 shrink-0 text-right text-sm font-mono text-slate-200">
+                                                {Math.round(pct)}%
+                                            </div>
+                                            <div className={`w-24 shrink-0 text-right text-xs ${isOutlier ? 'text-amber-300' : 'text-slate-500'}`}>
+                                                {deltaFromMean >= 0 ? '+' : ''}{Math.round(deltaFromMean)} pp vs mean
+                                            </div>
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+
+                        <div className="grid grid-cols-4 gap-3 mt-4 pt-3 border-t border-slate-700/50">
+                            <div>
+                                <div className="text-xs text-slate-500">Mean util</div>
+                                <div className="text-sm font-medium text-white">{Math.round(fleetStats.mean)}%</div>
+                            </div>
+                            <div>
+                                <div className="text-xs text-slate-500">Spread</div>
+                                <div className={`text-sm font-medium ${fleetStats.spread > 30 ? 'text-red-300' : fleetStats.spread > 15 ? 'text-amber-300' : 'text-emerald-300'}`}>
+                                    {Math.round(fleetStats.spread)} pp
+                                </div>
+                            </div>
+                            <div>
+                                <div className="text-xs text-slate-500">Highest pod</div>
+                                <div className="text-sm font-medium text-white">{Math.round(fleetStats.max)}%</div>
+                            </div>
+                            <div>
+                                <div className="text-xs text-slate-500">Ceiling trigger (75%, O12)</div>
+                                <div className={`text-sm font-medium ${fleetStats.fleetGrowthSignal ? 'text-amber-300' : 'text-slate-300'}`}>
+                                    {fleetStats.fleetGrowthSignal ? 'tripped — propose pod' : 'clear'}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {!isApprover && (
                     <div className="mb-3 px-3 py-2 bg-amber-900/20 border border-amber-800/40 rounded text-xs text-amber-300">
@@ -17421,14 +17636,20 @@ The developer uses Claude for iterative development — each session should:
                                         <th className="text-left px-3 py-2">Pod ID</th>
                                         <th className="text-left px-3 py-2">Region</th>
                                         <th className="text-left px-3 py-2">State</th>
-                                        <th className="text-left px-3 py-2">Capacity</th>
+                                        <th className="text-left px-3 py-2">Util vs cohort</th>
                                         <th className="text-left px-3 py-2">Tenants</th>
+                                        <th className="text-left px-3 py-2">Placed (7d / 30d)</th>
+                                        <th className="text-left px-3 py-2">Placement</th>
                                         <th className="text-left px-3 py-2">Updated</th>
                                         <th></th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {pods.map(p => (
+                                    {pods.map(p => {
+                                        const pct = (p.capacityPct || 0) * 100;
+                                        const meanDelta = pct - (fleetStats?.mean || 0);
+                                        const draining = p.placement?.acceptsNewTenants === false;
+                                        return (
                                         <tr key={p.id} className={`border-t border-slate-700 hover:bg-slate-700/40 cursor-pointer ${selectedPodId === p.id ? 'bg-slate-700/30' : ''}`}
                                             onClick={() => setSelectedPodId(p.id === selectedPodId ? null : p.id)}>
                                             <td className="px-3 py-2 font-mono text-slate-200">{p.id}</td>
@@ -17436,12 +17657,34 @@ The developer uses Claude for iterative development — each session should:
                                             <td className="px-3 py-2">
                                                 <span className={`px-2 py-0.5 rounded-full text-xs ${POD_STATE_STYLES[p.state] || 'bg-slate-700'}`}>{p.state}</span>
                                             </td>
-                                            <td className="px-3 py-2"><div className="flex items-center gap-2">{capacityBar(p.capacityPct)}<span className="text-xs text-slate-400">{Math.round((p.capacityPct || 0) * 100)}%</span></div></td>
+                                            <td className="px-3 py-2">
+                                                <div className="flex items-center gap-2">
+                                                    {capacityBar(p.capacityPct)}
+                                                    <span className={`text-xs font-mono ${Math.abs(meanDelta) > 20 ? 'text-amber-300' : 'text-slate-400'}`}>
+                                                        {meanDelta >= 0 ? '+' : ''}{Math.round(meanDelta)} pp
+                                                    </span>
+                                                </div>
+                                            </td>
                                             <td className="px-3 py-2 text-slate-300">{p.tenantCount}</td>
+                                            <td className="px-3 py-2 text-xs text-slate-300 font-mono">
+                                                {p.tenantsPlacedLast7d ?? '—'} / {p.tenantsPlacedLast30d ?? '—'}
+                                            </td>
+                                            <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
+                                                <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                                                    <input type="checkbox"
+                                                        checked={!draining}
+                                                        onChange={() => toggleAccepts(p)}
+                                                        className="rounded" />
+                                                    <span className={draining ? 'text-amber-300' : 'text-slate-400'}>
+                                                        {draining ? 'drain' : 'accepts'}
+                                                    </span>
+                                                </label>
+                                            </td>
                                             <td className="px-3 py-2 text-xs text-slate-500">{p.lastUpdated}</td>
                                             <td className="px-3 py-2 text-right text-xs text-slate-400">{selectedPodId === p.id ? '▾' : '▸'}</td>
                                         </tr>
-                                    ))}
+                                        );
+                                    })}
                                 </tbody>
                             </table>
                         </div>
@@ -17450,9 +17693,19 @@ The developer uses Claude for iterative development — each session should:
 
                 {renderPodDetail()}
 
-                <div className="mt-6 text-xs text-slate-600 leading-relaxed">
+                <div className="mt-6 text-xs text-slate-500 leading-relaxed bg-slate-900/40 border border-slate-800 rounded p-3">
+                    <strong className="text-slate-300">Operational model:</strong> load-balancing-at-signup.
+                    The signup router places each new tenant onto an eligible pod at registration time —
+                    pods are not filled sequentially and tenants are not redirected post-placement
+                    (R-load-balance-at-signup-not-fill, D-signup-router-architecture). Adding a pod
+                    expands placement variety; the <code>placement.acceptsNewTenants</code> toggle
+                    removes a pod from the router's eligibility set without code changes.
+                </div>
+
+                <div className="mt-3 text-xs text-slate-600 leading-relaxed">
                     <strong>Wiring TODO (out-of-scope for this PR):</strong> <code>getPodFleet</code>,
-                    <code> proposePod</code>, <code>approvePod</code>, <code>decommissionPod</code> callable CFs.
+                    <code> proposePod</code>, <code>approvePod</code>, <code>decommissionPod</code>,
+                    <code> setPodAcceptsNewTenants</code> callable CFs.
                     Approval HMAC + planHash signing must run server-side; CC never holds the secret.
                     Cross-project read of <code>mast-platform-registry</code> Firestore is unresolved (see PR description).
                 </div>
