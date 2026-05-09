@@ -5330,7 +5330,14 @@
             setError('');
             try {
                 const provider = new firebase.auth.GoogleAuthProvider();
-                await firebaseAuth.signInWithPopup(provider);
+                const result = await firebaseAuth.signInWithPopup(provider);
+                // Phase U: stash Google ID token for cross-project CF calls (FleetView).
+                try {
+                    const credential = firebase.auth.GoogleAuthProvider.credentialFromResult(result);
+                    if (credential && credential.idToken) {
+                        sessionStorage.setItem('googleIdToken', credential.idToken);
+                    }
+                } catch {}
             } catch (e) {
                 console.error('Sign in error:', e);
                 setError(e.message || 'Sign-in failed. Please try again.');
@@ -6959,7 +6966,8 @@
                                 {[
                                     { id: 'projects', icon: '📁', label: 'Projects', view: 'projects' },
                                     { id: 'jobs', icon: '🔨', label: 'Jobs', view: 'jobs' },
-                                    { id: 'sessions', icon: '💬', label: 'Sessions', view: 'sessions' }
+                                    { id: 'sessions', icon: '💬', label: 'Sessions', view: 'sessions' },
+                                    { id: 'fleet', icon: '🌐', label: 'Fleet', view: 'fleet' }
                                 ].map(tab => (
                                     <button
                                         key={tab.id}
@@ -7052,7 +7060,13 @@
                                                 if (isFileProtocol) return;
                                                 try {
                                                     const provider = new firebase.auth.GoogleAuthProvider();
-                                                    await firebaseAuth.signInWithPopup(provider);
+                                                    const result = await firebaseAuth.signInWithPopup(provider);
+                                                    try {
+                                                        const credential = firebase.auth.GoogleAuthProvider.credentialFromResult(result);
+                                                        if (credential && credential.idToken) {
+                                                            sessionStorage.setItem('googleIdToken', credential.idToken);
+                                                        }
+                                                    } catch {}
                                                 } catch (e) {
                                                     console.error('Sign in error:', e);
                                                 }
@@ -7190,6 +7204,11 @@
                     {view === 'sessions' && (
                         <SessionsView globalSessions={globalSessions} apps={apps} globalIdeas={globalIdeas}
                             firebaseUid={firebaseUid} setView={setView} />
+                    )}
+
+                    {/* Phase U: Fleet rollup (cross-project read of mast-platform-registry/pods/*) */}
+                    {view === 'fleet' && (
+                        <FleetView />
                     )}
 
                     {/* [v8.63.2] Environments moved to Infrastructure satellite (N5) */}
@@ -13356,6 +13375,214 @@ ${repoStr || '- *No repos configured*'}
                         );
                     })}
                 </div>
+            </div>
+        );
+    }
+
+    // =========================================================================
+    // FLEET VIEW — α tier (Phase U): pod-fleet rollup from mast-platform-prod
+    // =========================================================================
+    // Calls the cross-project mastFleetSummary CF using the Google ID token
+    // captured at Firebase sign-in (sessionStorage.googleIdToken). Status-only
+    // — no mutations. β (control) and γ (deeper observability) deferred.
+    const MAST_FLEET_SUMMARY_URL =
+        'https://us-central1-mast-platform-prod.cloudfunctions.net/mastFleetSummary';
+
+    function FleetView() {
+        const [data, setData] = React.useState(null);
+        const [loading, setLoading] = React.useState(true);
+        const [error, setError] = React.useState(null);
+        const [reauthing, setReauthing] = React.useState(false);
+
+        const reauthenticateAndRefresh = React.useCallback(async () => {
+            setReauthing(true);
+            setError(null);
+            try {
+                const provider = new firebase.auth.GoogleAuthProvider();
+                const result = await firebaseAuth.signInWithPopup(provider);
+                const credential = firebase.auth.GoogleAuthProvider.credentialFromResult(result);
+                if (credential && credential.idToken) {
+                    sessionStorage.setItem('googleIdToken', credential.idToken);
+                    return credential.idToken;
+                }
+                throw new Error('Sign-in did not return a Google ID token.');
+            } finally {
+                setReauthing(false);
+            }
+        }, []);
+
+        const fetchRollup = React.useCallback(async (token) => {
+            const idToken = token || sessionStorage.getItem('googleIdToken');
+            if (!idToken) {
+                throw { kind: 'unauthenticated' };
+            }
+            const res = await fetch(MAST_FLEET_SUMMARY_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + idToken
+                },
+                body: JSON.stringify({})
+            });
+            if (res.status === 401) {
+                throw { kind: 'unauthenticated' };
+            }
+            if (res.status === 403) {
+                let msg = 'You are not on the fleet-view allowlist.';
+                try { const j = await res.json(); if (j && j.error) msg = j.error; } catch {}
+                throw { kind: 'forbidden', message: msg };
+            }
+            if (!res.ok) {
+                let body = '';
+                try { body = JSON.stringify(await res.json()); } catch {}
+                throw { kind: 'server', message: 'HTTP ' + res.status + (body ? ' — ' + body : '') };
+            }
+            return await res.json();
+        }, []);
+
+        const load = React.useCallback(async () => {
+            setLoading(true);
+            setError(null);
+            try {
+                const result = await fetchRollup();
+                setData(result);
+            } catch (e) {
+                if (e && e.kind === 'unauthenticated') {
+                    sessionStorage.removeItem('googleIdToken');
+                    try {
+                        const newToken = await reauthenticateAndRefresh();
+                        const result = await fetchRollup(newToken);
+                        setData(result);
+                    } catch (e2) {
+                        setError({ kind: 'unauthenticated', message: (e2 && e2.message) || 'Sign-in required.' });
+                    }
+                } else {
+                    setError(e || { kind: 'unknown', message: 'Unknown error' });
+                }
+            } finally {
+                setLoading(false);
+            }
+        }, [fetchRollup, reauthenticateAndRefresh]);
+
+        React.useEffect(() => { load(); }, [load]);
+
+        const driftBadge = (drift) => {
+            const styles = {
+                clean: 'bg-green-900/50 text-green-300',
+                drift: 'bg-amber-900/50 text-amber-300',
+                unknown: 'bg-slate-700 text-slate-400'
+            };
+            return styles[drift] || styles.unknown;
+        };
+
+        const lifecycleBadge = (state) => {
+            if (!state) return 'bg-slate-700 text-slate-400';
+            if (state === 'live' || state === 'active') return 'bg-green-900/50 text-green-300';
+            if (state === 'standing-up' || state === 'provisioning') return 'bg-blue-900/50 text-blue-300';
+            if (state === 'draining' || state === 'archived') return 'bg-slate-700 text-slate-500';
+            return 'bg-slate-700 text-slate-300';
+        };
+
+        const formatTs = (iso) => {
+            if (!iso) return '—';
+            try { return new Date(iso).toLocaleString(); } catch { return iso; }
+        };
+
+        return (
+            <div className="max-w-6xl mx-auto">
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                        🌐 Fleet
+                        {data && (
+                            <span className="text-sm font-normal text-slate-400">({data.count} pod{data.count === 1 ? '' : 's'})</span>
+                        )}
+                    </h2>
+                    <button onClick={load}
+                        disabled={loading || reauthing}
+                        className="px-3 py-1.5 rounded text-sm bg-slate-700 hover:bg-slate-600 text-slate-200 disabled:opacity-50">
+                        {loading || reauthing ? '…' : '↻ Refresh'}
+                    </button>
+                </div>
+
+                {loading && (
+                    <div className="text-slate-400 text-sm py-12 text-center">Loading fleet rollup…</div>
+                )}
+
+                {!loading && error && (
+                    <div className="bg-red-900/30 border border-red-700 rounded-lg p-4 text-sm text-red-200">
+                        <div className="font-medium mb-1">
+                            {error.kind === 'forbidden' && 'Access denied'}
+                            {error.kind === 'unauthenticated' && 'Sign-in required'}
+                            {error.kind === 'server' && 'Server error'}
+                            {!error.kind && 'Error'}
+                        </div>
+                        <div className="text-red-300">{error.message || 'Unknown error'}</div>
+                        {error.kind === 'unauthenticated' && (
+                            <button onClick={reauthenticateAndRefresh}
+                                disabled={reauthing}
+                                className="mt-3 px-3 py-1.5 rounded text-sm bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50">
+                                {reauthing ? 'Signing in…' : 'Sign in with Google'}
+                            </button>
+                        )}
+                    </div>
+                )}
+
+                {!loading && !error && data && data.pods && data.pods.length === 0 && (
+                    <div className="text-center py-12">
+                        <div className="text-4xl mb-3">🌐</div>
+                        <div className="text-lg font-bold text-white mb-1">No Pods</div>
+                        <div className="text-slate-400 text-sm">No pods registered in <code>mast-platform-registry</code>.</div>
+                    </div>
+                )}
+
+                {!loading && !error && data && data.pods && data.pods.length > 0 && (
+                    <div className="bg-slate-800 border border-slate-700 rounded-lg overflow-hidden">
+                        <table className="w-full text-sm">
+                            <thead className="bg-slate-900/50 text-slate-400 text-xs uppercase">
+                                <tr>
+                                    <th className="text-left px-4 py-2 font-medium">ID</th>
+                                    <th className="text-left px-4 py-2 font-medium">Type</th>
+                                    <th className="text-left px-4 py-2 font-medium">Region</th>
+                                    <th className="text-left px-4 py-2 font-medium">Lifecycle</th>
+                                    <th className="text-left px-4 py-2 font-medium">Drift</th>
+                                    <th className="text-right px-4 py-2 font-medium">Tenants</th>
+                                    <th className="text-left px-4 py-2 font-medium">Last Reconciled</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-700">
+                                {data.pods.map(pod => (
+                                    <tr key={pod.id} className="hover:bg-slate-700/30">
+                                        <td className="px-4 py-2 font-mono text-slate-200">{pod.id}</td>
+                                        <td className="px-4 py-2 text-slate-300">{pod.type || '—'}</td>
+                                        <td className="px-4 py-2 text-slate-300">{pod.region || '—'}</td>
+                                        <td className="px-4 py-2">
+                                            <span className={`px-2 py-0.5 rounded-full text-xs ${lifecycleBadge(pod.lifecycleState)}`}>
+                                                {pod.lifecycleState || 'unknown'}
+                                            </span>
+                                            {pod.acceptsNewTenants === false && (
+                                                <span className="ml-2 px-2 py-0.5 rounded-full text-xs bg-slate-700 text-slate-400" title="Not accepting new tenants">
+                                                    closed
+                                                </span>
+                                            )}
+                                        </td>
+                                        <td className="px-4 py-2">
+                                            <span className={`px-2 py-0.5 rounded-full text-xs ${driftBadge(pod.drift)}`}>
+                                                {pod.drift || 'unknown'}
+                                            </span>
+                                        </td>
+                                        <td className="px-4 py-2 text-right text-slate-300 font-mono">{pod.tenantCount || 0}</td>
+                                        <td className="px-4 py-2 text-slate-400 text-xs">{formatTs(pod.lastReconciledAt)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                        {data.generatedAt && (
+                            <div className="px-4 py-2 text-xs text-slate-500 bg-slate-900/30 border-t border-slate-700">
+                                Generated {formatTs(data.generatedAt)}
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
         );
     }
