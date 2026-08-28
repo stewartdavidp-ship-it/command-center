@@ -1,9 +1,16 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { getForestsRef, getForestRef, getTreesRef, getTreeRef, getTreeIndexRef, getNodesRef } from "../firebase.js";
+import { getForestsRef, getForestRef, getTreesRef, getTreeRef, getTreeIndexRef, getNodesRef, getSearchMissesRef, getGlobalSummaryRef } from "../firebase.js";
 import { getCurrentUid } from "../context.js";
 import { withResponseSize } from "../response-metadata.js";
 import { INITIATOR_PARAM, resolveInitiator } from "../surfaces.js";
+import { tokenize, scoreEntry, buildIdf, computeStaleness, summaryLine, SCORE_FLOOR, STRONG_MATCH_SCORE } from "../knowledge-search.js";
+
+/** Max scored matches returned by search. Truncation is always reported via totalMatched. */
+const SEARCH_RESULT_LIMIT = 15;
+
+/** Max nodes rendered into a global routing table, to bound response size. */
+const GLOBAL_SUMMARY_NODE_CAP = 400;
 
 const TRUST_LEVELS = ["authoritative", "credible", "unverified", "questionable"] as const;
 
@@ -30,30 +37,32 @@ Actions:
   - "delete_tree": Delete tree + all index entries + all node content. Removes from parent forests. Requires treeId.
   - "get_index": Load a tree's routing-table index — all node index entries for selective content loading. Requires treeId.
   - "add_search": Record a search query and its results on a tree. Requires treeId, query. Optional: nodeIdsProduced (array of node IDs created from this search). Appends to searchHistory with auto-timestamp.
-  - "search_tags": Search across trees for nodes matching given tags. Requires tags (array). Optional: forestId or treeId filter. Returns matches sorted by relevance (most matching tags first).
-  - "generate_summary": Generate a cached flat routing table for a forest. Requires forestId. Assembles one line per node across all member trees. Stores on the forest record.
-  - "get_forest_summary": Get the cached routing summary for a forest. Requires forestId. Returns summary + staleness check.`,
+  - "search" (alias: "search_tags"): Search across ALL trees for nodes answering a question. Pass query (free text — the question in your own words) and/or tags (exact keyword tags). AT LEAST ONE is required; passing both is best. Scores against each node's question, keyFinding and tags, returns the top matches with staleness flags. Optional: forestId or treeId filter. Zero-result searches are logged automatically (see list_misses).
+  - "list_misses": Review searches that returned nothing — the retrieval gaps. Optional: limit (default 50, newest first). Use to find questions the corpus should answer but can't.
+  - "generate_summary": Generate a cached flat routing table — one line per node. With forestId, covers that forest's member trees and stores on the forest. WITHOUT forestId, covers EVERY tree including those belonging to no forest, and stores globally.
+  - "get_forest_summary": Get a cached routing summary + staleness check. With forestId, that forest's; without, the global one.`,
     {
       ...INITIATOR_PARAM,
       action: z.enum([
         "list_forests", "get_forest", "create_forest", "update_forest", "delete_forest",
         "list_trees", "get_tree", "create_tree", "update_tree", "delete_tree", "get_index", "add_search",
-        "search_tags", "generate_summary", "get_forest_summary",
+        "search", "search_tags", "list_misses", "generate_summary", "get_forest_summary",
       ]).describe("Action to perform"),
       forestId: z.string().optional().describe("Forest ID (required for update_forest/delete_forest, optional filter for list_trees)"),
       treeId: z.string().optional().describe("Tree ID (required for update_tree/delete_tree/get_index)"),
       name: z.string().optional().describe("Name (required for create_forest/create_tree, optional for updates)"),
       description: z.string().optional().describe("Description (optional for create/update)"),
-      tags: z.array(z.string()).optional().describe("Tags: domain tags for forests (create_forest/update_forest) or keyword tags to search for (search_tags)"),
+      tags: z.array(z.string()).optional().describe("Tags: domain tags for forests (create_forest/update_forest) or exact keyword tags to search for (search)"),
+      limit: z.number().int().optional().describe("Max rows to return (list_misses; default 50)"),
       treeIds: z.array(z.string()).optional().describe("Tree IDs for update_forest"),
       forestIds: z.array(z.string()).optional().describe("Forest IDs for create_tree/update_tree (multi-forest membership)"),
       tokenBudget: z.number().int().optional().describe("Token budget for a tree (default 150000)"),
       freshnessPeriodDays: z.number().int().optional().describe("Days before nodes are considered stale (default 90)"),
-      query: z.string().optional().describe("Search query text (required for add_search)"),
+      query: z.string().optional().describe("Free-text query: the question in your own words (search), or the search query being recorded (add_search)"),
       nodeIdsProduced: z.array(z.string()).optional().describe("Node IDs created from a search (optional for add_search)"),
       gaps: z.string().optional().describe("JSON array of gap objects: [{question, priority, discoveredAt?, status?}]. For update_tree. Priority: high/medium/low. Status: open/resolved (default: open)."),
     },
-    async ({ initiator, action, forestId, treeId, name, description, tags, treeIds, forestIds, tokenBudget, freshnessPeriodDays, query, nodeIdsProduced, gaps }) => {
+    async ({ initiator, action, forestId, treeId, name, description, tags, treeIds, forestIds, tokenBudget, freshnessPeriodDays, query, nodeIdsProduced, gaps, limit }) => {
       resolveInitiator({ initiator });
       const uid = getCurrentUid();
 
@@ -501,8 +510,12 @@ Actions:
       }
 
       // ─── SEARCH_TAGS ───
-      if (action === "search_tags") {
-        if (!tags || tags.length === 0) return withResponseSize({ content: [{ type: "text", text: "search_tags requires tags (non-empty array)" }], isError: true });
+      if (action === "search" || action === "search_tags") {
+        const hasTags = !!(tags && tags.length > 0);
+        const hasQuery = !!(query && query.trim().length > 0);
+        if (!hasTags && !hasQuery) {
+          return withResponseSize({ content: [{ type: "text", text: "search requires query (free text) and/or tags (non-empty array)" }], isError: true });
+        }
 
         // Determine which trees to search
         let treeIdsToSearch: string[] = [];
@@ -532,45 +545,158 @@ Actions:
           treeIdsToSearch.map((tid) => getTreeRef(uid, tid).once("value"))
         );
 
-        const searchTagsLower = tags.map((t) => t.toLowerCase());
+        const searchTagsLower = (tags || []).map((t) => t.toLowerCase());
+        const queryTokens = tokenize(query || "");
+
+        // Term rarity is measured against the corpus actually being searched, from the
+        // index entries already loaded above — no extra reads. Without it, a word like
+        // "work" (ubiquitous in both queries and node questions) scores like a rare term
+        // and drags a dozen unrelated nodes into every result.
+        const allEntries = treeSnaps.flatMap((s) => Object.values(s.val()?.index || {}) as any[]);
+        const idf = buildIdf(allEntries);
+
         const matches: any[] = [];
 
         for (let i = 0; i < treeIdsToSearch.length; i++) {
           const tree = treeSnaps[i].val();
           if (!tree) continue;
 
+          const { staleDays, stale } = computeStaleness(tree.lastVerified, tree.freshnessPeriodDays);
+
           const indexData = tree.index || {};
           for (const entry of Object.values(indexData) as any[]) {
-            const nodeTags: string[] = (entry.tags || []).map((t: string) => t.toLowerCase());
-            const matchingTags = searchTagsLower.filter((st) => nodeTags.includes(st));
-            if (matchingTags.length > 0) {
-              matches.push({
-                nodeId: entry.id,
-                treeId: treeIdsToSearch[i],
-                treeName: tree.name,
-                question: entry.question,
-                keyFinding: entry.keyFinding,
-                tags: entry.tags || [],
-                matchingTags,
-                matchCount: matchingTags.length,
-                tokenCost: entry.tokenCost || 0,
-                trust: entry.trust || "unverified",
-              });
-            }
+            const { score, matchingTags, matchedTerms } = scoreEntry(queryTokens, searchTagsLower, entry, tree, idf);
+            if (score < SCORE_FLOOR) continue;
+
+            matches.push({
+              nodeId: entry.id,
+              treeId: treeIdsToSearch[i],
+              treeName: tree.name,
+              question: entry.question,
+              keyFinding: entry.keyFinding,
+              tags: entry.tags || [],
+              matchingTags,
+              matchCount: matchingTags.length,
+              matchedTerms,
+              score,
+              tokenCost: entry.tokenCost || 0,
+              trust: entry.trust || "unverified",
+              // Surfaced at the point of use — a finding past its own freshness window
+              // should carry that warning into the result, not sit in a health advisory.
+              staleDays,
+              ...(stale ? { stale: true } : {}),
+            });
           }
         }
 
-        // Sort by match count descending (most relevant first)
-        matches.sort((a, b) => b.matchCount - a.matchCount);
+        // Most relevant first; exact-tag hits break ties, preserving the old ordering
+        // intent for callers that pass tags and no query.
+        matches.sort((a, b) => (b.score - a.score) || (b.matchCount - a.matchCount));
+
+        const totalMatched = matches.length;
+        const returned = matches.slice(0, SEARCH_RESULT_LIMIT);
+
+        // A miss is invisible by default: the caller simply researches the question again.
+        // Record it so the gap is reviewable via list_misses.
+        //
+        // "Miss" means nothing CONFIDENT came back — not merely an empty result. A lone
+        // incidental term overlap would otherwise make a real gap look answered and the
+        // miss log would under-report exactly the cases it exists to catch.
+        const hasStrongMatch = returned.some(
+          (m) => m.score >= STRONG_MATCH_SCORE || m.matchCount > 0
+        );
+        if (!hasStrongMatch) {
+          try {
+            await getSearchMissesRef(uid).push({
+              query: query || null,
+              tags: tags || [],
+              initiator: initiator || null,
+              searchedTrees: treeIdsToSearch.length,
+              weakMatches: totalMatched,
+              timestamp: new Date().toISOString(),
+            });
+          } catch {
+            // Logging is best-effort — a failed write must not fail the search.
+          }
+        }
 
         return withResponseSize({
-          content: [{ type: "text", text: JSON.stringify({ matches, total: matches.length, searchedTrees: treeIdsToSearch.length }, null, 2) }],
+          content: [{ type: "text", text: JSON.stringify({
+            matches: returned,
+            total: returned.length,
+            totalMatched,
+            ...(totalMatched > returned.length ? { truncated: true, note: `${totalMatched} nodes matched; showing top ${returned.length} by score.` } : {}),
+            searchedTrees: treeIdsToSearch.length,
+          }, null, 2) }],
+        });
+      }
+
+      // ─── LIST_MISSES ───
+      if (action === "list_misses") {
+        const cap = limit && limit > 0 ? limit : 50;
+        const snap = await getSearchMissesRef(uid).once("value");
+        const data = snap.val();
+        if (!data) return withResponseSize({ content: [{ type: "text", text: JSON.stringify({ misses: [], total: 0 }, null, 2) }] });
+
+        const all = (Object.values(data) as any[])
+          .sort((a, b) => String(b.timestamp || "").localeCompare(String(a.timestamp || "")));
+
+        return withResponseSize({
+          content: [{ type: "text", text: JSON.stringify({
+            misses: all.slice(0, cap),
+            total: all.length,
+            ...(all.length > cap ? { truncated: true } : {}),
+          }, null, 2) }],
         });
       }
 
       // ─── GENERATE_SUMMARY ───
       if (action === "generate_summary") {
-        if (!forestId) return withResponseSize({ content: [{ type: "text", text: "generate_summary requires forestId" }], isError: true });
+        // No forestId → global routing table across EVERY tree. Forest-scoped summaries
+        // iterate forest.treeIds and so cannot see trees belonging to no forest, which is
+        // most of the recently-active corpus.
+        if (!forestId) {
+          const treesSnap = await getTreesRef(uid).once("value");
+          const treesData = treesSnap.val() || {};
+          const allTrees = Object.values(treesData) as any[];
+
+          const lines: string[] = [];
+          let totalNodes = 0;
+          let capped = false;
+
+          for (const tree of allTrees) {
+            if (!tree) continue;
+            for (const entry of Object.values(tree.index || {}) as any[]) {
+              totalNodes++;
+              if (lines.length >= GLOBAL_SUMMARY_NODE_CAP) { capped = true; continue; }
+              // Compact rendering: the global table spans every tree, so it is the one
+              // response where size matters. The routing signal is the question — the
+              // keyFinding is a preview and long tag lists add bulk without routing value.
+              lines.push(summaryLine(tree.name, entry, { findingChars: 60, maxTags: 5 }));
+            }
+          }
+
+          const summary = lines.join("\n");
+          const now = new Date().toISOString();
+
+          await getGlobalSummaryRef(uid).set({
+            summary,
+            summaryGeneratedAt: now,
+            summaryNodeCount: totalNodes,
+            treeCount: allTrees.length,
+          });
+
+          return withResponseSize({
+            content: [{ type: "text", text: JSON.stringify({
+              scope: "global",
+              summary,
+              nodeCount: totalNodes,
+              treeCount: allTrees.length,
+              ...(capped ? { capped: true, note: `Rendered ${lines.length} of ${totalNodes} nodes (cap ${GLOBAL_SUMMARY_NODE_CAP}).` } : {}),
+              generatedAt: now,
+            }, null, 2) }],
+          });
+        }
 
         const forestSnap = await getForestRef(uid, forestId).once("value");
         const forest = forestSnap.val();
@@ -600,9 +726,7 @@ Actions:
           const entries = Object.values(indexData) as any[];
 
           for (const entry of entries) {
-            const tagsStr = (entry.tags && entry.tags.length > 0) ? ` [${entry.tags.join(", ")}]` : "";
-            const finding = entry.keyFinding ? ` — ${entry.keyFinding}` : "";
-            lines.push(`${tree.name} > ${entry.question}${tagsStr}${finding}`);
+            lines.push(summaryLine(tree.name, entry));
             totalNodes++;
           }
         }
@@ -624,7 +748,31 @@ Actions:
 
       // ─── GET_FOREST_SUMMARY ───
       if (action === "get_forest_summary") {
-        if (!forestId) return withResponseSize({ content: [{ type: "text", text: "get_forest_summary requires forestId" }], isError: true });
+        // No forestId → the cached global routing table.
+        if (!forestId) {
+          const snap = await getGlobalSummaryRef(uid).once("value");
+          const cached = snap.val();
+          if (!cached || !cached.summary) {
+            return withResponseSize({ content: [{ type: "text", text: JSON.stringify({ scope: "global", summary: null, stale: true, reason: "no global summary generated yet — run generate_summary with no forestId" }, null, 2) }] });
+          }
+
+          const treesSnap = await getTreesRef(uid).once("value");
+          const currentNodeCount = (Object.values(treesSnap.val() || {}) as any[])
+            .reduce((sum, t) => sum + (t?.nodeCount || 0), 0);
+          const isStale = currentNodeCount !== (cached.summaryNodeCount || 0);
+
+          return withResponseSize({
+            content: [{ type: "text", text: JSON.stringify({
+              scope: "global",
+              summary: cached.summary,
+              generatedAt: cached.summaryGeneratedAt,
+              summaryNodeCount: cached.summaryNodeCount || 0,
+              currentNodeCount,
+              stale: isStale,
+              ...(isStale ? { reason: `Node count changed: ${cached.summaryNodeCount || 0} → ${currentNodeCount}. Run generate_summary to refresh.` } : {}),
+            }, null, 2) }],
+          });
+        }
 
         const forestSnap = await getForestRef(uid, forestId).once("value");
         const forest = forestSnap.val();

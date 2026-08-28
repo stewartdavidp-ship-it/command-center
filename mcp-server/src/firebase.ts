@@ -151,6 +151,17 @@ export function getNodesRef(uid: string) {
   return db.ref(`command-center/${uid}/knowledge/nodes`);
 }
 
+// Zero-result searches. A retrieval miss produces no error — the session just
+// re-researches — so misses are recorded here to make them reviewable.
+export function getSearchMissesRef(uid: string) {
+  return db.ref(`command-center/${uid}/knowledge/searchMisses`);
+}
+
+// Cached global routing table (all trees, including those in no forest).
+export function getGlobalSummaryRef(uid: string) {
+  return db.ref(`command-center/${uid}/knowledge/globalSummary`);
+}
+
 export function getNodeContentRef(uid: string, nodeId: string) {
   return db.ref(`command-center/${uid}/knowledge/nodes/${nodeId}`);
 }

@@ -108,6 +108,11 @@ for arg in "$@"; do
 done
 
 REGION="us-central1"
+# Pin the project explicitly. Without --project, gcloud deploys to whatever the ambient
+# `gcloud config` points at — which silently created a stray cc-mcp-server-test in an
+# unrelated project on 2026-08-27, while the OAuth check below curled the hardcoded
+# word-boxing URL and reported success for a service the run had not touched.
+PROJECT_ID="word-boxing"
 PROJECT_NUMBER="300155036194"
 FIREBASE_WEB_API_KEY="AIzaSyBQVwn8vOrFTzLlm2MYIPBwgZV2xR9AuhM"
 
@@ -152,6 +157,7 @@ echo ""
 echo "Deploying to Cloud Run..."
 echo "  Environment: $ENV"
 echo "  Service:     $SERVICE"
+echo "  Project:     $PROJECT_ID"
 echo "  Region:      $REGION"
 echo "  BASE_URL:    $BASE_URL"
 echo "  Max instances: $MAX_INSTANCES"
@@ -159,6 +165,7 @@ echo ""
 
 gcloud run deploy "$SERVICE" \
   --source . \
+  --project "$PROJECT_ID" \
   --region "$REGION" \
   --allow-unauthenticated \
   --set-env-vars="NODE_ENV=production,BASE_URL=${BASE_URL},FIREBASE_WEB_API_KEY=${FIREBASE_WEB_API_KEY}" \
