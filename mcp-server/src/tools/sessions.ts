@@ -377,12 +377,10 @@ export function registerSessionTools(server: McpServer): void {
           const healthAppId = session.activeAppId || session.appId;
 
           if (healthIdeaId && healthAppId) {
-            // Update lastSessionAt unconditionally
-            await getIdeaRef(uid, healthIdeaId).update({
-              lastSessionAt: now,
-            });
-
-            // Parallel reads: idea, concepts, jobs, sessions
+            // Read BEFORE any write. RTDB update() on a missing path CREATES the
+            // node, so writing lastSessionAt first would conjure a ghost idea
+            // (and make the existence check below pass) whenever activeIdeaId
+            // points at a deleted idea.
             const [ideaSnap, conceptsSnap, jobsSnap, sessionsSnap] = await Promise.all([
               getIdeaRef(uid, healthIdeaId).once("value"),
               getConceptsRef(uid).once("value"),
@@ -390,7 +388,7 @@ export function registerSessionTools(server: McpServer): void {
               getSessionsRef(uid).orderByChild("status").equalTo("completed").once("value"),
             ]);
 
-            const idea = ideaSnap.val();
+            const idea = ideaSnap.exists() ? ideaSnap.val() : null;
             if (idea) {
               const allConcepts: any[] = Object.values(conceptsSnap.val() || {});
               const allJobs: any[] = Object.values(jobsSnap.val() || {});
@@ -420,8 +418,10 @@ export function registerSessionTools(server: McpServer): void {
                 totalJobCount: ideaJobs.length,
               });
 
-              // Write alerts + counter back to idea record
+              // Write lastSessionAt + alerts + counter back to the (confirmed
+              // existing) idea record in a single update.
               const healthUpdates: Record<string, any> = {
+                lastSessionAt: now,
                 alerts: alerts.length > 0 ? alerts : null,
                 alertCount: alerts.length,
                 sessionCountAtLastHealth: appSessionCount,

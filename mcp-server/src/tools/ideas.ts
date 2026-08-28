@@ -73,7 +73,13 @@ export function registerIdeaTools(server: McpServer): void {
         const data = snapshot.val();
         if (!data) return withResponseSize({ content: [{ type: "text", text: JSON.stringify([], null, 2) }] });
 
-        let ideas: any[] = Object.values(data);
+        // Derive id from the RTDB key, not the embedded `id` field — records
+        // written without one (e.g. legacy or partially-written nodes) would
+        // otherwise ship with id: undefined.
+        let ideas: any[] = Object.entries(data).map(([key, i]: [string, any]) => ({
+          ...(i as any),
+          id: (i as any)?.id || key,
+        }));
 
         // Status filter: if provided, show only that status. Otherwise exclude completed and archived.
         if (status) {
