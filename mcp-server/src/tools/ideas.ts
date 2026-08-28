@@ -332,7 +332,16 @@ export function registerIdeaTools(server: McpServer): void {
           getSessionsRef(uid2).once("value"),
         ]);
 
-        const allIdeas: any[] = Object.values(ideasSnap.val() || {});
+        // The RTDB key is the authoritative id. A stored record can lose its embedded `id`
+        // field — a partial `update()` against a deleted idea path recreates the node with
+        // only the written fields — and `Object.values` would then produce an entry whose
+        // `id` is undefined. JSON.stringify drops undefined keys, so the entry ships with no
+        // `id` at all and every consumer indexing it breaks. Falling back to the key also
+        // keeps the per-idea counters honest: with an undefined ideaId, the job filter below
+        // matches every job that has no ideaId.
+        const allIdeas: any[] = Object.entries(ideasSnap.val() || {}).map(
+          ([key, value]: [string, any]) => ({ ...(value || {}), id: (value && value.id) || key })
+        );
         const allConcepts: any[] = Object.values(conceptsSnap.val() || {});
         const allJobs: any[] = Object.values(jobsSnap.val() || {});
         const allSessions: any[] = Object.values(sessionsSnap.val() || {});
@@ -420,7 +429,7 @@ export function registerIdeaTools(server: McpServer): void {
 
           return {
             id: ideaId2,
-            name: idea.name,
+            name: idea.name || null,
             appId: idea.appId || null,
             ideaType: idea.ideaType || null,
             intention: idea.intention || null,
