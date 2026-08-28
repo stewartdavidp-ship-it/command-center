@@ -5,13 +5,28 @@
 # Usage:
 #   bash e2e-test.sh          # Run against TEST (default)
 #   bash e2e-test.sh --prod   # Run against PRODUCTION
+#   bash e2e-test.sh --purge  # Also exercise document(purge) — see warning below
+#
+# ⚠️  The test and prod MCP servers share one Firebase RTDB. Everything this
+#     suite touches must be scoped to data it created (tracked IDs) or data
+#     that is unambiguously a test fixture ("E2E" titles, "e2e-test-" appIds,
+#     "e2e-test/" doc targetPaths). Never sweep a collection by appId alone —
+#     appId=command-center holds the live Chat↔Code queue.
+#
+#     document(purge) is a global maintenance op: it deletes every delivered/
+#     failed document older than 24h across ALL apps, not just test data. It is
+#     therefore opt-in via --purge and never runs as part of cleanup.
 
 set -e
 
 # ── Environment Selection ─────────────────────────────────────
 ENV="test"
+RUN_PURGE="false"
 for arg in "$@"; do
-  case $arg in --prod) ENV="prod" ;; esac
+  case $arg in
+    --prod) ENV="prod" ;;
+    --purge) RUN_PURGE="true" ;;
+  esac
 done
 
 if [ "$ENV" = "prod" ]; then
@@ -86,6 +101,24 @@ try:
 except:
     print('')
 "
+}
+
+# ── Test-fixture bookkeeping ──────────────────────────────────
+# Every document/message this run creates is tracked here so cleanup can be
+# scoped to it. Cleanup must NEVER list-and-sweep by appId: appId=command-center
+# is the live Chat↔Code queue, and delivering a pending message there destroys
+# coordination neither agent has read yet.
+TEST_DOC_IDS=""
+
+# Prefix for test document targetPaths. Makes fixtures identifiable so orphans
+# from an aborted prior run can be swept without guessing.
+E2E_PATH_PREFIX="e2e-test"
+
+track_doc() {
+  local id="$1"
+  if [ -n "$id" ] && [ "$id" != "None" ] && [ "$id" != "null" ]; then
+    TEST_DOC_IDS="$TEST_DOC_IDS $id"
+  fi
 }
 
 # Test assertion
@@ -815,10 +848,11 @@ echo "── Phase 8: Document Queue ──────────────�
 # ═══════════════════════════════════════════════════════════════
 
 # Test: document push
-RAW=$(call_tool "document" "{\"action\":\"push\",\"type\":\"spec\",\"appId\":\"command-center\",\"content\":\"# E2E Test Spec\\n\\nThis is a test document.\",\"targetPath\":\"specs/e2e-test.md\",\"metadata\":\"{\\\"ideaId\\\":\\\"$IDEA2_ID\\\",\\\"purpose\\\":\\\"testing\\\"}\"}")
+RAW=$(call_tool "document" "{\"action\":\"push\",\"type\":\"spec\",\"appId\":\"command-center\",\"content\":\"# E2E Test Spec\\n\\nThis is a test document.\",\"targetPath\":\"e2e-test/spec.md\",\"metadata\":\"{\\\"ideaId\\\":\\\"$IDEA2_ID\\\",\\\"purpose\\\":\\\"testing\\\"}\"}")
 TEXT=$(get_text "$RAW")
 ERR=$(is_error "$RAW")
 DOC1_ID=$(jq_field "$TEXT" "['id']")
+track_doc "$DOC1_ID"
 DOC1_STATUS=$(jq_field "$TEXT" "['status']")
 DOC1_TYPE=$(jq_field "$TEXT" "['type']")
 DOC1_TARGET=$(jq_field "$TEXT" "['routing']['targetPath']")
@@ -827,15 +861,16 @@ assert "document(push) not error" "false" "$ERR"
 assert_not_empty "document(push) has id" "$DOC1_ID"
 assert "document(push) status=pending" "pending" "$DOC1_STATUS"
 assert "document(push) type=spec" "spec" "$DOC1_TYPE"
-assert "document(push) targetPath" "specs/e2e-test.md" "$DOC1_TARGET"
+assert "document(push) targetPath" "e2e-test/spec.md" "$DOC1_TARGET"
 assert "document(push) default createdBy" "claude-chat" "$DOC1_CREATED_BY"
 DOC1_LIFESPAN=$(jq_field "$TEXT" "['lifespan']")
 assert "document(push) spec default lifespan=short" "short" "$DOC1_LIFESPAN"
 
 # Test: document push with custom createdBy
-RAW=$(call_tool "document" '{"action":"push","type":"architecture","appId":"command-center","content":"# Architecture Doc","targetPath":"docs/architecture.md","createdBy":"claude-code"}')
+RAW=$(call_tool "document" '{"action":"push","type":"architecture","appId":"command-center","content":"# Architecture Doc","targetPath":"e2e-test/architecture.md","createdBy":"claude-code"}')
 TEXT=$(get_text "$RAW")
 DOC2_ID=$(jq_field "$TEXT" "['id']")
+track_doc "$DOC2_ID"
 DOC2_CREATED_BY=$(jq_field "$TEXT" "['createdBy']")
 assert_not_empty "document(push) doc2 has id" "$DOC2_ID"
 assert "document(push) custom createdBy" "claude-code" "$DOC2_CREATED_BY"
@@ -843,19 +878,20 @@ DOC2_LIFESPAN=$(jq_field "$TEXT" "['lifespan']")
 assert "document(push) architecture default lifespan=short" "short" "$DOC2_LIFESPAN"
 
 # Test: document push with explicit lifespan
-RAW=$(call_tool "document" '{"action":"push","type":"spec","appId":"command-center","content":"# Permanent Spec","targetPath":"specs/permanent.md","lifespan":"permanent"}')
+RAW=$(call_tool "document" '{"action":"push","type":"spec","appId":"command-center","content":"# Permanent Spec","targetPath":"e2e-test/permanent.md","lifespan":"permanent"}')
 TEXT=$(get_text "$RAW")
 DOC_PERM_ID=$(jq_field "$TEXT" "['id']")
+track_doc "$DOC_PERM_ID"
 DOC_PERM_LIFESPAN=$(jq_field "$TEXT" "['lifespan']")
 assert "document(push) explicit lifespan=permanent" "permanent" "$DOC_PERM_LIFESPAN"
 
 # Test: document push validation — missing type
-RAW=$(call_tool "document" '{"action":"push","appId":"command-center","content":"missing type","targetPath":"test.md"}')
+RAW=$(call_tool "document" '{"action":"push","appId":"command-center","content":"missing type","targetPath":"e2e-test/invalid.md"}')
 ERR=$(is_error "$RAW")
 assert "document(push) missing type returns isError" "true" "$ERR"
 
 # Test: document push validation — missing content
-RAW=$(call_tool "document" '{"action":"push","type":"spec","appId":"command-center","targetPath":"test.md"}')
+RAW=$(call_tool "document" '{"action":"push","type":"spec","appId":"command-center","targetPath":"e2e-test/invalid.md"}')
 ERR=$(is_error "$RAW")
 assert "document(push) missing content returns isError" "true" "$ERR"
 
@@ -865,7 +901,7 @@ ERR=$(is_error "$RAW")
 assert "document(push) missing targetPath returns isError" "true" "$ERR"
 
 # Test: document push validation — missing appId
-RAW=$(call_tool "document" '{"action":"push","type":"spec","content":"no app","targetPath":"test.md"}')
+RAW=$(call_tool "document" '{"action":"push","type":"spec","content":"no app","targetPath":"e2e-test/invalid.md"}')
 ERR=$(is_error "$RAW")
 assert "document(push) missing appId returns isError" "true" "$ERR"
 
@@ -930,9 +966,10 @@ ERR=$(is_error "$RAW")
 assert "document(deliver) already delivered returns isError" "true" "$ERR"
 
 # Test: document fail — push a new doc to test failure
-RAW=$(call_tool "document" '{"action":"push","type":"test-plan","appId":"command-center","content":"# Fail Test","targetPath":"test-plan.md"}')
+RAW=$(call_tool "document" '{"action":"push","type":"test-plan","appId":"command-center","content":"# Fail Test","targetPath":"e2e-test/test-plan.md"}')
 TEXT=$(get_text "$RAW")
 DOC3_ID=$(jq_field "$TEXT" "['id']")
+track_doc "$DOC3_ID"
 
 RAW=$(call_tool "document" "{\"action\":\"fail\",\"docId\":\"$DOC3_ID\",\"reason\":\"E2E test: simulated failure\"}")
 TEXT=$(get_text "$RAW")
@@ -1092,6 +1129,7 @@ text = sys.stdin.read()
 m = re.search(r'docId:\s*([A-Za-z0-9_-]+)', text)
 print(m.group(1) if m else '')
 " 2>/dev/null)
+track_doc "$PUSHED_DOC_ID"
 
 # Test: verify the pushed document exists (may be pending or delivered via GitHub auto-delivery)
 # Note: claude-md has lifespan=permanent, so it won't be auto-deleted
@@ -1446,6 +1484,7 @@ TEXT=$(get_text "$RAW")
 ERR=$(is_error "$RAW")
 assert "send(chat→code) not error" "false" "$ERR"
 MSG1_ID=$(jq_field "$TEXT" "['id']")
+track_doc "$MSG1_ID"
 assert_contains "send(chat→code) has id" "-" "$MSG1_ID"
 assert_contains "send(chat→code) type=message" "message" "$TEXT"
 assert_contains "send(chat→code) to=claude-code" "claude-code" "$TEXT"
@@ -1460,6 +1499,7 @@ TEXT=$(get_text "$RAW")
 ERR=$(is_error "$RAW")
 assert "send(code→chat) not error" "false" "$ERR"
 MSG2_ID=$(jq_field "$TEXT" "['id']")
+track_doc "$MSG2_ID"
 assert_contains "send(code→chat) to=claude-chat" "claude-chat" "$TEXT"
 assert_contains "send(code→chat) from=claude-code" "claude-code" "$TEXT"
 
@@ -1469,6 +1509,7 @@ TEXT=$(get_text "$RAW")
 ERR=$(is_error "$RAW")
 assert "send(with metadata) not error" "false" "$ERR"
 MSG3_ID=$(jq_field "$TEXT" "['id']")
+track_doc "$MSG3_ID"
 assert_contains "send(with metadata) has context" "build-job-123" "$TEXT"
 
 # Test: send missing content returns error
@@ -1541,7 +1582,7 @@ ERR=$(is_error "$RAW")
 assert "deliver-to-github(no docId) is error" "true" "$ERR"
 
 # Test: deliver-to-github on already-delivered doc → error
-RAW=$(call_tool "document" '{"action":"push","type":"spec","appId":"command-center","content":"test spec for delivery","targetPath":"specs/test.md"}')
+RAW=$(call_tool "document" '{"action":"push","type":"spec","appId":"command-center","content":"test spec for delivery","targetPath":"e2e-test/gh-delivery.md"}')
 TEXT=$(get_text "$RAW")
 GH_TEST_DOC_ID=$(echo "$TEXT" | python3 -c "
 import json,sys
@@ -1551,6 +1592,7 @@ try:
 except:
     print('')
 " 2>/dev/null)
+track_doc "$GH_TEST_DOC_ID"
 call_tool "document" '{"action":"deliver","docId":"'"$GH_TEST_DOC_ID"'"}' > /dev/null
 RAW=$(call_tool "document" '{"action":"deliver-to-github","docId":"'"$GH_TEST_DOC_ID"'"}')
 ERR=$(is_error "$RAW")
@@ -1558,7 +1600,7 @@ assert "deliver-to-github(already delivered) is error" "true" "$ERR"
 
 # Test: push with autoDeliver=true → doc status reflects delivery attempt
 # (delivered if repos.prod configured, failed if not, pending if no token)
-RAW=$(call_tool "document" '{"action":"push","type":"spec","appId":"command-center","content":"auto test","targetPath":"specs/auto.md","autoDeliver":true}')
+RAW=$(call_tool "document" '{"action":"push","type":"spec","appId":"command-center","content":"auto test","targetPath":"e2e-test/auto.md","autoDeliver":true}')
 TEXT=$(get_text "$RAW")
 ERR=$(is_error "$RAW")
 AUTO_DOC_STATUS=$(echo "$TEXT" | python3 -c "
@@ -1573,7 +1615,6 @@ assert "push(autoDeliver) not error" "false" "$ERR"
 # With GITHUB_TOKEN set and repos.prod configured, status should be delivered or failed (not pending)
 assert "push(autoDeliver) attempted delivery" "True" "$([ "$AUTO_DOC_STATUS" = 'delivered' ] || [ "$AUTO_DOC_STATUS" = 'failed' ] && echo True || echo False)"
 
-# Clean up the auto-deliver test doc if still pending
 AUTO_DOC_ID=$(echo "$TEXT" | python3 -c "
 import json,sys
 try:
@@ -1582,6 +1623,7 @@ try:
 except:
     print('')
 " 2>/dev/null)
+track_doc "$AUTO_DOC_ID"
 
 # ═══════════════════════════════════════════════════════════════
 # Phase 13b: Document Lifecycle — Purge & Lifespan
@@ -1589,11 +1631,19 @@ except:
 echo "── Phase 13b: Document Lifecycle — Purge & Lifespan ─────────"
 
 # Test: purge action exists and runs (may purge 0 docs since test data is fresh)
-RAW=$(call_tool "document" '{"action":"purge"}')
-TEXT=$(get_text "$RAW")
-ERR=$(is_error "$RAW")
-assert "document(purge) not error" "false" "$ERR"
-assert_contains "document(purge) has purged count" "purged" "$TEXT"
+# OPT-IN ONLY. purge is not scoped to test data — it deletes every delivered/
+# failed document older than 24h for this uid, across all apps, on a database
+# shared with prod. It can never purge this run's own docs (they are minutes
+# old), so running it by default is pure collateral damage.
+if [ "$RUN_PURGE" = "true" ]; then
+  RAW=$(call_tool "document" '{"action":"purge"}')
+  TEXT=$(get_text "$RAW")
+  ERR=$(is_error "$RAW")
+  assert "document(purge) not error" "false" "$ERR"
+  assert_contains "document(purge) has purged count" "purged" "$TEXT"
+else
+  echo "  ⏭️  document(purge) — skipped (global 24h purge across all apps; pass --purge to test it)"
+fi
 
 # Test: verify lifespan field on claude-md docs (should be permanent)
 RAW=$(call_tool "document" "{\"action\":\"get\",\"docId\":\"$PUSHED_DOC_ID\"}")
@@ -1608,9 +1658,10 @@ else
 fi
 
 # Test: deliver ephemeral doc → verify it gets deleted
-RAW=$(call_tool "document" '{"action":"push","type":"spec","appId":"command-center","content":"# Ephemeral test","targetPath":"specs/ephemeral.md","lifespan":"ephemeral"}')
+RAW=$(call_tool "document" '{"action":"push","type":"spec","appId":"command-center","content":"# Ephemeral test","targetPath":"e2e-test/ephemeral.md","lifespan":"ephemeral"}')
 TEXT=$(get_text "$RAW")
 EPHEMERAL_DOC_ID=$(jq_field "$TEXT" "['id']")
+track_doc "$EPHEMERAL_DOC_ID"
 EPHEMERAL_LIFESPAN=$(jq_field "$TEXT" "['lifespan']")
 assert "ephemeral doc lifespan=ephemeral" "ephemeral" "$EPHEMERAL_LIFESPAN"
 
@@ -1628,57 +1679,60 @@ assert "ephemeral doc deleted after deliver" "true" "$ERR"
 echo ""
 
 # ═══════════════════════════════════════════════════════════════
-# Phase 14: Cleanup — deliver test-generated documents
+# Phase 14: Cleanup — delete test-generated documents
 # ═══════════════════════════════════════════════════════════════
 echo "── Phase 14: Cleanup ───────────────────────────────────────"
 
-# Deliver the pushed CLAUDE.md doc from Phase 10 (permanent lifespan — still exists)
-if [ -n "$PUSHED_DOC_ID" ]; then
-  call_tool "document" '{"action":"deliver","docId":"'"$PUSHED_DOC_ID"'","deliveredBy":"e2e-cleanup"}' > /dev/null 2>&1
-  echo "  Cleaned up pushed CLAUDE.md doc: $PUSHED_DOC_ID"
-fi
+# Delete every document this run created. Scoped to tracked IDs only — the doc
+# queue under appId=command-center is shared with the live Chat↔Code message
+# channel, so a list-and-sweep by appId would deliver (and, for type=message,
+# delete) inter-agent messages neither side has read.
+CLEANUP_COUNT=0
+CLEANUP_MISSING=0
+for doc_id in $TEST_DOC_IDS; do
+  RAW=$(call_tool "document" "{\"action\":\"delete\",\"docId\":\"$doc_id\"}")
+  if [ "$(is_error "$RAW")" = "false" ]; then
+    CLEANUP_COUNT=$((CLEANUP_COUNT + 1))
+  else
+    # Already gone — ephemeral docs self-delete on deliver, messages on ack
+    CLEANUP_MISSING=$((CLEANUP_MISSING + 1))
+  fi
+done
+echo "  Deleted $CLEANUP_COUNT test documents ($CLEANUP_MISSING already self-deleted)"
 
-# Deliver the permanent spec doc from Phase 8
-if [ -n "$DOC_PERM_ID" ]; then
-  call_tool "document" '{"action":"deliver","docId":"'"$DOC_PERM_ID"'","deliveredBy":"e2e-cleanup"}' > /dev/null 2>&1
-  echo "  Cleaned up permanent spec doc: $DOC_PERM_ID"
-fi
-
-# Note: Ephemeral messages (MSG1, MSG2, MSG3) were auto-deleted on ack
-# Note: Ephemeral docs were auto-deleted on deliver
-# Non-ephemeral docs (DOC1, DOC2 — short lifespan) still exist after deliver
-
-# Deliver any remaining pending docs from this or prior test runs
-RAW=$(call_tool "document" '{"action":"list","appId":"command-center","status":"pending"}')
+# Sweep orphaned fixtures from an aborted prior run. Matched on the "e2e-test/"
+# targetPath prefix only — never on appId — so real queued documents are never
+# touched. Deleted outright rather than delivered: delivering a real document
+# would fire its routing side effects.
+RAW=$(call_tool "document" '{"action":"list","appId":"command-center","status":"pending","limit":50}')
 TEXT=$(get_text "$RAW")
-PENDING_IDS=$(echo "$TEXT" | python3 -c "
+ORPHAN_IDS=$(echo "$TEXT" | python3 -c "
 import json,sys
 try:
     d = json.loads(sys.stdin.read())
     docs = d.get('items', d) if isinstance(d, dict) else d
     for doc in docs:
-        if doc.get('status') == 'pending':
+        path = doc.get('targetPath') or (doc.get('routing') or {}).get('targetPath') or ''
+        if doc.get('type') != 'message' and path.startswith('$E2E_PATH_PREFIX/'):
             print(doc['id'])
-except:
+except Exception:
     pass
 " 2>/dev/null)
 
-CLEANUP_COUNT=0
-while IFS= read -r pid; do
-  if [ -n "$pid" ]; then
-    call_tool "document" '{"action":"deliver","docId":"'"$pid"'","deliveredBy":"e2e-cleanup"}' > /dev/null 2>&1
-    CLEANUP_COUNT=$((CLEANUP_COUNT + 1))
-  fi
-done <<< "$PENDING_IDS"
-
-# Run purge to clean up old delivered/failed docs
-call_tool "document" '{"action":"purge"}' > /dev/null 2>&1
-
-if [ "$CLEANUP_COUNT" -gt 0 ]; then
-  echo "  Cleaned up $CLEANUP_COUNT additional pending test docs"
-else
-  echo "  No additional pending test docs to clean up"
+ORPHAN_COUNT=0
+for orphan_id in $ORPHAN_IDS; do
+  call_tool "document" "{\"action\":\"delete\",\"docId\":\"$orphan_id\"}" > /dev/null 2>&1
+  ORPHAN_COUNT=$((ORPHAN_COUNT + 1))
+  echo "  🧹 Swept orphaned E2E doc from a prior run: $orphan_id"
+done
+if [ "$ORPHAN_COUNT" -eq 0 ]; then
+  echo "  No orphaned E2E docs from prior runs"
 fi
+
+# NOTE: document(purge) is deliberately NOT run here. It is a global
+# maintenance op over all delivered/failed docs older than 24h — it cannot
+# reach this run's own documents and would only delete real ones. It is tested
+# opt-in in Phase 13b via --purge.
 
 # ═══════════════════════════════════════════════════════════════
 # Phase 15: Job as Universal Work Order (draft/claim/revise)
@@ -2815,10 +2869,12 @@ delete_entity "idea" "ideaId" "$IDEA2_ID" "idea IDEA2"
 
 echo ""
 echo "  Deleting remaining documents..."
-delete_entity "document" "docId" "$DOC1_ID" "doc DOC1"
-delete_entity "document" "docId" "$DOC2_ID" "doc DOC2"
-delete_entity "document" "docId" "$DOC3_ID" "doc DOC3"
-delete_entity "document" "docId" "$DOC_PERM_ID" "doc DOC_PERM"
+# Safety net over every doc this run created (Phase 14 removed most of them —
+# "already gone" is the expected result here). Tracked IDs only, never a sweep
+# by appId: that path holds the live Chat<->Code message queue.
+for doc_id in $TEST_DOC_IDS; do
+  delete_entity "document" "docId" "$doc_id" "doc $doc_id"
+done
 
 echo ""
 echo "  Teardown: $TEARDOWN_PASS deleted / $TEARDOWN_FAIL failed"

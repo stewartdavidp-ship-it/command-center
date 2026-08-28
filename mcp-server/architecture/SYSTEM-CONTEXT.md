@@ -774,7 +774,13 @@ cd mcp-server
 bash e2e-test.sh    # Runs 357 tests against live Cloud Run service
 ```
 
-Tests use the CC API key `cc_oUt4ba0dYVRBfPREqoJ1yIsJKjr1_wxityxnkh8pqw1vu7ztmp`. Test artifacts use "E2E:" prefix convention and are cleaned up in Phase 14.
+Tests use the CC API key `cc_oUt4ba0dYVRBfPREqoJ1yIsJKjr1_wxityxnkh8pqw1vu7ztmp`. Test artifacts are identifiable by convention — "E2E" in job/session titles, `e2e-test-` appId prefixes, `e2e-test/` document targetPaths — and are cleaned up in Phase 14 plus the teardown phase.
+
+**The test and prod servers share one Firebase RTDB.** Cleanup must therefore be scoped to IDs the run tracked, or to the fixture markers above. Never list-and-sweep a collection by `appId` alone: `appId=command-center` holds the live Chat↔Code message queue, and delivering a pending document there destroys inter-agent messages neither side has read. `document(purge)` is a global maintenance op (all delivered/failed docs older than 24h, across every app) and is opt-in only:
+
+```bash
+bash e2e-test.sh --purge   # also exercises document(purge)
+```
 
 ---
 
