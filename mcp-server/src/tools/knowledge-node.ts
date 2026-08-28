@@ -141,11 +141,17 @@ Actions:
           updatedAt: now,
         };
 
-        // Compute new tree aggregates
+        // Aggregates move by atomic DELTA, never read-modify-write.
+        //
+        // These used to be computed as `(tree.nodeCount || 0) + 1` from a snapshot read
+        // above. Creating several nodes in one tree concurrently means every call reads the
+        // same starting value and writes read+1, so N parallel creates advance the counter
+        // by 1. That is exactly what happened to the three Mast Social trees on 2026-05-23
+        // (6 real nodes each, counters stuck at 3/2/3) and it drifts permanently, because
+        // nothing recomputes. Run action:"repair" on knowledge_tree to reconcile.
+        //
+        // Estimated locally only for the budget warning below; the WRITE is the delta.
         const newTokenUsed = (tree.tokenUsed || 0) + tokenCount;
-        const newNodeCount = (tree.nodeCount || 0) + 1;
-        const newTrustProfile = { ...(tree.trustProfile || { authoritative: 0, credible: 0, unverified: 0, questionable: 0 }) };
-        newTrustProfile[effectiveTrust] = (newTrustProfile[effectiveTrust] || 0) + 1;
 
         // Multi-path atomic update: index entry + content record + tree aggregates
         // Index is under trees/{treeId}/index/{nodeId}
@@ -153,9 +159,9 @@ Actions:
         // We need two separate updates since they're in different top-level paths
         const treeUpdates: Record<string, any> = {
           [`index/${nId}`]: indexEntry,
-          tokenUsed: newTokenUsed,
-          nodeCount: newNodeCount,
-          trustProfile: newTrustProfile,
+          tokenUsed: increment(tokenCount),
+          nodeCount: increment(1),
+          [`trustProfile/${effectiveTrust}`]: increment(1),
           updatedAt: now,
         };
 
@@ -242,22 +248,20 @@ Actions:
           const newTokenCost = contentUpdates.tokenCount;
           indexUpdates.tokenCost = newTokenCost;
 
-          const treeSnap = await getTreeRef(uid, nodeTreeId).once("value");
-          const tree = treeSnap.val();
-          treeUpdates.tokenUsed = (tree.tokenUsed || 0) - oldTokenCost + newTokenCost;
+          // Atomic delta — no snapshot read needed, and no race with a concurrent write.
+          treeUpdates.tokenUsed = increment(newTokenCost - oldTokenCost);
           needTreeUpdate = true;
         }
 
         // Handle trust change
         if (trust !== undefined && trust !== currentIndex.trust) {
           indexUpdates.trust = trust;
-          const treeSnap = needTreeUpdate ? null : await getTreeRef(uid, nodeTreeId).once("value");
-          const tree = treeSnap ? treeSnap.val() : (await getTreeRef(uid, nodeTreeId).once("value")).val();
-          const tp = { ...(tree.trustProfile || { authoritative: 0, credible: 0, unverified: 0, questionable: 0 }) };
+          // Move one count between two buckets atomically. The previous version read the
+          // whole trustProfile and wrote it back, which both raced with concurrent writes
+          // and clobbered the other buckets with a stale snapshot.
           const oldTrust = currentIndex.trust || "unverified";
-          tp[oldTrust] = Math.max(0, (tp[oldTrust] || 0) - 1);
-          tp[trust] = (tp[trust] || 0) + 1;
-          treeUpdates.trustProfile = tp;
+          treeUpdates[`trustProfile/${oldTrust}`] = increment(-1);
+          treeUpdates[`trustProfile/${trust}`] = increment(1);
           needTreeUpdate = true;
         }
 
@@ -299,13 +303,13 @@ Actions:
         const treeUpdates: Record<string, any> = { updatedAt: now };
 
         if (tree && indexEntry) {
-          treeUpdates.nodeCount = Math.max(0, (tree.nodeCount || 0) - 1);
-          treeUpdates.tokenUsed = Math.max(0, (tree.tokenUsed || 0) - (indexEntry.tokenCost || 0));
-
-          const tp = { ...(tree.trustProfile || { authoritative: 0, credible: 0, unverified: 0, questionable: 0 }) };
-          const nodeTrust = indexEntry.trust || "unverified";
-          tp[nodeTrust] = Math.max(0, (tp[nodeTrust] || 0) - 1);
-          treeUpdates.trustProfile = tp;
+          // Atomic deltas. This drops the Math.max(0, …) floor, which was masking rather
+          // than preventing drift — a counter that would have gone negative was already
+          // wrong, and silently clamping it hid that. action:"repair" on knowledge_tree
+          // recomputes every aggregate from the real index entries.
+          treeUpdates.nodeCount = increment(-1);
+          treeUpdates.tokenUsed = increment(-(indexEntry.tokenCost || 0));
+          treeUpdates[`trustProfile/${indexEntry.trust || "unverified"}`] = increment(-1);
         }
 
         // Remove from parent's childIds

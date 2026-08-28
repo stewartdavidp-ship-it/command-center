@@ -39,6 +39,8 @@ Actions:
   - "add_search": Record a search query and its results on a tree. Requires treeId, query. Optional: nodeIdsProduced (array of node IDs created from this search). Appends to searchHistory with auto-timestamp.
   - "search" (alias: "search_tags"): Search across ALL trees for nodes answering a question. Pass query (free text — the question in your own words) and/or tags (exact keyword tags). AT LEAST ONE is required; passing both is best. Scores against each node's question, keyFinding and tags, returns the top matches with staleness flags. Optional: forestId or treeId filter. Zero-result searches are logged automatically (see list_misses).
   - "stats": Corpus health — what fraction of nodes has ever been READ (asset vs habit), what search keeps surfacing that nobody opens (retrieval precision), and how many questions the corpus could not answer. No args.
+  - "repair": Recompute every tree's nodeCount / tokenUsed / trustProfile from its actual index entries. Aggregates are maintained incrementally and drift permanently if any write path misses them. Dry run by default; pass confirm:true to write.
+  - "clear_misses": Reset the miss log so the demand signal stays clean. Optional query = substring; only rows whose query contains it are deleted (e.g. a test suite clearing its own probes). Omit to target ALL rows. Dry run by default; pass confirm:true to write.
   - "list_misses": Review searches that returned nothing — the retrieval gaps. Optional: limit (default 50, newest first). Use to find questions the corpus should answer but can't.
   - "generate_summary": Generate a cached flat routing table — one line per node. With forestId, covers that forest's member trees and stores on the forest. WITHOUT forestId, covers EVERY tree including those belonging to no forest, and stores globally.
   - "get_forest_summary": Get a cached routing summary + staleness check. With forestId, that forest's; without, the global one.`,
@@ -47,7 +49,7 @@ Actions:
       action: z.enum([
         "list_forests", "get_forest", "create_forest", "update_forest", "delete_forest",
         "list_trees", "get_tree", "create_tree", "update_tree", "delete_tree", "get_index", "add_search",
-        "search", "search_tags", "list_misses", "stats", "generate_summary", "get_forest_summary",
+        "search", "search_tags", "list_misses", "clear_misses", "stats", "repair", "generate_summary", "get_forest_summary",
       ]).describe("Action to perform"),
       forestId: z.string().optional().describe("Forest ID (required for update_forest/delete_forest, optional filter for list_trees)"),
       treeId: z.string().optional().describe("Tree ID (required for update_tree/delete_tree/get_index)"),
@@ -61,9 +63,10 @@ Actions:
       freshnessPeriodDays: z.number().int().optional().describe("Days before nodes are considered stale (default 90)"),
       query: z.string().optional().describe("Free-text query: the question in your own words (search), or the search query being recorded (add_search)"),
       nodeIdsProduced: z.array(z.string()).optional().describe("Node IDs created from a search (optional for add_search)"),
+      confirm: z.boolean().optional().describe("Required (true) to actually write for repair / clear_misses. Without it those actions dry-run and report what they would change."),
       gaps: z.string().optional().describe("JSON array of gap objects: [{question, priority, discoveredAt?, status?}]. For update_tree. Priority: high/medium/low. Status: open/resolved (default: open)."),
     },
-    async ({ initiator, action, forestId, treeId, name, description, tags, treeIds, forestIds, tokenBudget, freshnessPeriodDays, query, nodeIdsProduced, gaps, limit }) => {
+    async ({ initiator, action, forestId, treeId, name, description, tags, treeIds, forestIds, tokenBudget, freshnessPeriodDays, query, nodeIdsProduced, gaps, limit, confirm }) => {
       resolveInitiator({ initiator });
       const uid = getCurrentUid();
 
@@ -645,6 +648,100 @@ Actions:
         });
       }
 
+      // ─── REPAIR ───
+      if (action === "repair") {
+        // Per-tree aggregates (nodeCount / tokenUsed / trustProfile) are maintained by
+        // incrementing on create and decrementing on delete. Any path that writes an index
+        // entry without updating them — a failed partial write, an older code path, a
+        // manual edit — drifts the aggregate permanently, and nothing recomputes it.
+        // Observed 2026-08-28: 309 real entries vs 299 counted.
+        //
+        // dryRun by default: this rewrites tree records on the shared prod RTDB.
+        const apply = confirm === true;
+        const treesSnap = await getTreesRef(uid).once("value");
+        const treesData = treesSnap.val() || {};
+
+        const drift: any[] = [];
+        const updates: Record<string, any> = {};
+
+        for (const [tid, tree] of Object.entries(treesData) as [string, any][]) {
+          const entries = Object.values(tree?.index || {}) as any[];
+          const realCount = entries.length;
+          const realTokens = entries.reduce((s, e) => s + (e.tokenCost || 0), 0);
+          const realTrust = emptyTrustProfile() as Record<string, number>;
+          for (const e of entries) {
+            const t = e.trust || "unverified";
+            if (t in realTrust) realTrust[t] += 1;
+          }
+
+          const storedCount = tree?.nodeCount || 0;
+          const storedTokens = tree?.tokenUsed || 0;
+          const storedTrust = tree?.trustProfile || emptyTrustProfile();
+          const trustDiffers = TRUST_LEVELS.some(
+            (l) => (storedTrust[l] || 0) !== realTrust[l]
+          );
+
+          if (storedCount !== realCount || storedTokens !== realTokens || trustDiffers) {
+            drift.push({
+              treeId: tid, name: tree?.name,
+              nodeCount: { stored: storedCount, actual: realCount },
+              tokenUsed: { stored: storedTokens, actual: realTokens },
+              ...(trustDiffers ? { trustProfile: { stored: storedTrust, actual: realTrust } } : {}),
+            });
+            updates[`${tid}/nodeCount`] = realCount;
+            updates[`${tid}/tokenUsed`] = realTokens;
+            updates[`${tid}/trustProfile`] = realTrust;
+          }
+        }
+
+        if (apply && drift.length > 0) await getTreesRef(uid).update(updates);
+
+        const totalReal = (Object.values(treesData) as any[])
+          .reduce((s, t) => s + Object.keys(t?.index || {}).length, 0);
+        const totalStored = (Object.values(treesData) as any[])
+          .reduce((s, t) => s + (t?.nodeCount || 0), 0);
+
+        return withResponseSize({ content: [{ type: "text", text: JSON.stringify({
+          applied: apply,
+          treesWithDrift: drift.length,
+          totals: { actualNodes: totalReal, storedNodeCount: totalStored, drift: totalReal - totalStored },
+          trees: drift,
+          ...(apply ? {} : { note: "Dry run — no writes. Pass confirm:true to apply." }),
+        }, null, 2) }] });
+      }
+
+      // ─── CLEAR_MISSES ───
+      if (action === "clear_misses") {
+        // The miss log is the demand signal, so it has to be resettable — otherwise test
+        // traffic (e2e appends a probe row per run) permanently dilutes it. `match` scopes
+        // the delete to rows whose query contains a substring, so a test suite can clean up
+        // after itself without touching real signal.
+        const snap = await getSearchMissesRef(uid).once("value");
+        const data = snap.val() || {};
+        const needle = (query || "").trim().toLowerCase();
+
+        const doomed = Object.entries(data).filter(([, m]: [string, any]) =>
+          !needle || String(m?.query ?? "").toLowerCase().includes(needle)
+        );
+
+        if (confirm !== true) {
+          return withResponseSize({ content: [{ type: "text", text: JSON.stringify({
+            applied: false, wouldDelete: doomed.length, totalRows: Object.keys(data).length,
+            scope: needle ? `query contains "${needle}"` : "ALL rows",
+            sample: doomed.slice(0, 5).map(([, m]: [string, any]) => m?.query ?? null),
+            note: "Dry run — no writes. Pass confirm:true to apply.",
+          }, null, 2) }] });
+        }
+
+        const updates: Record<string, any> = {};
+        for (const [k] of doomed) updates[k] = null;
+        if (doomed.length > 0) await getSearchMissesRef(uid).update(updates);
+
+        return withResponseSize({ content: [{ type: "text", text: JSON.stringify({
+          applied: true, deleted: doomed.length, remaining: Object.keys(data).length - doomed.length,
+        }, null, 2) }] });
+      }
+
       // ─── STATS ───
       if (action === "stats") {
         const [treesSnap, missSnap] = await Promise.all([
@@ -820,8 +917,13 @@ Actions:
           }
 
           const treesSnap = await getTreesRef(uid).once("value");
+          // Count real index entries, NOT the tree.nodeCount aggregate. generate_summary
+          // counts by iterating entries, so comparing against the aggregate compares unlike
+          // with unlike — and the aggregate has drifted (309 real vs 299 stored on
+          // 2026-08-28), which pinned this to stale:true regardless of state. Run
+          // action:"repair" to reconcile the aggregates themselves.
           const currentNodeCount = (Object.values(treesSnap.val() || {}) as any[])
-            .reduce((sum, t) => sum + (t?.nodeCount || 0), 0);
+            .reduce((sum, t) => sum + Object.keys(t?.index || {}).length, 0);
           const isStale = currentNodeCount !== (cached.summaryNodeCount || 0);
 
           return withResponseSize({
@@ -857,7 +959,8 @@ Actions:
           );
           for (const snap of treeSnaps) {
             const tree = snap.val();
-            if (tree) currentNodeCount += (tree.nodeCount || 0);
+            // Real index entries, not the aggregate — see the global branch above.
+            if (tree) currentNodeCount += Object.keys(tree.index || {}).length;
           }
         }
 
