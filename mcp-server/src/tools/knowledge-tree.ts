@@ -4,10 +4,13 @@ import { getForestsRef, getForestRef, getTreesRef, getTreeRef, getTreeIndexRef, 
 import { getCurrentUid } from "../context.js";
 import { withResponseSize } from "../response-metadata.js";
 import { INITIATOR_PARAM, resolveInitiator } from "../surfaces.js";
-import { tokenize, scoreEntry, buildIdf, computeStaleness, summaryLine, SCORE_FLOOR, STRONG_MATCH_SCORE, GAP_ANSWERED_SCORE } from "../knowledge-search.js";
+import { tokenize, scoreEntry, buildIdf, computeStaleness, summaryLine, SCORE_FLOOR, STRONG_MATCH_SCORE, GAP_ANSWERED_SCORE, coerceArrayParam } from "../knowledge-search.js";
 
 /** Max scored matches returned by search. Truncation is always reported via totalMatched. */
 const SEARCH_RESULT_LIMIT = 15;
+
+/** Description chars kept in list_trees. Routing needs enough to choose, not the essay. */
+const LIST_DESCRIPTION_CHARS = 160;
 
 /** Max nodes rendered into a global routing table, to bound response size. */
 const GLOBAL_SUMMARY_NODE_CAP = 400;
@@ -67,7 +70,7 @@ Actions:
       query: z.string().optional().describe("Free-text query: the question in your own words (search), or the search query being recorded (add_search)"),
       nodeIdsProduced: z.array(z.string()).optional().describe("Node IDs created from a search (optional for add_search)"),
       confirm: z.boolean().optional().describe("Required (true) to actually write for repair / clear_misses. Without it those actions dry-run and report what they would change."),
-      gaps: z.string().optional().describe("JSON array of gap objects: [{question, priority, discoveredAt?, status?}]. For update_tree. Priority: high/medium/low. Status: open/resolved (default: open)."),
+      gaps: z.union([z.string(), z.array(z.any())]).optional().describe("Gap objects for update_tree: [{question, priority, discoveredAt?, status?}]. Accepts a REAL ARRAY (preferred — no escaping) or a JSON array string. Priority: high/medium/low. Status: open/resolved (default: open). For single-gap changes use add_gap / resolve_gap instead."),
     },
     async ({ initiator, action, forestId, treeId, name, description, tags, treeIds, forestIds, tokenBudget, freshnessPeriodDays, query, nodeIdsProduced, gaps, limit, confirm }) => {
       resolveInitiator({ initiator });
@@ -179,7 +182,15 @@ Actions:
         const summaries = trees.map((t: any) => ({
           id: t.id,
           name: t.name,
-          description: t.description || null,
+          // Truncated. list_trees is a ROUTING call — it answers "which tree do I want",
+          // and full multi-paragraph descriptions made it the largest response on the whole
+          // surface (51,757 chars for 62 trees, measured 2026-08-28). Same keys, shorter
+          // values, so callers do not break; get_tree returns the full text.
+          description: t.description
+            ? (t.description.length > LIST_DESCRIPTION_CHARS
+                ? t.description.slice(0, LIST_DESCRIPTION_CHARS) + "… (get_tree for full)"
+                : t.description)
+            : null,
           forestIds: t.forestIds || [],
           tokenUsed: t.tokenUsed || 0,
           tokenBudget: t.tokenBudget || 150000,
@@ -267,11 +278,12 @@ Actions:
 
         // Handle gaps field
         if (gaps !== undefined) {
-          try {
-            const parsedGaps = JSON.parse(gaps);
-            if (!Array.isArray(parsedGaps)) {
-              return withResponseSize({ content: [{ type: "text", text: "gaps must be a JSON array" }], isError: true });
-            }
+          const coerced = coerceArrayParam(gaps, "gaps");
+          if (!coerced.ok) {
+            return withResponseSize({ content: [{ type: "text", text: coerced.error }], isError: true });
+          }
+          {
+            const parsedGaps = coerced.value || [];
             // Validate and normalize each gap entry
             updates.gaps = parsedGaps.map((g: any) => ({
               question: g.question || "",
@@ -279,8 +291,6 @@ Actions:
               discoveredAt: g.discoveredAt || now,
               status: g.status || "open",
             }));
-          } catch {
-            return withResponseSize({ content: [{ type: "text", text: "gaps must be a valid JSON string" }], isError: true });
           }
         }
 

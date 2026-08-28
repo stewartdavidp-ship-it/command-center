@@ -14,6 +14,41 @@
  * a second ranking stage behind it without touching the tool surface.
  */
 
+/**
+ * Accept an array parameter given EITHER as a real array or as a JSON-encoded string.
+ *
+ * Three params (gaps, sources, crossRefs) were typed as JSON strings while six others in
+ * the same tool were typed as real arrays. Callers cannot keep two conventions straight in
+ * one call: one session mis-serialised a string-typed param seven times in a single
+ * session — the seventh while writing the correction to its own note about that footgun.
+ * Knowing about the trap did not prevent falling into it, which is what makes this a schema
+ * defect rather than a documentation one.
+ *
+ * Returns { ok, value, error }. Accepting both shapes removes the whole class; it does not
+ * guess at malformed input, which would trade a loud failure for a silent wrong write.
+ */
+export function coerceArrayParam(
+  raw: unknown,
+  fieldName: string
+): { ok: true; value: any[] | undefined } | { ok: false; error: string } {
+  if (raw === undefined || raw === null) return { ok: true, value: undefined };
+  if (Array.isArray(raw)) return { ok: true, value: raw };
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (trimmed === "") return { ok: true, value: [] };
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (!Array.isArray(parsed)) {
+        return { ok: false, error: `${fieldName} parsed as ${typeof parsed}, not an array. Pass a real array (preferred) or a JSON array string.` };
+      }
+      return { ok: true, value: parsed };
+    } catch {
+      return { ok: false, error: `${fieldName} is a string but not valid JSON. Pass a real array instead — that is now accepted and avoids escaping entirely.` };
+    }
+  }
+  return { ok: false, error: `${fieldName} must be an array (preferred) or a JSON array string; got ${typeof raw}.` };
+}
+
 /** Words carrying no retrieval signal. Small on purpose — over-pruning loses real terms. */
 const STOPWORDS = new Set([
   "a", "an", "the", "and", "or", "but", "if", "then", "than", "that", "this", "these",
@@ -54,6 +89,49 @@ export function tokenize(text: string): string[] {
     .split(/[^a-z0-9]+/)
     .filter((t) => t.length > 1 && !STOPWORDS.has(t))
     .map(stem);
+}
+
+/**
+ * Per-object tokenization cache.
+ *
+ * Every scorer entry point re-tokenized the same records. buildIdf tokenizes all N entries,
+ * then scoreEntry tokenizes each one again — and check_gaps scores every gap against every
+ * entry, so 93 gaps over 318 nodes meant ~30,000 scoreEntry calls each re-splitting the
+ * same strings. Measured: check_gaps at 2.7s.
+ *
+ * Keyed on the record object itself and held weakly, so it lives exactly as long as the
+ * Firebase snapshot objects for one request and cannot leak between requests or users.
+ */
+const TOKEN_CACHE = new WeakMap<object, { q: Set<string>; f: Set<string>; tag: Set<string>; tagsLower: string[] }>();
+
+function entryTokens(entry: ScorableEntry) {
+  if (typeof entry !== "object" || entry === null) {
+    return { q: new Set<string>(), f: new Set<string>(), tag: new Set<string>(), tagsLower: [] as string[] };
+  }
+  let hit = TOKEN_CACHE.get(entry as object);
+  if (!hit) {
+    const tagsLower = (entry.tags || []).map((t) => String(t).toLowerCase());
+    hit = {
+      q: new Set(tokenize(entry.question || "")),
+      f: new Set(tokenize(entry.keyFinding || "")),
+      tag: new Set(tagsLower.flatMap((t) => tokenize(t))),
+      tagsLower,
+    };
+    TOKEN_CACHE.set(entry as object, hit);
+  }
+  return hit;
+}
+
+const TREE_CACHE = new WeakMap<object, Set<string>>();
+
+function treeTokens(tree: ScorableTree) {
+  if (typeof tree !== "object" || tree === null) return new Set<string>();
+  let hit = TREE_CACHE.get(tree as object);
+  if (!hit) {
+    hit = new Set([...tokenize(tree.name || ""), ...tokenize(tree.description || "")]);
+    TREE_CACHE.set(tree as object, hit);
+  }
+  return hit;
 }
 
 /**
@@ -131,11 +209,10 @@ export function buildIdf(entries: ScorableEntry[]): IdfMap {
 
   for (const entry of entries) {
     // Count each term once per node: document frequency, not term frequency.
-    const terms = new Set([
-      ...tokenize(entry.question || ""),
-      ...tokenize(entry.keyFinding || ""),
-      ...(entry.tags || []).flatMap((t) => tokenize(String(t))),
-    ]);
+    // Shares the per-request token cache with scoreEntry — previously this pass and the
+    // scoring pass each tokenized all N entries independently.
+    const c = entryTokens(entry);
+    const terms = new Set([...c.q, ...c.f, ...c.tag]);
     for (const t of terms) df.set(t, (df.get(t) || 0) + 1);
   }
 
@@ -171,7 +248,8 @@ export function scoreEntry(
   tree: ScorableTree = {},
   idf?: IdfMap
 ): ScoreResult {
-  const entryTags: string[] = (entry.tags || []).map((t) => String(t).toLowerCase());
+  const cached = entryTokens(entry);
+  const entryTags = cached.tagsLower;
 
   // ── Exact tag matches (unchanged semantics from the original implementation) ──
   const matchingTags = searchTagsLower.filter((st) => entryTags.includes(st));
@@ -181,15 +259,12 @@ export function scoreEntry(
   const matchedTerms: string[] = [];
 
   if (queryTokens.length > 0) {
-    const questionTokens = new Set(tokenize(entry.question || ""));
-    const findingTokens = new Set(tokenize(entry.keyFinding || ""));
+    const questionTokens = cached.q;
+    const findingTokens = cached.f;
     // Tags participate in text scoring too, so a query term reaches a node whose tag says
     // it even when the caller passed no exact tags.
-    const tagTokens = new Set(entryTags.flatMap((t) => tokenize(t)));
-    const treeTokens = new Set([
-      ...tokenize(tree.name || ""),
-      ...tokenize(tree.description || ""),
-    ]);
+    const tagTokens = cached.tag;
+    const treeTokensSet = treeTokens(tree);
 
     // Dedupe query terms so a repeated word cannot inflate the score.
     for (const term of new Set(queryTokens)) {
@@ -197,7 +272,7 @@ export function scoreEntry(
       if (questionTokens.has(term)) termScore += WEIGHT_QUESTION;
       if (findingTokens.has(term)) termScore += WEIGHT_KEY_FINDING;
       if (tagTokens.has(term)) termScore += WEIGHT_QUESTION;
-      if (treeTokens.has(term)) termScore += WEIGHT_TREE_CONTEXT;
+      if (treeTokensSet.has(term)) termScore += WEIGHT_TREE_CONTEXT;
 
       if (termScore > 0) {
         // Rare terms carry the signal; ubiquitous ones ("work", "use") are damped toward

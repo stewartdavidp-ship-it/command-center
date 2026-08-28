@@ -72,6 +72,12 @@ function measureContentChars(content: TextContent[]): number {
  * @param extraMeta - Optional additional metadata fields to include
  * @returns The same result object with metadata appended
  */
+/**
+ * How many pending-message subjects ride along in metadata. The count carries the
+ * signal; the bodies do not. Full list was ~745 tokens on every single call.
+ */
+const PENDING_MESSAGE_PREVIEW = 2;
+
 export function withResponseSize(
   result: ToolResult,
   extraMeta?: Record<string, number | string | boolean>
@@ -172,10 +178,26 @@ export function withResponseSize(
 
   // Include _pendingMessages if there are pending messages for any surface.
   // Suppressed for document(receive) to avoid redundant info.
+  //
+  // ONLY A PREVIEW. This used to embed the full message list on every response: measured
+  // 2026-08-28 at 2,980 of 3,037 metadata chars — 98% of per-call overhead, ~745 tokens,
+  // identical on every call, while _signals below already carries "pending-messages". On a
+  // small response (get_index, stats) that was ~45% of the entire payload, and a session's
+  // own _contextHealth was observed reaching zone "red" partly from re-sending it.
+  //
+  // The count is the signal; the bodies are not. A caller that needs them reads them
+  // deliberately.
   if (!getSuppressPiggyback()) {
     const pendingMessages = getPendingMessages();
     if (pendingMessages && pendingMessages.count > 0) {
-      meta._pendingMessages = pendingMessages;
+      const all = (pendingMessages as any).messages || [];
+      meta._pendingMessages = {
+        ...pendingMessages,
+        messages: all.slice(0, PENDING_MESSAGE_PREVIEW),
+        ...(all.length > PENDING_MESSAGE_PREVIEW
+          ? { truncated: all.length - PENDING_MESSAGE_PREVIEW, note: "Preview only — read messages deliberately rather than from this block." }
+          : {}),
+      };
     }
   }
 

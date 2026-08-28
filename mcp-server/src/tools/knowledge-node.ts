@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getTreeRef, getTreeIndexRef, getNodeContentRef, getNodesRef, getTreesRef, increment } from "../firebase.js";
+import { coerceArrayParam } from "../knowledge-search.js";
 import { getCurrentUid } from "../context.js";
 import { withResponseSize } from "../response-metadata.js";
 import { INITIATOR_PARAM, resolveInitiator } from "../surfaces.js";
@@ -45,7 +46,7 @@ export function registerKnowledgeNodeTools(server: McpServer): void {
     `Knowledge node content CRUD with selective loading. Nodes contain the actual knowledge — curated findings, sources, and cross-references. Each node has an index entry (cheap, always loaded with tree) and a content record (expensive, loaded on demand).
 
 Actions:
-  - "create": Create a node in a tree. Requires treeId, question, content. Optional: trust, parentId, keyFinding, sources (JSON string), consensusNotes, crossRefs (JSON string). Auto-computes tokenCount. Creates index entry + content record atomically. Updates tree aggregates.
+  - "create": Create a node in a tree. Requires treeId, question, content. Optional: trust, parentId, keyFinding, sources, consensusNotes, crossRefs. sources/crossRefs accept a REAL ARRAY (preferred) or a JSON array string. Auto-computes tokenCount. Creates index entry + content record atomically. Updates tree aggregates.
   - "update": Update a node. Requires nodeId. Optional: question, content, trust, keyFinding, parentId, sources, consensusNotes, crossRefs, lastVerified. Recomputes token cost if content changes. Updates tree aggregates if trust/content changes.
   - "delete": Delete a node. Requires nodeId. Removes index entry + content record. Updates tree aggregates and parent childIds.
   - "load": Load a single node's full content. Requires nodeId. Returns content, sources, crossRefs, tokenCount.
@@ -66,9 +67,9 @@ Actions:
       trust: z.enum(TRUST_LEVELS).optional().describe("Trust rating (default: unverified)"),
       parentId: z.string().optional().describe("Parent node ID for hierarchy (optional for create, update)"),
       newParentId: z.string().optional().describe("New parent node ID for move (use 'root' to make a root node)"),
-      sources: z.string().optional().describe("JSON array of source objects: [{url, document, section, credibility, credibilityRationale, discoveryQuery?}]. discoveryQuery records the search query that surfaced this source."),
+      sources: z.union([z.string(), z.array(z.any())]).optional().describe("JSON array of source objects: [{url, document, section, credibility, credibilityRationale, discoveryQuery?}]. discoveryQuery records the search query that surfaced this source."),
       consensusNotes: z.string().optional().describe("Agreement/divergence notes across sources"),
-      crossRefs: z.string().optional().describe("JSON array of cross-references: [{nodeId, treeId, relationship}]"),
+      crossRefs: z.union([z.string(), z.array(z.any())]).optional().describe("JSON array of cross-references: [{nodeId, treeId, relationship}]"),
       lastVerified: z.string().optional().describe("ISO date when node was last verified (optional for update)"),
       tags: z.array(z.string()).optional().describe("SECONDARY booster, NOT the index. Retrieval scores primarily against `question` and `keyFinding` — so write THOSE in the words a future session would actually type ('Resend returned 200 but the email never arrived' beats 'Resend delivery semantics'). Tags help only when someone guesses the same tag you chose. Measured 2026-08-28: rewriting a node's question into searcher vocabulary moved it from 0.77 (missed, wrong node ranked first) to 3.05 (top hit) with no change to the scorer."),
       targetNodeId: z.string().optional().describe("Target node ID for add_cross_ref/remove_cross_ref"),
@@ -79,18 +80,19 @@ Actions:
       const uid = getCurrentUid();
 
       // Parse JSON string params
-      let parsedSources: any[] | undefined;
-      let parsedCrossRefs: any[] | undefined;
-      if (sources) {
-        try { parsedSources = JSON.parse(sources); } catch {
-          return withResponseSize({ content: [{ type: "text", text: "sources must be a valid JSON array" }], isError: true });
-        }
+      // Both accept a real array OR a JSON-encoded string. They were string-only while
+      // `tags` and `nodeIds` on the same call were real arrays — two conventions in one
+      // tool, which callers reliably get wrong. See coerceArrayParam for the evidence.
+      const srcCoerced = coerceArrayParam(sources, "sources");
+      if (!srcCoerced.ok) {
+        return withResponseSize({ content: [{ type: "text", text: srcCoerced.error }], isError: true });
       }
-      if (crossRefs) {
-        try { parsedCrossRefs = JSON.parse(crossRefs); } catch {
-          return withResponseSize({ content: [{ type: "text", text: "crossRefs must be a valid JSON array" }], isError: true });
-        }
+      const xrefCoerced = coerceArrayParam(crossRefs, "crossRefs");
+      if (!xrefCoerced.ok) {
+        return withResponseSize({ content: [{ type: "text", text: xrefCoerced.error }], isError: true });
       }
+      const parsedSources: any[] | undefined = srcCoerced.value;
+      const parsedCrossRefs: any[] | undefined = xrefCoerced.value;
 
       // ─── CREATE ───
       if (action === "create") {
