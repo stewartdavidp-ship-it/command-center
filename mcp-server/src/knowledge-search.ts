@@ -221,6 +221,21 @@ export function scoreEntry(
   };
 }
 
+/**
+ * Score at which an open gap is treated as possibly already answered by an existing node.
+ *
+ * Set deliberately above STRONG_MATCH_SCORE. The asymmetry matters: a false negative here
+ * just leaves a gap open for a human to read, while a false positive tells someone that
+ * work is already done when it isn't. This flag therefore only ever RECOMMENDS review — it
+ * never resolves a gap.
+ *
+ * Why this exists: a stale gap is strictly worse than a stale node. A stale node says
+ * "this might be outdated"; a stale gap actively directs a session to redo finished work.
+ * Observed 2026-08-28 — a fantasy-draft tree's top gap still claimed rankings were
+ * provisional pending scoring confirmation four days after that confirmation landed.
+ */
+export const GAP_ANSWERED_SCORE = 1.2;
+
 /** Max keyFinding characters rendered into a routing-table line. */
 const SUMMARY_FINDING_CHARS = 100;
 

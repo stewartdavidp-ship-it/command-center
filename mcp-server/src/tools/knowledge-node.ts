@@ -70,7 +70,7 @@ Actions:
       consensusNotes: z.string().optional().describe("Agreement/divergence notes across sources"),
       crossRefs: z.string().optional().describe("JSON array of cross-references: [{nodeId, treeId, relationship}]"),
       lastVerified: z.string().optional().describe("ISO date when node was last verified (optional for update)"),
-      tags: z.array(z.string()).optional().describe("Keyword tags for retrieval (e.g., ['merge-conflicts', 'file-boundaries']). Written to index entry for cheap search."),
+      tags: z.array(z.string()).optional().describe("SECONDARY booster, NOT the index. Retrieval scores primarily against `question` and `keyFinding` — so write THOSE in the words a future session would actually type ('Resend returned 200 but the email never arrived' beats 'Resend delivery semantics'). Tags help only when someone guesses the same tag you chose. Measured 2026-08-28: rewriting a node's question into searcher vocabulary moved it from 0.77 (missed, wrong node ranked first) to 3.05 (top hit) with no change to the scorer."),
       targetNodeId: z.string().optional().describe("Target node ID for add_cross_ref/remove_cross_ref"),
       relationship: z.string().optional().describe("Cross-ref relationship type (e.g., 'supports', 'contradicts', 'extends', 'qualifies'). Required for add_cross_ref."),
     },

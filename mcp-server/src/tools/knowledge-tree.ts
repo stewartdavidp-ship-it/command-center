@@ -4,7 +4,7 @@ import { getForestsRef, getForestRef, getTreesRef, getTreeRef, getTreeIndexRef, 
 import { getCurrentUid } from "../context.js";
 import { withResponseSize } from "../response-metadata.js";
 import { INITIATOR_PARAM, resolveInitiator } from "../surfaces.js";
-import { tokenize, scoreEntry, buildIdf, computeStaleness, summaryLine, SCORE_FLOOR, STRONG_MATCH_SCORE } from "../knowledge-search.js";
+import { tokenize, scoreEntry, buildIdf, computeStaleness, summaryLine, SCORE_FLOOR, STRONG_MATCH_SCORE, GAP_ANSWERED_SCORE } from "../knowledge-search.js";
 
 /** Max scored matches returned by search. Truncation is always reported via totalMatched. */
 const SEARCH_RESULT_LIMIT = 15;
@@ -39,6 +39,9 @@ Actions:
   - "add_search": Record a search query and its results on a tree. Requires treeId, query. Optional: nodeIdsProduced (array of node IDs created from this search). Appends to searchHistory with auto-timestamp.
   - "search" (alias: "search_tags"): Search across ALL trees for nodes answering a question. Pass query (free text — the question in your own words) and/or tags (exact keyword tags). AT LEAST ONE is required; passing both is best. Scores against each node's question, keyFinding and tags, returns the top matches with staleness flags. Optional: forestId or treeId filter. Zero-result searches are logged automatically (see list_misses).
   - "stats": Corpus health — what fraction of nodes has ever been READ (asset vs habit), what search keeps surfacing that nobody opens (retrieval precision), and how many questions the corpus could not answer. No args.
+  - "add_gap": Append ONE open gap to a tree. Requires treeId, query (the question). Optional name = priority (high/medium/low, default medium).
+  - "resolve_gap": Mark ONE gap resolved. Requires treeId and query — a substring that matches exactly one OPEN gap. Writes only that element, so it cannot clobber a concurrent add_gap. Use this instead of update_tree{gaps}: re-serializing the whole array to close one gap is the reason gap lists rot.
+  - "check_gaps": Review every OPEN gap and flag any the corpus may already answer — scores each gap's question against all nodes and returns candidate answers plus gap age. A stale gap is worse than a stale node: it sends the next session to redo finished work. Recommendation only; never resolves a gap. Optional treeId to scope.
   - "repair": Recompute every tree's nodeCount / tokenUsed / trustProfile from its actual index entries. Aggregates are maintained incrementally and drift permanently if any write path misses them. Dry run by default; pass confirm:true to write.
   - "clear_misses": Reset the miss log so the demand signal stays clean. Optional query = substring; only rows whose query contains it are deleted (e.g. a test suite clearing its own probes). Omit to target ALL rows. Dry run by default; pass confirm:true to write.
   - "list_misses": Review searches that returned nothing — the retrieval gaps. Optional: limit (default 50, newest first). Use to find questions the corpus should answer but can't.
@@ -49,7 +52,7 @@ Actions:
       action: z.enum([
         "list_forests", "get_forest", "create_forest", "update_forest", "delete_forest",
         "list_trees", "get_tree", "create_tree", "update_tree", "delete_tree", "get_index", "add_search",
-        "search", "search_tags", "list_misses", "clear_misses", "stats", "repair", "generate_summary", "get_forest_summary",
+        "search", "search_tags", "list_misses", "clear_misses", "stats", "repair", "check_gaps", "add_gap", "resolve_gap", "generate_summary", "get_forest_summary",
       ]).describe("Action to perform"),
       forestId: z.string().optional().describe("Forest ID (required for update_forest/delete_forest, optional filter for list_trees)"),
       treeId: z.string().optional().describe("Tree ID (required for update_tree/delete_tree/get_index)"),
@@ -600,6 +603,29 @@ Actions:
         const totalMatched = matches.length;
         const returned = matches.slice(0, SEARCH_RESULT_LIMIT);
 
+        // Does a returned node answer an OPEN gap on its own tree?
+        //
+        // This lives in the search response, not only in get_index's healthAdvisory,
+        // because search is where sessions actually arrive. A peer session that followed
+        // the CLAUDE.md search rule to the letter still never called get_index all session
+        // — its entry points were search and list_trees. A flag only in the advisory would
+        // have missed it completely, and on current read numbers that is nearly every
+        // session.
+        const gapHits: any[] = [];
+        for (const m of returned) {
+          const tree = treeSnaps[treeIdsToSearch.indexOf(m.treeId)]?.val();
+          for (const g of (tree?.gaps || []) as any[]) {
+            if ((g.status || "open") !== "open") continue;
+            const { score } = scoreEntry(tokenize(g.question || ""), [], {
+              question: m.question, keyFinding: m.keyFinding, tags: m.tags,
+            }, tree, idf);
+            if (score >= GAP_ANSWERED_SCORE) {
+              gapHits.push({ treeId: m.treeId, treeName: m.treeName, gap: g.question,
+                             possiblyAnsweredBy: m.nodeId, score });
+            }
+          }
+        }
+
         // Count what search PUT IN FRONT of a caller, separately from what the caller then
         // chose to load (knowledge_node load increments `reads`). The gap between the two
         // is the only measure of retrieval precision available: a node surfaced repeatedly
@@ -644,8 +670,148 @@ Actions:
             totalMatched,
             ...(totalMatched > returned.length ? { truncated: true, note: `${totalMatched} nodes matched; showing top ${returned.length} by score.` } : {}),
             searchedTrees: treeIdsToSearch.length,
+            ...(gapHits.length > 0 ? {
+              openGapsPossiblyAnswered: gapHits,
+              gapNote: "A returned node scores high against an OPEN gap on its tree — that gap may already be answered. Verify, then close it with resolve_gap. Left open, it sends the next session to redo finished work.",
+            } : {}),
+            // Tags-only retrieval depends on guessing the vocabulary a past session chose.
+            // Surfaced here rather than only in the tool description because a peer session
+            // whose instructions bold "always pass query" still called tags-only first —
+            // the action name beat the instruction.
+            ...(!hasQuery ? {
+              hint: "Called with tags only. Pass `query` (the question in your own words) — it scores against every node's question and keyFinding instead of requiring an exact tag match.",
+            } : {}),
           }, null, 2) }],
         });
+      }
+
+      // ─── ADD_GAP / RESOLVE_GAP ───
+      // Single-gap writes. update_tree takes the WHOLE gaps array as one JSON string, so
+      // closing one gap means re-serializing all of them and risking clobbering the rest.
+      // That cost is why gaps rot: a session that answers its own gap mid-session skips
+      // the update. Observed 2026-08-28 — a freshly written 7-gap list was ~30% stale
+      // within hours of creation, by construction. check_gaps flags that rot; these two
+      // actions prevent it.
+      if (action === "add_gap" || action === "resolve_gap") {
+        if (!treeId) return withResponseSize({ content: [{ type: "text", text: `${action} requires treeId` }], isError: true });
+        if (!query) return withResponseSize({ content: [{ type: "text", text: `${action} requires query (the gap question${action === "resolve_gap" ? ", or enough of it to match exactly one open gap" : ""})` }], isError: true });
+
+        const treeSnap = await getTreeRef(uid, treeId).once("value");
+        const tree = treeSnap.val();
+        if (!tree) return withResponseSize({ content: [{ type: "text", text: `Tree not found: ${treeId}` }], isError: true });
+
+        const existing: any[] = tree.gaps || [];
+        const now = new Date().toISOString();
+
+        if (action === "add_gap") {
+          const gap = { question: query, priority: name || "medium", discoveredAt: now, status: "open" };
+          await getTreeRef(uid, treeId).update({ gaps: [...existing, gap], updatedAt: now });
+          return withResponseSize({ content: [{ type: "text", text: JSON.stringify({
+            added: gap, totalGaps: existing.length + 1,
+            openGaps: existing.filter((g) => (g.status || "open") === "open").length + 1,
+          }, null, 2) }] });
+        }
+
+        // resolve_gap — match on a substring of the question, so callers never need an id.
+        const needle = query.toLowerCase();
+        const matches = existing
+          .map((g, i) => ({ g, i }))
+          .filter(({ g }) => (g.status || "open") === "open" &&
+                             String(g.question || "").toLowerCase().includes(needle));
+
+        if (matches.length === 0) {
+          return withResponseSize({ content: [{ type: "text", text: JSON.stringify({
+            resolved: false, reason: "no OPEN gap on this tree matches that text",
+            openGaps: existing.filter((g) => (g.status || "open") === "open").map((g) => g.question),
+          }, null, 2) }], isError: true });
+        }
+        if (matches.length > 1) {
+          return withResponseSize({ content: [{ type: "text", text: JSON.stringify({
+            resolved: false, reason: `matched ${matches.length} open gaps — narrow the query`,
+            candidates: matches.map(({ g }) => g.question),
+          }, null, 2) }], isError: true });
+        }
+
+        // Write only the one element's status. No re-serialization of the array, so a
+        // concurrent add_gap on the same tree cannot be clobbered by this call.
+        const { i, g } = matches[0];
+        await getTreeRef(uid, treeId).update({
+          [`gaps/${i}/status`]: "resolved",
+          [`gaps/${i}/resolvedAt`]: now,
+          updatedAt: now,
+        });
+        return withResponseSize({ content: [{ type: "text", text: JSON.stringify({
+          resolved: true, gap: g.question,
+          openGapsRemaining: existing.filter((x) => (x.status || "open") === "open").length - 1,
+        }, null, 2) }] });
+      }
+
+      // ─── CHECK_GAPS ───
+      if (action === "check_gaps") {
+        // A gap is an open question filed against a tree. Nothing ever re-checks whether
+        // the corpus has since answered it, so a gap can outlive its own answer — and
+        // unlike a stale node, which merely might be outdated, a stale gap actively sends
+        // the next session to redo finished work.
+        const treesSnap = await getTreesRef(uid).once("value");
+        const treesData = treesSnap.val() || {};
+        const scope = treeId ? { [treeId]: treesData[treeId] } : treesData;
+
+        // IDF over the whole corpus regardless of scope — term rarity is a property of the
+        // corpus, not of the subset being checked.
+        const allEntries = (Object.values(treesData) as any[])
+          .flatMap((t) => Object.values(t?.index || {}) as any[]);
+        const idf = buildIdf(allEntries);
+
+        const now = Date.now();
+        const answered: any[] = [];
+        const openStill: any[] = [];
+
+        for (const [tid, tree] of Object.entries(scope) as [string, any][]) {
+          if (!tree) continue;
+          for (const g of (tree.gaps || []) as any[]) {
+            if ((g.status || "open") !== "open") continue;
+
+            const ageDays = g.discoveredAt
+              ? Math.max(0, Math.floor((now - new Date(g.discoveredAt).getTime()) / 86400000))
+              : null;
+
+            // Score this gap's question against every node in the corpus.
+            const qt = tokenize(g.question || "");
+            const cands: any[] = [];
+            if (qt.length >= 2) {
+              for (const [otid, otree] of Object.entries(treesData) as [string, any][]) {
+                for (const e of Object.values(otree?.index || {}) as any[]) {
+                  const { score } = scoreEntry(qt, [], e, otree, idf);
+                  if (score >= GAP_ANSWERED_SCORE) {
+                    cands.push({ nodeId: e.id, treeId: otid, treeName: otree.name,
+                                 question: e.question, score, trust: e.trust || "unverified" });
+                  }
+                }
+              }
+            }
+            cands.sort((a, b) => b.score - a.score);
+
+            const row = { treeId: tid, treeName: tree.name, gap: g.question,
+                          priority: g.priority || "medium", ageDays };
+            if (cands.length > 0) answered.push({ ...row, candidates: cands.slice(0, 3) });
+            else openStill.push(row);
+          }
+        }
+
+        answered.sort((a, b) => b.candidates[0].score - a.candidates[0].score);
+        openStill.sort((a, b) => (b.ageDays ?? 0) - (a.ageDays ?? 0));
+
+        return withResponseSize({ content: [{ type: "text", text: JSON.stringify({
+          scope: treeId ? `tree ${treeId}` : "all trees",
+          openGaps: answered.length + openStill.length,
+          possiblyAnswered: answered.length,
+          // RECOMMENDATION ONLY. Nothing here resolves a gap: a false positive would tell
+          // someone work is done when it is not, which is worse than leaving it open.
+          // Review the candidate, then resolve via update_tree if it genuinely answers.
+          possiblyAnsweredGaps: answered,
+          stillOpen: openStill,
+          note: "possiblyAnswered means an existing node scores high against the gap's question. Verify before resolving — this never closes a gap for you.",
+        }, null, 2) }] });
       }
 
       // ─── REPAIR ───
@@ -753,9 +919,21 @@ Actions:
 
         let total = 0, everRead = 0, everSurfaced = 0, surfacedNeverRead = 0;
         let totalReads = 0, totalSurfaced = 0;
+        let openGaps = 0;
+        let oldestGapDays: number | null = null;
+        const nowMs = Date.now();
         const perNode: any[] = [];
 
         for (const tree of trees) {
+          // Gap counting is cheap (no scoring) — check_gaps does the expensive part.
+          for (const g of (tree?.gaps || []) as any[]) {
+            if ((g.status || "open") !== "open") continue;
+            openGaps++;
+            if (g.discoveredAt) {
+              const age = Math.max(0, Math.floor((nowMs - new Date(g.discoveredAt).getTime()) / 86400000));
+              if (oldestGapDays === null || age > oldestGapDays) oldestGapDays = age;
+            }
+          }
           for (const e of Object.values(tree?.index || {}) as any[]) {
             const reads = e.reads || 0;
             const surfaced = e.surfaced || 0;
@@ -780,13 +958,29 @@ Actions:
             neverRead: total - everRead, pctNeverRead: pct(total - everRead),
             totalReads, totalSurfaced,
           },
-          // Retrieval precision: search keeps recommending these and nobody opens them.
-          // High counts here mean the scorer is wrong, not that the nodes are.
-          precision: { surfacedNeverRead, pctSurfacedNeverRead: pct(surfacedNeverRead), everSurfaced },
+          // Surfaced but never opened. NOT labelled "precision" — the number cannot be read
+          // in one direction. It counts both the best outcome (the keyFinding in the search
+          // result already answered the question, so the caller got it for ~40 tokens
+          // instead of loading ~1,200) and the worst (an irrelevant hit nobody wanted).
+          // Those are indistinguishable from the counters alone. Treat as a bucket to
+          // investigate, never as an error rate.
+          surfacedNotOpened: {
+            count: surfacedNeverRead, pct: pct(surfacedNeverRead), everSurfaced,
+            note: "Ambiguous by construction: includes both 'keyFinding was enough' and 'irrelevant hit'. Sample surfacedNotOpenedSample before drawing conclusions.",
+          },
           // Demand: questions the corpus could not answer. This is the build queue.
-          demand: { missesLogged: misses.length },
+          // openGaps counted here (cheap); run check_gaps to score them against the corpus
+          // and find the ones it may already answer.
+          demand: {
+            missesLogged: misses.length,
+            openGaps,
+            oldestGapDays: oldestGapDays,
+            ...(oldestGapDays !== null && oldestGapDays > 90
+              ? { hint: "Gaps older than the corpus freshness default — run check_gaps; a stale gap sends the next session to redo finished work." }
+              : {}),
+          },
           mostRead: perNode.slice(0, 10),
-          surfacedNeverReadSample: perNode.filter((n) => n.surfaced > 0 && n.reads === 0).slice(0, 10),
+          surfacedNotOpenedSample: perNode.filter((n) => n.surfaced > 0 && n.reads === 0).slice(0, 10),
           note: "Counters start at instrumentation deploy; nodes written earlier show 0 until next used.",
         }, null, 2) }] });
       }
