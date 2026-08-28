@@ -4,7 +4,7 @@ import { getForestsRef, getForestRef, getTreesRef, getTreeRef, getTreeIndexRef, 
 import { getCurrentUid } from "../context.js";
 import { withResponseSize } from "../response-metadata.js";
 import { INITIATOR_PARAM, resolveInitiator } from "../surfaces.js";
-import { tokenize, scoreEntry, buildIdf, computeStaleness, summaryLine, SCORE_FLOOR, STRONG_MATCH_SCORE, GAP_ANSWERED_SCORE, STALE_RANK_PENALTY, coerceArrayParam } from "../knowledge-search.js";
+import { tokenize, scoreEntry, buildIdf, computeStaleness, summaryLine, SCORE_FLOOR, STRONG_MATCH_SCORE, GAP_ANSWERED_SCORE, staleRankFactor, coerceArrayParam } from "../knowledge-search.js";
 
 /** Max scored matches returned by search. Truncation is always reported via totalMatched. */
 const SEARCH_RESULT_LIMIT = 15;
@@ -592,11 +592,12 @@ Actions:
           for (const entry of Object.values(indexData) as any[]) {
             const raw = scoreEntry(queryTokens, searchTagsLower, entry, tree, idf);
             const { matchingTags, matchedTerms, termsFromTags } = raw;
-            // Price staleness into the RANK, not just the flag. A finding past its tree's
-            // own freshness window should lose ties rather than compete equally on generic
-            // terms — measured case: correct hit 0.637 vs an unrelated 179-day-stale node
-            // at 0.527.
-            const score = Math.round((stale ? raw.score * STALE_RANK_PENALTY : raw.score) * 1000) / 1000;
+            // Price staleness into the RANK, not just the flag — scaled by how far past
+            // the window the finding is. A boolean penalty punished a 1-day-overdue ops
+            // node (30d window) exactly as hard as a 400-day-old market analysis (90d+),
+            // which is a property of the window, not of the finding.
+            const factor = staleRankFactor(staleDays, tree.freshnessPeriodDays);
+            const score = Math.round(raw.score * factor * 1000) / 1000;
             if (score < SCORE_FLOOR) continue;
 
             matches.push({
@@ -611,7 +612,7 @@ Actions:
               matchedTerms,
               ...(termsFromTags.length > 0 ? { termsFromTags } : {}),
               score,
-              ...(stale ? { scoreBeforeStalePenalty: raw.score } : {}),
+              ...(factor < 1 ? { scoreBeforeStalePenalty: raw.score, stalePenalty: Math.round(factor * 100) / 100 } : {}),
               tokenCost: entry.tokenCost || 0,
               trust: entry.trust || "unverified",
               // Surfaced at the point of use — a finding past its own freshness window

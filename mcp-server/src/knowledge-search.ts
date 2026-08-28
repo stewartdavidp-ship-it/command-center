@@ -213,6 +213,36 @@ export interface ScoreResult {
 export const STALE_RANK_PENALTY = 0.8;
 
 /**
+ * Rank penalty scaled by HOW FAR past its window a finding is, not merely whether it is.
+ *
+ * The boolean version landed unevenly across trees for reasons unrelated to how stale a
+ * finding actually is: staleness is measured against each tree's own freshnessPeriodDays,
+ * and the ops tree runs 30 days while research trees run 90+. A 31-day-old platform
+ * measurement — one day overdue — took the same 0.8 hit as a 400-day-old market analysis.
+ *
+ * Now: no penalty until overdue, then a gentle slope, floored so a stale finding is demoted
+ * rather than erased. It is often still the right answer.
+ *
+ *   31d / 30d window  (1.03x) -> 0.995   barely overdue, barely touched
+ *   60d / 30d window  (2.0x)  -> 0.85
+ *   179d / 60d window (2.98x) -> 0.70
+ *   180d / 30d window (6.0x)  -> 0.65    floored
+ */
+const STALE_SLOPE = 0.15;
+const STALE_MIN_FACTOR = 0.65;
+
+export function staleRankFactor(
+  staleDays: number | null | undefined,
+  freshnessPeriodDays: number | null | undefined
+): number {
+  if (staleDays === null || staleDays === undefined) return 1;
+  const window = freshnessPeriodDays && freshnessPeriodDays > 0 ? freshnessPeriodDays : 90;
+  const ratio = staleDays / window;
+  if (ratio <= 1) return 1;
+  return Math.max(STALE_MIN_FACTOR, 1 - STALE_SLOPE * (ratio - 1));
+}
+
+/**
  * Inverse document frequency over the searched corpus.
  *
  * Without this, every common word scores like a rare one. In practice that means "work" —
