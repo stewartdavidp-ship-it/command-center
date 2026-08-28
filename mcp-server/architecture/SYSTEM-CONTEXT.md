@@ -894,3 +894,112 @@ Context tracking uses two accumulation strategies depending on the parameter:
 2. If told "WAIT: poll", call `document(receive)` again after 30-60 seconds WITHIN the conversation
 3. If told "WAIT: working", stop checking and inform the user to re-engage later
 4. NEVER spawn a background process to do this
+
+---
+
+## 18. The Knowledge Corpus — Retrieval Contract
+
+The corpus (13 forests / 63 trees / 309 nodes) is the only thing that carries research
+across sessions. The model is stateless; this is the external organ.
+
+### Why this section exists
+
+For six months the corpus was **storage without retrieval**. `search_tags` matched exact
+tags only, so finding anything required a session to guess the tag vocabulary a *different*
+session had chosen. When it failed it returned an empty list — no error — so the session
+simply re-researched and felt productive.
+
+That is not a hypothetical. On 2026-07-22 a session re-derived the entire
+`Connect→Import→Reveal` onboarding design that had been researched, written and code-mapped
+on 2026-06-15, and asserted a differentiation claim the June Craftybase pressure-test had
+already refuted. A human noticed the repetition. Nothing in the system did.
+
+**The general failure: a retrieval miss is silent. It looks exactly like an empty corpus,
+and both look exactly like productive work.**
+
+### Rules
+
+1. **Always pass `query`.** `knowledge_tree{action:"search", query:"<the question in your
+   own words>", tags:[...]}`. Scoring runs over each node's `question` and `keyFinding`
+   with IDF weighting. `tags` is an optional booster, never the index. A tags-only call
+   still works but retrieves like it's 2026-08-26.
+
+2. **Read `stale` / `staleDays` on every match.** A finding past its tree's own freshness
+   window needs re-verifying before you rely on it. Roughly 20 trees are currently past
+   theirs, several by 6x.
+
+3. **When search is thin and the question is broad**, `generate_summary` with no `forestId`
+   returns the whole routing table — one line per node across every tree, including the ~23
+   that belong to no forest. ~20k tokens: deliberate fallback, not default.
+
+4. **Write when a question resolves, not at session end.** Session end never arrives. The
+   `question` field is the routing key — it must be the question you had to chase, phrased
+   as a *future* session would ask it, not a topic label.
+
+5. **Never silently overwrite a node new research overturns.** Use
+   `knowledge_node{action:"add_cross_ref"}` — `contradicts` / `qualifies` / `extends`.
+
+### Instrumentation — read this before adding to the corpus
+
+Three signals, all self-writing. None require anyone to remember anything:
+
+| Signal | Written by | Answers |
+|---|---|---|
+| `searchMisses` | search, on no confident match | What should the corpus contain? |
+| `surfaced` | search, per returned match | What does retrieval recommend? |
+| `reads` / `lastRead` | `knowledge_node load` | What does anyone actually use? |
+
+`knowledge_tree{action:"stats"}` reports all three.
+
+- **% ever read** is the asset-vs-habit number. A corpus where most nodes are never opened
+  is a writing ritual, not a memory.
+- **surfaced-but-never-read** is retrieval precision. High counts mean the *scorer* is
+  wrong, not that the nodes are.
+- **`list_misses` is the build queue.** It is the only demand signal that exists — it says
+  what the corpus was asked for and could not supply. Prefer it over intuition when
+  deciding what to research next.
+
+Baseline at instrumentation (2026-08-28): 309 nodes, 0 ever read, 15 misses.
+
+### Known limits
+
+Scoring is lexical. It cannot bridge synonyms: a query for "Codeium" will not find a node
+about "Windsurf", "build to stock or to order" will not find "MTS/MTO", "artist" will not
+find "artisan". Measured at 3 failures in 15 on a paraphrase benchmark; every one was a
+vocabulary mismatch. If that class of miss starts dominating `list_misses`, that is the
+signal to add an embedding pass behind `scoreEntry` in `src/knowledge-search.ts` — the
+scoring boundary is deliberately a single function for exactly this reason.
+
+Search also finds only what is *there*, and staleness only flags *age*. Neither catches a
+node that was wrong when written. `trust` levels and `contradicts` cross-refs are the only
+defense, and both are manual — so they will be the first things to quietly stop happening.
+
+### Known limit: `consensusNotes` is unstructured and carries real load
+
+Surfaced 2026-08-28 by a session writing retractions into its own nodes.
+
+`consensusNotes` is where a node warns the next session about what *not* to trust — and it
+is doing that work as one prose blob. Observed contents in a single field: a retraction, a
+version pin, a confound warning, and an instruction to downgrade the finding further rather
+than defend it.
+
+That is the field performing the actual inheritance in this system. It is also the least
+designed part of the schema — no structure, no way to query "which findings carry
+retractions", and nothing surfaces it in search results the way `stale` / `staleDays` are
+surfaced. A caveat nobody reads is a caveat that does not exist.
+
+Not urgent while read-through is low. But if `surfacedNotOpened` ever resolves toward
+"people are reading node bodies", this field is where the value concentrates and it should
+be structured before then, not after.
+
+### Known limit: `search_tags` is a deprecated alias, retained only for existing callers
+
+`search` and `search_tags` route to the same handler. The alias exists so the scorer change
+of 2026-08-27 did not break callers mid-flight, and an e2e phase covers it.
+
+It should be removed once it has no callers. On 2026-08-28 two independent sessions opened
+with a tags-only call, one of them operating under instructions that bolded "always pass
+`query`" — the action name beat the instruction. The response now carries a hint, but a
+hint fires *after* the wrong call is composed; a name that cannot be misread prevents
+composing it. When a standing rule has to shout to counteract a tool's own naming, the
+naming is the defect.
