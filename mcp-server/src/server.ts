@@ -11,7 +11,7 @@ import { registerJobTools } from "./tools/jobs.js";
 import { registerDocumentTools } from "./tools/documents.js";
 import { registerSkillTools } from "./tools/skills.js";
 import { registerRepoTools } from "./tools/repo.js";
-import { registerKnowledgeTreeTools } from "./tools/knowledge-tree.js";
+import { registerKnowledgeTreeTools, registerKnowledgeSearchTool } from "./tools/knowledge-tree.js";
 import { registerKnowledgeNodeTools } from "./tools/knowledge-node.js";
 import { registerSurfaceRegistryTools } from "./tools/surface-registry.js";
 import { registerSkillPrompts } from "./skills.js";
@@ -31,6 +31,7 @@ export function createServer(): McpServer {
   registerJobTools(server);
   registerDocumentTools(server);
   registerKnowledgeTreeTools(server);
+  registerKnowledgeSearchTool(server);
   registerKnowledgeNodeTools(server);
   registerSkillTools(server);
   registerRepoTools(server);

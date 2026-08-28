@@ -21,6 +21,240 @@ function emptyTrustProfile() {
   return { authoritative: 0, credible: 0, unverified: 0, questionable: 0 };
 }
 
+
+/**
+ * The corpus search, as ONE implementation.
+ *
+ * Extracted so `knowledge_tree{action:"search"}` and the `search_knowledge_base` tool
+ * cannot drift apart. Two copies of a scorer is how ranking bugs become unreproducible.
+ */
+export async function runCorpusSearch(
+  uid: string,
+  opts: { query?: string; tags?: string[]; forestId?: string; treeId?: string; initiator?: string }
+): Promise<any> {
+  const { query, tags, forestId, treeId, initiator } = opts;
+      const hasTags = !!(tags && tags.length > 0);
+      const hasQuery = !!(query && query.trim().length > 0);
+      if (!hasTags && !hasQuery) {
+        return withResponseSize({ content: [{ type: "text", text: "search requires query (free text) and/or tags (non-empty array)" }], isError: true });
+      }
+
+      // Determine which trees to search
+      let treeIdsToSearch: string[] = [];
+
+      if (treeId) {
+        // Single tree filter
+        treeIdsToSearch = [treeId];
+      } else if (forestId) {
+        // Forest filter — get member tree IDs
+        const forestSnap = await getForestRef(uid, forestId).once("value");
+        const forest = forestSnap.val();
+        if (!forest) return withResponseSize({ content: [{ type: "text", text: `Forest not found: ${forestId}` }], isError: true });
+        treeIdsToSearch = forest.treeIds || [];
+      } else {
+        // All trees
+        const treesSnap = await getTreesRef(uid).once("value");
+        const treesData = treesSnap.val();
+        if (treesData) treeIdsToSearch = Object.keys(treesData);
+      }
+
+      if (treeIdsToSearch.length === 0) {
+        return withResponseSize({ content: [{ type: "text", text: JSON.stringify({ matches: [], total: 0 }, null, 2) }] });
+      }
+
+      // Load all tree records in parallel to get names + index entries
+      const treeSnaps = await Promise.all(
+        treeIdsToSearch.map((tid) => getTreeRef(uid, tid).once("value"))
+      );
+
+      const searchTagsLower = (tags || []).map((t) => t.toLowerCase());
+      const queryTokens = tokenize(query || "");
+
+      // Term rarity is measured against the corpus actually being searched, from the
+      // index entries already loaded above — no extra reads. Without it, a word like
+      // "work" (ubiquitous in both queries and node questions) scores like a rare term
+      // and drags a dozen unrelated nodes into every result.
+      const allEntries = treeSnaps.flatMap((s) => Object.values(s.val()?.index || {}) as any[]);
+      const idf = buildIdf(allEntries);
+
+      const matches: any[] = [];
+
+      for (let i = 0; i < treeIdsToSearch.length; i++) {
+        const tree = treeSnaps[i].val();
+        if (!tree) continue;
+
+        const { staleDays, stale } = computeStaleness(tree.lastVerified, tree.freshnessPeriodDays);
+
+        const indexData = tree.index || {};
+        for (const entry of Object.values(indexData) as any[]) {
+          const raw = scoreEntry(queryTokens, searchTagsLower, entry, tree, idf);
+          const { matchingTags, matchedTerms, termsFromTags } = raw;
+          // Price staleness into the RANK, not just the flag — scaled by how far past
+          // the window the finding is. A boolean penalty punished a 1-day-overdue ops
+          // node (30d window) exactly as hard as a 400-day-old market analysis (90d+),
+          // which is a property of the window, not of the finding.
+          const factor = staleRankFactor(staleDays, tree.freshnessPeriodDays);
+          const score = Math.round(raw.score * factor * 1000) / 1000;
+          if (score < SCORE_FLOOR) continue;
+
+          matches.push({
+            nodeId: entry.id,
+            treeId: treeIdsToSearch[i],
+            treeName: tree.name,
+            question: entry.question,
+            keyFinding: entry.keyFinding,
+            tags: entry.tags || [],
+            matchingTags,
+            matchCount: matchingTags.length,
+            matchedTerms,
+            ...(termsFromTags.length > 0 ? { termsFromTags } : {}),
+            score,
+            ...(factor < 1 ? { scoreBeforeStalePenalty: raw.score, stalePenalty: Math.round(factor * 100) / 100 } : {}),
+            tokenCost: entry.tokenCost || 0,
+            trust: entry.trust || "unverified",
+            // Surfaced at the point of use — a finding past its own freshness window
+            // should carry that warning into the result, not sit in a health advisory.
+            staleDays,
+            ...(stale ? { stale: true } : {}),
+          });
+        }
+      }
+
+      // Most relevant first; exact-tag hits break ties, preserving the old ordering
+      // intent for callers that pass tags and no query.
+      matches.sort((a, b) => (b.score - a.score) || (b.matchCount - a.matchCount));
+
+      const totalMatched = matches.length;
+      const returned = matches.slice(0, SEARCH_RESULT_LIMIT);
+
+      // Does a returned node answer an OPEN gap on its own tree?
+      //
+      // This lives in the search response, not only in get_index's healthAdvisory,
+      // because search is where sessions actually arrive. A peer session that followed
+      // the CLAUDE.md search rule to the letter still never called get_index all session
+      // — its entry points were search and list_trees. A flag only in the advisory would
+      // have missed it completely, and on current read numbers that is nearly every
+      // session.
+      const gapHits: any[] = [];
+      for (const m of returned) {
+        const tree = treeSnaps[treeIdsToSearch.indexOf(m.treeId)]?.val();
+        for (const g of (tree?.gaps || []) as any[]) {
+          if ((g.status || "open") !== "open") continue;
+          const { score } = scoreEntry(tokenize(g.question || ""), [], {
+            question: m.question, keyFinding: m.keyFinding, tags: m.tags,
+          }, tree, idf);
+          if (score >= GAP_ANSWERED_SCORE) {
+            gapHits.push({ treeId: m.treeId, treeName: m.treeName, gap: g.question,
+                           possiblyAnsweredBy: m.nodeId, score });
+          }
+        }
+      }
+
+      // Count what search PUT IN FRONT of a caller, separately from what the caller then
+      // chose to load (knowledge_node load increments `reads`). The gap between the two
+      // is the only measure of retrieval precision available: a node surfaced repeatedly
+      // and never read is one search keeps recommending and no one wants.
+      // One multi-path update, fire-and-forget — never make a read path fail on a metric.
+      if (returned.length > 0) {
+        const counterUpdates: Record<string, any> = {};
+        for (const m of returned) {
+          counterUpdates[`${m.treeId}/index/${m.nodeId}/surfaced`] = increment(1);
+        }
+        getTreesRef(uid).update(counterUpdates).catch(() => {});
+      }
+
+      // A miss is invisible by default: the caller simply researches the question again.
+      // Record it so the gap is reviewable via list_misses.
+      //
+      // "Miss" means nothing CONFIDENT came back — not merely an empty result. A lone
+      // incidental term overlap would otherwise make a real gap look answered and the
+      // miss log would under-report exactly the cases it exists to catch.
+      const hasStrongMatch = returned.some(
+        (m) => m.score >= STRONG_MATCH_SCORE || m.matchCount > 0
+      );
+      if (!hasStrongMatch) {
+        try {
+          await getSearchMissesRef(uid).push({
+            query: query || null,
+            tags: tags || [],
+            initiator: initiator || null,
+            searchedTrees: treeIdsToSearch.length,
+            weakMatches: totalMatched,
+            timestamp: new Date().toISOString(),
+          });
+        } catch {
+          // Logging is best-effort — a failed write must not fail the search.
+        }
+      }
+
+      return withResponseSize({
+        content: [{ type: "text", text: JSON.stringify({
+          matches: returned,
+          total: returned.length,
+          totalMatched,
+          ...(totalMatched > returned.length ? { truncated: true, note: `${totalMatched} nodes matched; showing top ${returned.length} by score.` } : {}),
+          searchedTrees: treeIdsToSearch.length,
+          ...(gapHits.length > 0 ? {
+            openGapsPossiblyAnswered: gapHits,
+            gapNote: "A returned node scores high against an OPEN gap on its tree — that gap may already be answered. Verify, then close it with resolve_gap. Left open, it sends the next session to redo finished work.",
+          } : {}),
+          // Tags-only retrieval depends on guessing the vocabulary a past session chose.
+          // Surfaced here rather than only in the tool description because a peer session
+          // whose instructions bold "always pass query" still called tags-only first —
+          // the action name beat the instruction.
+          ...(!hasQuery ? {
+            hint: "Called with tags only. Pass `query` (the question in your own words) — it scores against every node's question and keyFinding instead of requiring an exact tag match.",
+          } : {}),
+        }, null, 2) }],
+      });
+}
+
+
+/**
+ * A SEARCH-NAMED front door to the corpus.
+ *
+ * Exists because of a measured discovery failure, not for convenience. Both KT tools are
+ * deferred, so reaching them costs a ToolSearch round-trip — and a standing rule saying
+ * "search the corpus before your first web lookup" cannot fire if the tool was never
+ * loaded. Four sessions hit that independently on 2026-08-28; one reported the corpus
+ * ABSENT because its deferred listing lagged.
+ *
+ * The first attempt rewrote knowledge_tree's DESCRIPTION into research vocabulary. A
+ * clean-room session proved that failed: a ToolSearch for "web search research before
+ * investigating a topic" returned WebSearch, search_session_transcripts, search_threads,
+ * mast_platform_tenant_search, search_files, search_mcp_registry, search_events and
+ * search_contacts — all eight carrying "search" in the NAME, and knowledge_tree, which
+ * does not, nowhere. Ranking follows the name; the description could never have fixed it.
+ *
+ * Hence a tool whose NAME matches how sessions look for a search tool. Deliberately ONE
+ * action with a four-field schema: a session that finds this at the moment of "should I
+ * check for prior work" needs one call, not a twenty-action surface to read first.
+ * Delegates to runCorpusSearch, so there is exactly one scorer.
+ */
+export function registerKnowledgeSearchTool(server: McpServer): void {
+  server.tool(
+    "search_knowledge_base",
+    `Search prior research and past findings before doing new research. Use BEFORE WebSearch / WebFetch / any web lookup, before investigating a customer, competitor, market or platform API, and before debugging an unexplained third-party behaviour — it may already be measured here, with sources.
+
+Cross-project knowledge base: prior investigations, measured platform behaviours, competitive and market findings, with provenance and staleness.
+
+One call, ~2 seconds. If it returns nothing you have lost nothing.
+
+Pass 'query' as the question in your own words — scoring runs over every finding's question and key finding, so it does not depend on guessing tags. Results carry a relevance score, a stale/staleDays flag, and the node ids to load with knowledge_node{action:"load"}.`,
+    {
+      ...INITIATOR_PARAM,
+      query: z.string().optional().describe("Your question, in your own words. The primary input — e.g. 'Resend returned 200 but the email never arrived' rather than 'Resend delivery semantics'."),
+      tags: z.array(z.string()).optional().describe("Optional exact-tag booster. Not the index; query does the work. At least one of query/tags is required."),
+      forestId: z.string().optional().describe("Optional: restrict to one forest."),
+      treeId: z.string().optional().describe("Optional: restrict to one tree."),
+    },
+    async ({ initiator, query, tags, forestId, treeId }) => {
+      resolveInitiator({ initiator });
+      return runCorpusSearch(getCurrentUid(), { query, tags, forestId, treeId, initiator });
+    }
+  );
+}
+
 export function registerKnowledgeTreeTools(server: McpServer): void {
 
   server.tool(
@@ -536,180 +770,7 @@ Actions:
 
       // ─── SEARCH_TAGS ───
       if (action === "search" || action === "search_tags") {
-        const hasTags = !!(tags && tags.length > 0);
-        const hasQuery = !!(query && query.trim().length > 0);
-        if (!hasTags && !hasQuery) {
-          return withResponseSize({ content: [{ type: "text", text: "search requires query (free text) and/or tags (non-empty array)" }], isError: true });
-        }
-
-        // Determine which trees to search
-        let treeIdsToSearch: string[] = [];
-
-        if (treeId) {
-          // Single tree filter
-          treeIdsToSearch = [treeId];
-        } else if (forestId) {
-          // Forest filter — get member tree IDs
-          const forestSnap = await getForestRef(uid, forestId).once("value");
-          const forest = forestSnap.val();
-          if (!forest) return withResponseSize({ content: [{ type: "text", text: `Forest not found: ${forestId}` }], isError: true });
-          treeIdsToSearch = forest.treeIds || [];
-        } else {
-          // All trees
-          const treesSnap = await getTreesRef(uid).once("value");
-          const treesData = treesSnap.val();
-          if (treesData) treeIdsToSearch = Object.keys(treesData);
-        }
-
-        if (treeIdsToSearch.length === 0) {
-          return withResponseSize({ content: [{ type: "text", text: JSON.stringify({ matches: [], total: 0 }, null, 2) }] });
-        }
-
-        // Load all tree records in parallel to get names + index entries
-        const treeSnaps = await Promise.all(
-          treeIdsToSearch.map((tid) => getTreeRef(uid, tid).once("value"))
-        );
-
-        const searchTagsLower = (tags || []).map((t) => t.toLowerCase());
-        const queryTokens = tokenize(query || "");
-
-        // Term rarity is measured against the corpus actually being searched, from the
-        // index entries already loaded above — no extra reads. Without it, a word like
-        // "work" (ubiquitous in both queries and node questions) scores like a rare term
-        // and drags a dozen unrelated nodes into every result.
-        const allEntries = treeSnaps.flatMap((s) => Object.values(s.val()?.index || {}) as any[]);
-        const idf = buildIdf(allEntries);
-
-        const matches: any[] = [];
-
-        for (let i = 0; i < treeIdsToSearch.length; i++) {
-          const tree = treeSnaps[i].val();
-          if (!tree) continue;
-
-          const { staleDays, stale } = computeStaleness(tree.lastVerified, tree.freshnessPeriodDays);
-
-          const indexData = tree.index || {};
-          for (const entry of Object.values(indexData) as any[]) {
-            const raw = scoreEntry(queryTokens, searchTagsLower, entry, tree, idf);
-            const { matchingTags, matchedTerms, termsFromTags } = raw;
-            // Price staleness into the RANK, not just the flag — scaled by how far past
-            // the window the finding is. A boolean penalty punished a 1-day-overdue ops
-            // node (30d window) exactly as hard as a 400-day-old market analysis (90d+),
-            // which is a property of the window, not of the finding.
-            const factor = staleRankFactor(staleDays, tree.freshnessPeriodDays);
-            const score = Math.round(raw.score * factor * 1000) / 1000;
-            if (score < SCORE_FLOOR) continue;
-
-            matches.push({
-              nodeId: entry.id,
-              treeId: treeIdsToSearch[i],
-              treeName: tree.name,
-              question: entry.question,
-              keyFinding: entry.keyFinding,
-              tags: entry.tags || [],
-              matchingTags,
-              matchCount: matchingTags.length,
-              matchedTerms,
-              ...(termsFromTags.length > 0 ? { termsFromTags } : {}),
-              score,
-              ...(factor < 1 ? { scoreBeforeStalePenalty: raw.score, stalePenalty: Math.round(factor * 100) / 100 } : {}),
-              tokenCost: entry.tokenCost || 0,
-              trust: entry.trust || "unverified",
-              // Surfaced at the point of use — a finding past its own freshness window
-              // should carry that warning into the result, not sit in a health advisory.
-              staleDays,
-              ...(stale ? { stale: true } : {}),
-            });
-          }
-        }
-
-        // Most relevant first; exact-tag hits break ties, preserving the old ordering
-        // intent for callers that pass tags and no query.
-        matches.sort((a, b) => (b.score - a.score) || (b.matchCount - a.matchCount));
-
-        const totalMatched = matches.length;
-        const returned = matches.slice(0, SEARCH_RESULT_LIMIT);
-
-        // Does a returned node answer an OPEN gap on its own tree?
-        //
-        // This lives in the search response, not only in get_index's healthAdvisory,
-        // because search is where sessions actually arrive. A peer session that followed
-        // the CLAUDE.md search rule to the letter still never called get_index all session
-        // — its entry points were search and list_trees. A flag only in the advisory would
-        // have missed it completely, and on current read numbers that is nearly every
-        // session.
-        const gapHits: any[] = [];
-        for (const m of returned) {
-          const tree = treeSnaps[treeIdsToSearch.indexOf(m.treeId)]?.val();
-          for (const g of (tree?.gaps || []) as any[]) {
-            if ((g.status || "open") !== "open") continue;
-            const { score } = scoreEntry(tokenize(g.question || ""), [], {
-              question: m.question, keyFinding: m.keyFinding, tags: m.tags,
-            }, tree, idf);
-            if (score >= GAP_ANSWERED_SCORE) {
-              gapHits.push({ treeId: m.treeId, treeName: m.treeName, gap: g.question,
-                             possiblyAnsweredBy: m.nodeId, score });
-            }
-          }
-        }
-
-        // Count what search PUT IN FRONT of a caller, separately from what the caller then
-        // chose to load (knowledge_node load increments `reads`). The gap between the two
-        // is the only measure of retrieval precision available: a node surfaced repeatedly
-        // and never read is one search keeps recommending and no one wants.
-        // One multi-path update, fire-and-forget — never make a read path fail on a metric.
-        if (returned.length > 0) {
-          const counterUpdates: Record<string, any> = {};
-          for (const m of returned) {
-            counterUpdates[`${m.treeId}/index/${m.nodeId}/surfaced`] = increment(1);
-          }
-          getTreesRef(uid).update(counterUpdates).catch(() => {});
-        }
-
-        // A miss is invisible by default: the caller simply researches the question again.
-        // Record it so the gap is reviewable via list_misses.
-        //
-        // "Miss" means nothing CONFIDENT came back — not merely an empty result. A lone
-        // incidental term overlap would otherwise make a real gap look answered and the
-        // miss log would under-report exactly the cases it exists to catch.
-        const hasStrongMatch = returned.some(
-          (m) => m.score >= STRONG_MATCH_SCORE || m.matchCount > 0
-        );
-        if (!hasStrongMatch) {
-          try {
-            await getSearchMissesRef(uid).push({
-              query: query || null,
-              tags: tags || [],
-              initiator: initiator || null,
-              searchedTrees: treeIdsToSearch.length,
-              weakMatches: totalMatched,
-              timestamp: new Date().toISOString(),
-            });
-          } catch {
-            // Logging is best-effort — a failed write must not fail the search.
-          }
-        }
-
-        return withResponseSize({
-          content: [{ type: "text", text: JSON.stringify({
-            matches: returned,
-            total: returned.length,
-            totalMatched,
-            ...(totalMatched > returned.length ? { truncated: true, note: `${totalMatched} nodes matched; showing top ${returned.length} by score.` } : {}),
-            searchedTrees: treeIdsToSearch.length,
-            ...(gapHits.length > 0 ? {
-              openGapsPossiblyAnswered: gapHits,
-              gapNote: "A returned node scores high against an OPEN gap on its tree — that gap may already be answered. Verify, then close it with resolve_gap. Left open, it sends the next session to redo finished work.",
-            } : {}),
-            // Tags-only retrieval depends on guessing the vocabulary a past session chose.
-            // Surfaced here rather than only in the tool description because a peer session
-            // whose instructions bold "always pass query" still called tags-only first —
-            // the action name beat the instruction.
-            ...(!hasQuery ? {
-              hint: "Called with tags only. Pass `query` (the question in your own words) — it scores against every node's question and keyFinding instead of requiring an exact tag match.",
-            } : {}),
-          }, null, 2) }],
-        });
+        return runCorpusSearch(uid, { query, tags, forestId, treeId, initiator });
       }
 
       // ─── ADD_GAP / RESOLVE_GAP ───
