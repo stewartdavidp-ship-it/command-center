@@ -1,11 +1,38 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { getTreeRef, getTreeIndexRef, getNodeContentRef, getNodesRef, getTreesRef } from "../firebase.js";
+import { getTreeRef, getTreeIndexRef, getNodeContentRef, getNodesRef, getTreesRef, increment } from "../firebase.js";
 import { getCurrentUid } from "../context.js";
 import { withResponseSize } from "../response-metadata.js";
 import { INITIATOR_PARAM, resolveInitiator } from "../surfaces.js";
 
 const TRUST_LEVELS = ["authoritative", "credible", "unverified", "questionable"] as const;
+
+/**
+ * Record that a node's full content was actually loaded.
+ *
+ * A load is the only evidence a node was USED. Everything else the corpus tracks is
+ * evidence it was written. Without this, a node nobody has opened in six months is
+ * indistinguishable from the one that saves an hour a week, and there is no way to tell
+ * whether the corpus is an asset or a habit.
+ *
+ * Deliberately distinct from `surfaced` (incremented by search): surfaced-but-never-read
+ * measures retrieval precision, reads measure value delivered.
+ *
+ * Fire-and-forget, one multi-path write. A metric must never fail a read.
+ */
+function recordReads(uid: string, nodes: any[]): void {
+  const now = new Date().toISOString();
+  const updates: Record<string, any> = {};
+  for (const n of nodes) {
+    // treeId lives on the content record; without it the index entry is unreachable.
+    if (!n?.treeId || !n?.id) continue;
+    updates[`${n.treeId}/index/${n.id}/reads`] = increment(1);
+    updates[`${n.treeId}/index/${n.id}/lastRead`] = now;
+  }
+  if (Object.keys(updates).length > 0) {
+    getTreesRef(uid).update(updates).catch(() => {});
+  }
+}
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 3.5);
@@ -313,6 +340,8 @@ Actions:
         const node = snap.val();
         if (!node) return withResponseSize({ content: [{ type: "text", text: `Node not found: ${nodeId}` }], isError: true });
 
+        recordReads(uid, [node]);
+
         return withResponseSize(
           { content: [{ type: "text", text: JSON.stringify(node, null, 2) }] },
           { _nodeTokenCost: node.tokenCount || 0 }
@@ -342,6 +371,8 @@ Actions:
             results[nodeIds[i]] = null;
           }
         }
+
+        recordReads(uid, Object.values(results).filter(Boolean));
 
         return withResponseSize(
           { content: [{ type: "text", text: JSON.stringify({ nodes: results, found, requested: nodeIds.length }, null, 2) }] },

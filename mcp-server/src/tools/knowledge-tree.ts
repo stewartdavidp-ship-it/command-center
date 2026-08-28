@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { getForestsRef, getForestRef, getTreesRef, getTreeRef, getTreeIndexRef, getNodesRef, getSearchMissesRef, getGlobalSummaryRef } from "../firebase.js";
+import { getForestsRef, getForestRef, getTreesRef, getTreeRef, getTreeIndexRef, getNodesRef, getSearchMissesRef, getGlobalSummaryRef, increment } from "../firebase.js";
 import { getCurrentUid } from "../context.js";
 import { withResponseSize } from "../response-metadata.js";
 import { INITIATOR_PARAM, resolveInitiator } from "../surfaces.js";
@@ -38,6 +38,7 @@ Actions:
   - "get_index": Load a tree's routing-table index — all node index entries for selective content loading. Requires treeId.
   - "add_search": Record a search query and its results on a tree. Requires treeId, query. Optional: nodeIdsProduced (array of node IDs created from this search). Appends to searchHistory with auto-timestamp.
   - "search" (alias: "search_tags"): Search across ALL trees for nodes answering a question. Pass query (free text — the question in your own words) and/or tags (exact keyword tags). AT LEAST ONE is required; passing both is best. Scores against each node's question, keyFinding and tags, returns the top matches with staleness flags. Optional: forestId or treeId filter. Zero-result searches are logged automatically (see list_misses).
+  - "stats": Corpus health — what fraction of nodes has ever been READ (asset vs habit), what search keeps surfacing that nobody opens (retrieval precision), and how many questions the corpus could not answer. No args.
   - "list_misses": Review searches that returned nothing — the retrieval gaps. Optional: limit (default 50, newest first). Use to find questions the corpus should answer but can't.
   - "generate_summary": Generate a cached flat routing table — one line per node. With forestId, covers that forest's member trees and stores on the forest. WITHOUT forestId, covers EVERY tree including those belonging to no forest, and stores globally.
   - "get_forest_summary": Get a cached routing summary + staleness check. With forestId, that forest's; without, the global one.`,
@@ -46,7 +47,7 @@ Actions:
       action: z.enum([
         "list_forests", "get_forest", "create_forest", "update_forest", "delete_forest",
         "list_trees", "get_tree", "create_tree", "update_tree", "delete_tree", "get_index", "add_search",
-        "search", "search_tags", "list_misses", "generate_summary", "get_forest_summary",
+        "search", "search_tags", "list_misses", "stats", "generate_summary", "get_forest_summary",
       ]).describe("Action to perform"),
       forestId: z.string().optional().describe("Forest ID (required for update_forest/delete_forest, optional filter for list_trees)"),
       treeId: z.string().optional().describe("Tree ID (required for update_tree/delete_tree/get_index)"),
@@ -596,6 +597,19 @@ Actions:
         const totalMatched = matches.length;
         const returned = matches.slice(0, SEARCH_RESULT_LIMIT);
 
+        // Count what search PUT IN FRONT of a caller, separately from what the caller then
+        // chose to load (knowledge_node load increments `reads`). The gap between the two
+        // is the only measure of retrieval precision available: a node surfaced repeatedly
+        // and never read is one search keeps recommending and no one wants.
+        // One multi-path update, fire-and-forget — never make a read path fail on a metric.
+        if (returned.length > 0) {
+          const counterUpdates: Record<string, any> = {};
+          for (const m of returned) {
+            counterUpdates[`${m.treeId}/index/${m.nodeId}/surfaced`] = increment(1);
+          }
+          getTreesRef(uid).update(counterUpdates).catch(() => {});
+        }
+
         // A miss is invisible by default: the caller simply researches the question again.
         // Record it so the gap is reviewable via list_misses.
         //
@@ -629,6 +643,55 @@ Actions:
             searchedTrees: treeIdsToSearch.length,
           }, null, 2) }],
         });
+      }
+
+      // ─── STATS ───
+      if (action === "stats") {
+        const [treesSnap, missSnap] = await Promise.all([
+          getTreesRef(uid).once("value"),
+          getSearchMissesRef(uid).once("value"),
+        ]);
+        const trees = Object.values(treesSnap.val() || {}) as any[];
+        const misses = Object.values(missSnap.val() || {}) as any[];
+
+        let total = 0, everRead = 0, everSurfaced = 0, surfacedNeverRead = 0;
+        let totalReads = 0, totalSurfaced = 0;
+        const perNode: any[] = [];
+
+        for (const tree of trees) {
+          for (const e of Object.values(tree?.index || {}) as any[]) {
+            const reads = e.reads || 0;
+            const surfaced = e.surfaced || 0;
+            total++;
+            totalReads += reads;
+            totalSurfaced += surfaced;
+            if (reads > 0) everRead++;
+            if (surfaced > 0) everSurfaced++;
+            if (surfaced > 0 && reads === 0) surfacedNeverRead++;
+            perNode.push({ question: e.question, treeName: tree.name, reads, surfaced, lastRead: e.lastRead || null });
+          }
+        }
+
+        const pct = (n: number) => (total ? Math.round((n / total) * 1000) / 10 : 0);
+        perNode.sort((a, b) => (b.reads - a.reads) || (b.surfaced - a.surfaced));
+
+        return withResponseSize({ content: [{ type: "text", text: JSON.stringify({
+          corpus: { nodes: total, trees: trees.length },
+          // The headline question: is this corpus an asset or a habit?
+          usage: {
+            everRead, pctEverRead: pct(everRead),
+            neverRead: total - everRead, pctNeverRead: pct(total - everRead),
+            totalReads, totalSurfaced,
+          },
+          // Retrieval precision: search keeps recommending these and nobody opens them.
+          // High counts here mean the scorer is wrong, not that the nodes are.
+          precision: { surfacedNeverRead, pctSurfacedNeverRead: pct(surfacedNeverRead), everSurfaced },
+          // Demand: questions the corpus could not answer. This is the build queue.
+          demand: { missesLogged: misses.length },
+          mostRead: perNode.slice(0, 10),
+          surfacedNeverReadSample: perNode.filter((n) => n.surfaced > 0 && n.reads === 0).slice(0, 10),
+          note: "Counters start at instrumentation deploy; nodes written earlier show 0 until next used.",
+        }, null, 2) }] });
       }
 
       // ─── LIST_MISSES ───

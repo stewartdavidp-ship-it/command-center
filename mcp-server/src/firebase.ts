@@ -166,6 +166,12 @@ export function getNodeContentRef(uid: string, nodeId: string) {
   return db.ref(`command-center/${uid}/knowledge/nodes/${nodeId}`);
 }
 
+// Atomic counter increment. Usage instrumentation is written from concurrent sessions, so
+// a read-modify-write would silently lose counts.
+export function increment(n: number) {
+  return admin.database.ServerValue.increment(n);
+}
+
 // System-wide config (shared across all users)
 export function getSystemRef() {
   return db.ref("command-center/system");
