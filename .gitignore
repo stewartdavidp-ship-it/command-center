@@ -12,3 +12,7 @@ mcp-server/cc-*.cjs
 # Build artifacts and backups
 *.bak*
 skills/
+
+# Agent worktrees — never commit these
+.claude/worktrees/
+mcp-server/.claude/worktrees/
