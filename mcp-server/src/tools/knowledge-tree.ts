@@ -4,7 +4,7 @@ import { getForestsRef, getForestRef, getTreesRef, getTreeRef, getTreeIndexRef, 
 import { getCurrentUid } from "../context.js";
 import { withResponseSize } from "../response-metadata.js";
 import { INITIATOR_PARAM, resolveInitiator } from "../surfaces.js";
-import { tokenize, scoreEntry, buildIdf, computeStaleness, summaryLine, SCORE_FLOOR, STRONG_MATCH_SCORE, GAP_ANSWERED_SCORE, coerceArrayParam } from "../knowledge-search.js";
+import { tokenize, scoreEntry, buildIdf, computeStaleness, summaryLine, SCORE_FLOOR, STRONG_MATCH_SCORE, GAP_ANSWERED_SCORE, STALE_RANK_PENALTY, coerceArrayParam } from "../knowledge-search.js";
 
 /** Max scored matches returned by search. Truncation is always reported via totalMatched. */
 const SEARCH_RESULT_LIMIT = 15;
@@ -25,7 +25,15 @@ export function registerKnowledgeTreeTools(server: McpServer): void {
 
   server.tool(
     "knowledge_tree",
-    `Knowledge tree and forest management tool. Forests group related trees by domain. Trees contain indexed knowledge nodes with selective loading.
+    `SEARCH PRIOR RESEARCH BEFORE YOU RESEARCH. Use BEFORE WebSearch / WebFetch / any web lookup or online investigation, before researching a customer, competitor, market, platform API or product direction, and before debugging an unexplained third-party or platform behaviour — the answer may already be measured here, with sources. One call, ~2 seconds; if it returns nothing you have lost nothing.
+
+  knowledge_tree{action:"search", query:"<your question, in your own words>"}
+
+This is the cross-project research corpus / knowledge base: prior investigations, measured platform behaviours, competitive analysis, market findings, and their provenance.
+
+(This tool is deliberately described in the vocabulary of web search and research so it loads alongside WebSearch/WebFetch. A rule saying "search the corpus first" cannot fire if the corpus tool was never loaded — three sessions hit that independently on 2026-08-28, one reporting the corpus ABSENT because the deferred listing lagged behind its ToolSearch.)
+
+Knowledge tree and forest management tool. Forests group related trees by domain. Trees contain indexed knowledge nodes with selective loading.
 
 Actions:
   - "list_forests": List all forests with lean summaries.
@@ -582,7 +590,13 @@ Actions:
 
           const indexData = tree.index || {};
           for (const entry of Object.values(indexData) as any[]) {
-            const { score, matchingTags, matchedTerms } = scoreEntry(queryTokens, searchTagsLower, entry, tree, idf);
+            const raw = scoreEntry(queryTokens, searchTagsLower, entry, tree, idf);
+            const { matchingTags, matchedTerms, termsFromTags } = raw;
+            // Price staleness into the RANK, not just the flag. A finding past its tree's
+            // own freshness window should lose ties rather than compete equally on generic
+            // terms — measured case: correct hit 0.637 vs an unrelated 179-day-stale node
+            // at 0.527.
+            const score = Math.round((stale ? raw.score * STALE_RANK_PENALTY : raw.score) * 1000) / 1000;
             if (score < SCORE_FLOOR) continue;
 
             matches.push({
@@ -595,7 +609,9 @@ Actions:
               matchingTags,
               matchCount: matchingTags.length,
               matchedTerms,
+              ...(termsFromTags.length > 0 ? { termsFromTags } : {}),
               score,
+              ...(stale ? { scoreBeforeStalePenalty: raw.score } : {}),
               tokenCost: entry.tokenCost || 0,
               trust: entry.trust || "unverified",
               // Surfaced at the point of use — a finding past its own freshness window

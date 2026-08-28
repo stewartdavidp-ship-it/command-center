@@ -43,7 +43,13 @@ export function registerKnowledgeNodeTools(server: McpServer): void {
 
   server.tool(
     "knowledge_node",
-    `Knowledge node content CRUD with selective loading. Nodes contain the actual knowledge — curated findings, sources, and cross-references. Each node has an index entry (cheap, always loaded with tree) and a content record (expensive, loaded on demand).
+    `WRITE AND READ RESEARCH FINDINGS. Companion to knowledge_tree — load this whenever you load research or web-search tools. Use it to RECORD what you learned (a measured platform behaviour, an investigation result, a competitive finding) so the next session anywhere finds it instead of re-deriving it, and to LOAD the full content behind a knowledge_tree search hit.
+
+  knowledge_node{action:"create", treeId, question:"<the question a future session would type>", content:"<what you found>"}
+
+Only treeId, question and content are required; trust defaults to unverified and keyFinding auto-generates. A three-field write beats no write.
+
+Knowledge node content CRUD with selective loading. Nodes contain the actual knowledge — curated findings, sources, and cross-references. Each node has an index entry (cheap, always loaded with tree) and a content record (expensive, loaded on demand).
 
 Actions:
   - "create": Create a node in a tree. Requires treeId, question, content. Optional: trust, parentId, keyFinding, sources, consensusNotes, crossRefs. sources/crossRefs accept a REAL ARRAY (preferred) or a JSON array string. Auto-computes tokenCount. Creates index entry + content record atomically. Updates tree aggregates.

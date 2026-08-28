@@ -188,7 +188,29 @@ export interface ScoreResult {
   score: number;
   matchingTags: string[];
   matchedTerms: string[];
+  /**
+   * Query terms that scored via this node's TAGS (at question weight).
+   *
+   * Reported because its absence was actively misleading: `matchingTags` and `matchCount`
+   * only reflect EXACT tag matches, which are always empty on a query-only search. A
+   * session read that as "tags contributed nothing" and concluded its tags were "close to
+   * decorative" — when on its own best result four query terms had scored through tags.
+   */
+  termsFromTags: string[];
 }
+
+/**
+ * Ranking penalty applied to a match from a tree past its own freshness window.
+ *
+ * Staleness was surfaced as a flag but not priced into the score, so stale nodes competed
+ * on equal footing via generic terms. Observed 2026-08-28: a query about a mobile base64
+ * bug returned the correct node at 0.637 and an unrelated 179-day-stale node at 0.527 —
+ * a 0.11 margin — plus three more stale hits above the floor.
+ *
+ * Deliberately mild. A stale finding is still often the right one; it should lose ties, not
+ * disappear. At 0.8 the case above cleanly separates without burying anything.
+ */
+export const STALE_RANK_PENALTY = 0.8;
 
 /**
  * Inverse document frequency over the searched corpus.
@@ -257,6 +279,7 @@ export function scoreEntry(
 
   // ── Free-text scoring ──
   const matchedTerms: string[] = [];
+  const termsFromTags: string[] = [];
 
   if (queryTokens.length > 0) {
     const questionTokens = cached.q;
@@ -271,7 +294,7 @@ export function scoreEntry(
       let termScore = 0;
       if (questionTokens.has(term)) termScore += WEIGHT_QUESTION;
       if (findingTokens.has(term)) termScore += WEIGHT_KEY_FINDING;
-      if (tagTokens.has(term)) termScore += WEIGHT_QUESTION;
+      if (tagTokens.has(term)) { termScore += WEIGHT_QUESTION; termsFromTags.push(term); }
       if (treeTokensSet.has(term)) termScore += WEIGHT_TREE_CONTEXT;
 
       if (termScore > 0) {
@@ -283,7 +306,7 @@ export function scoreEntry(
     }
   }
 
-  if (score === 0) return { score: 0, matchingTags: [], matchedTerms: [] };
+  if (score === 0) return { score: 0, matchingTags: [], matchedTerms: [], termsFromTags: [] };
 
   // Normalize by the number of distinct signals the caller supplied.
   const signalCount = new Set(queryTokens).size + searchTagsLower.length;
@@ -293,6 +316,7 @@ export function scoreEntry(
     score: Math.round(normalized * 1000) / 1000,
     matchingTags,
     matchedTerms,
+    termsFromTags,
   };
 }
 
