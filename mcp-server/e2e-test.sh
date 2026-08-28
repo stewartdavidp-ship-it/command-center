@@ -181,6 +181,47 @@ for j in jobs:
       echo "  🧹 Emergency cleanup: $sweep_status job $orphan_id"
     done
   done
+
+  # Sweep E2E knowledge fixtures. Trees and forests are matched by their "E2E " name prefix
+  # because an abort can happen before the ID variables are set.
+  RAW=$(call_tool "knowledge_tree" '{"action":"list_trees"}' 2>/dev/null) || true
+  TEXT=$(get_text "$RAW" 2>/dev/null) || true
+  echo "$TEXT" | python3 -c "
+import json,sys
+raw = sys.stdin.read().strip()
+if not raw:
+    sys.exit(0)
+try:
+    d = json.loads(raw)
+except Exception:
+    sys.exit(0)
+for t in d.get('trees', []):
+    if str(t.get('name','')).startswith('E2E '):
+        print(t['id'])
+" 2>/dev/null | while read -r orphan_tree; do
+    call_tool "knowledge_tree" "{\"action\":\"delete_tree\",\"treeId\":\"$orphan_tree\"}" > /dev/null 2>&1 || true
+    echo "  🧹 Emergency cleanup: knowledge tree $orphan_tree"
+  done
+
+  RAW=$(call_tool "knowledge_tree" '{"action":"list_forests"}' 2>/dev/null) || true
+  TEXT=$(get_text "$RAW" 2>/dev/null) || true
+  echo "$TEXT" | python3 -c "
+import json,sys
+raw = sys.stdin.read().strip()
+if not raw:
+    sys.exit(0)
+try:
+    d = json.loads(raw)
+except Exception:
+    sys.exit(0)
+for f in d.get('forests', []):
+    if str(f.get('name','')).startswith('E2E '):
+        print(f['id'])
+" 2>/dev/null | while read -r orphan_forest; do
+    call_tool "knowledge_tree" "{\"action\":\"delete_forest\",\"forestId\":\"$orphan_forest\"}" > /dev/null 2>&1 || true
+    echo "  🧹 Emergency cleanup: knowledge forest $orphan_forest"
+  done
+
   echo "  Emergency cleanup complete."
 }
 trap emergency_cleanup EXIT
@@ -2705,7 +2746,282 @@ assert "init sets initialized flag in profile" "true" "$INIT_FLAG"
 echo ""
 
 # ═══════════════════════════════════════════════════════════════
-echo "── Phase 21: Teardown — Delete All Test Data ─────────────"
+echo "── Phase 21: Knowledge Tree — Search, Misses, Summaries ──"
+# ═══════════════════════════════════════════════════════════════
+echo ""
+
+# Test and prod share one RTDB, so this phase isolates itself two ways:
+#   1. Every fixture (forest, tree, node) is created here and deleted at the end of the
+#      phase — nothing is asserted against the real corpus.
+#   2. The search vocabulary ("zzyzx", "quokka", "marmalade") is nonsense chosen to appear
+#      in no real node, so scoring assertions cannot be perturbed by corpus growth, and a
+#      real node can never be mistaken for the fixture.
+# The cached global routing table is regenerated after teardown so it stops referencing
+# the deleted fixture tree.
+
+# -- setup: forest --
+RAW=$(call_tool "knowledge_tree" '{"action":"create_forest","name":"E2E Knowledge Forest","description":"E2E test forest — deleted at end of phase","tags":["e2e-test"]}')
+ERR=$(is_error "$RAW")
+TEXT=$(get_text "$RAW")
+KT_FOREST_ID=$(jq_field "$TEXT" "['id']")
+assert "knowledge_tree(create_forest) not error" "false" "$ERR"
+assert_not_empty "knowledge_tree(create_forest) returns id" "$KT_FOREST_ID"
+
+# -- setup: tree inside that forest --
+RAW=$(call_tool "knowledge_tree" "{\"action\":\"create_tree\",\"name\":\"E2E Zzyzx Tree\",\"description\":\"E2E test tree — deleted at end of phase\",\"forestIds\":[\"$KT_FOREST_ID\"]}")
+ERR=$(is_error "$RAW")
+TEXT=$(get_text "$RAW")
+KT_TREE_ID=$(jq_field "$TEXT" "['treeId']")
+assert "knowledge_tree(create_tree) not error" "false" "$ERR"
+assert_not_empty "knowledge_tree(create_tree) returns treeId" "$KT_TREE_ID"
+
+# -- setup: one node with a distinctive question, keyFinding and tags --
+RAW=$(call_tool "knowledge_node" "{\"action\":\"create\",\"treeId\":\"$KT_TREE_ID\",\"question\":\"Which zzyzx quokka protocol handles marmalade retry backoff?\",\"content\":\"The zzyzx quokka protocol retries with marmalade backoff after a transient failure.\",\"keyFinding\":\"Zzyzx quokka retries use marmalade backoff.\",\"trust\":\"authoritative\",\"tags\":[\"e2e-zzyzx\",\"quokka-protocol\"]}")
+ERR=$(is_error "$RAW")
+TEXT=$(get_text "$RAW")
+KT_NODE_ID=$(jq_field "$TEXT" "['indexEntry']['id']")
+assert "knowledge_node(create) not error" "false" "$ERR"
+assert_not_empty "knowledge_node(create) returns node id" "$KT_NODE_ID"
+
+# ── search: query only (free text, no tags) ──────────────────
+RAW=$(call_tool "knowledge_tree" '{"action":"search","query":"zzyzx quokka marmalade backoff"}')
+ERR=$(is_error "$RAW")
+TEXT=$(get_text "$RAW")
+assert "knowledge_tree(search, query only) not error" "false" "$ERR"
+TOP_NODE=$(echo "$TEXT" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+m=d.get('matches',[])
+print(m[0]['nodeId'] if m else '')
+")
+assert "knowledge_tree(search, query only) top match is fixture node" "$KT_NODE_ID" "$TOP_NODE"
+# Query-only search must score on question/keyFinding text, not tags
+MATCH_SHAPE=$(echo "$TEXT" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+m=d.get('matches',[])
+if not m: print('no-matches')
+else:
+    keys=['nodeId','treeId','treeName','question','keyFinding','tags','matchingTags','matchCount','matchedTerms','score','trust','staleDays']
+    missing=[k for k in keys if k not in m[0]]
+    print('ok' if not missing else 'missing:'+','.join(missing))
+")
+assert "knowledge_tree(search) match carries full result shape" "ok" "$MATCH_SHAPE"
+TERMS_MATCHED=$(echo "$TEXT" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+m=d.get('matches',[])
+terms=set(m[0]['matchedTerms']) if m else set()
+print('true' if {'zzyzx','quokka','marmalade'} <= terms else 'false')
+")
+assert "knowledge_tree(search, query only) matched free-text terms" "true" "$TERMS_MATCHED"
+NO_TAG_HITS=$(echo "$TEXT" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+m=d.get('matches',[])
+print(m[0]['matchCount'] if m else 'X')
+")
+assert "knowledge_tree(search, query only) has no exact-tag hits" "0" "$NO_TAG_HITS"
+# No treeId/forestId filter → the whole corpus is scanned
+SEARCHED_ALL=$(echo "$TEXT" | python3 -c "import json,sys; d=json.load(sys.stdin); print('true' if d.get('searchedTrees',0) > 1 else 'false')")
+assert "knowledge_tree(search, unfiltered) scans all trees" "true" "$SEARCHED_ALL"
+
+# ── search: tags only — backward compatibility ───────────────
+RAW=$(call_tool "knowledge_tree" '{"action":"search","tags":["quokka-protocol"]}')
+ERR=$(is_error "$RAW")
+TEXT=$(get_text "$RAW")
+assert "knowledge_tree(search, tags only) not error" "false" "$ERR"
+TAG_HIT=$(echo "$TEXT" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+for m in d.get('matches',[]):
+    if m['nodeId']=='$KT_NODE_ID':
+        print('%s|%s' % (m['matchCount'], ','.join(m['matchingTags'])))
+        break
+else: print('not-found')
+")
+assert "knowledge_tree(search, tags only) exact tag match" "1|quokka-protocol" "$TAG_HIT"
+
+# Legacy action name must keep working — callers written before the rewrite pass search_tags
+RAW=$(call_tool "knowledge_tree" '{"action":"search_tags","tags":["quokka-protocol"]}')
+ERR=$(is_error "$RAW")
+TEXT=$(get_text "$RAW")
+assert "knowledge_tree(search_tags alias) not error" "false" "$ERR"
+LEGACY_HIT=$(echo "$TEXT" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+print('true' if any(m['nodeId']=='$KT_NODE_ID' for m in d.get('matches',[])) else 'false')
+")
+assert "knowledge_tree(search_tags alias) finds node by tag" "true" "$LEGACY_HIT"
+
+# ── search: query + tags together, scoped to the fixture tree ─
+RAW=$(call_tool "knowledge_tree" "{\"action\":\"search\",\"query\":\"marmalade backoff\",\"tags\":[\"e2e-zzyzx\"],\"treeId\":\"$KT_TREE_ID\"}")
+ERR=$(is_error "$RAW")
+TEXT=$(get_text "$RAW")
+assert "knowledge_tree(search, query+tags) not error" "false" "$ERR"
+BOTH_SIGNALS=$(echo "$TEXT" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+for m in d.get('matches',[]):
+    if m['nodeId']=='$KT_NODE_ID':
+        print('true' if m['matchingTags'] and m['matchedTerms'] else 'false')
+        break
+else: print('not-found')
+")
+assert "knowledge_tree(search, query+tags) scores on both signals" "true" "$BOTH_SIGNALS"
+SCOPED_ONE=$(echo "$TEXT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('searchedTrees',0))")
+assert "knowledge_tree(search, treeId filter) searches 1 tree" "1" "$SCOPED_ONE"
+
+# forestId filter narrows to the forest's member trees
+RAW=$(call_tool "knowledge_tree" "{\"action\":\"search\",\"query\":\"zzyzx quokka\",\"forestId\":\"$KT_FOREST_ID\"}")
+TEXT=$(get_text "$RAW")
+FOREST_SCOPED=$(echo "$TEXT" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+print('%s|%s' % (d.get('searchedTrees',0), 'true' if any(m['nodeId']=='$KT_NODE_ID' for m in d.get('matches',[])) else 'false'))
+")
+assert "knowledge_tree(search, forestId filter) scopes to member trees" "1|true" "$FOREST_SCOPED"
+
+# ── search: validation — at least one of query/tags is required ─
+RAW=$(call_tool "knowledge_tree" '{"action":"search"}')
+ERR=$(is_error "$RAW")
+TEXT=$(get_text "$RAW")
+assert "knowledge_tree(search) with neither query nor tags is error" "true" "$ERR"
+assert_contains "knowledge_tree(search) validation names both params" "query" "$TEXT"
+RAW=$(call_tool "knowledge_tree" '{"action":"search","tags":[]}')
+ERR=$(is_error "$RAW")
+assert "knowledge_tree(search) with empty tags array is error" "true" "$ERR"
+RAW=$(call_tool "knowledge_tree" '{"action":"search","query":"   "}')
+ERR=$(is_error "$RAW")
+assert "knowledge_tree(search) with blank query is error" "true" "$ERR"
+RAW=$(call_tool "knowledge_tree" '{"action":"search_tags"}')
+ERR=$(is_error "$RAW")
+assert "knowledge_tree(search_tags alias) with no args is error" "true" "$ERR"
+
+# ── list_misses: zero-confidence searches are logged ─────────
+# NOTE: search misses are append-only — the tool exposes no delete, so this one row is the
+# single artifact the phase cannot clean up. The marker token "e2eprobe" makes it obvious
+# to anyone reviewing the miss log that the row is synthetic.
+KT_MISS_QUERY="e2eprobe qzzxvbn plmqwrt"
+RAW=$(call_tool "knowledge_tree" "{\"action\":\"search\",\"query\":\"$KT_MISS_QUERY\"}")
+TEXT=$(get_text "$RAW")
+MISS_TOTAL=$(echo "$TEXT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('total','X'))")
+assert "knowledge_tree(search) unanswerable query returns 0 matches" "0" "$MISS_TOTAL"
+
+RAW=$(call_tool "knowledge_tree" '{"action":"list_misses"}')
+ERR=$(is_error "$RAW")
+TEXT=$(get_text "$RAW")
+assert "knowledge_tree(list_misses) not error" "false" "$ERR"
+MISS_SHAPE=$(echo "$TEXT" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+print('true' if 'misses' in d and 'total' in d else 'false')
+")
+assert "knowledge_tree(list_misses) returns misses+total" "true" "$MISS_SHAPE"
+LOGGED=$(echo "$TEXT" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+for m in d.get('misses',[]):
+    if m.get('query')=='$KT_MISS_QUERY':
+        print('true' if m.get('weakMatches')==0 and m.get('searchedTrees',0) > 0 and m.get('timestamp') else 'partial')
+        break
+else: print('false')
+")
+assert "knowledge_tree(list_misses) logged the unanswerable search" "true" "$LOGGED"
+NEWEST_FIRST=$(echo "$TEXT" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+ts=[m.get('timestamp','') for m in d.get('misses',[])]
+print('true' if ts == sorted(ts, reverse=True) else 'false')
+")
+assert "knowledge_tree(list_misses) sorted newest first" "true" "$NEWEST_FIRST"
+RAW=$(call_tool "knowledge_tree" '{"action":"list_misses","limit":1}')
+TEXT=$(get_text "$RAW")
+MISS_LIMIT=$(echo "$TEXT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('misses',[])))")
+assert "knowledge_tree(list_misses, limit=1) returns 1 row" "1" "$MISS_LIMIT"
+
+# ── generate_summary: forest-scoped ──────────────────────────
+RAW=$(call_tool "knowledge_tree" "{\"action\":\"generate_summary\",\"forestId\":\"$KT_FOREST_ID\"}")
+ERR=$(is_error "$RAW")
+TEXT=$(get_text "$RAW")
+assert "knowledge_tree(generate_summary, forestId) not error" "false" "$ERR"
+FOREST_SUMMARY=$(echo "$TEXT" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+print('%s|%s|%s' % (d.get('nodeCount','X'), d.get('treeCount','X'), len(d.get('summary','').split(chr(10)))))
+")
+assert "knowledge_tree(generate_summary, forestId) 1 node / 1 tree / 1 line" "1|1|1" "$FOREST_SUMMARY"
+assert_contains "knowledge_tree(generate_summary, forestId) line carries the question" "zzyzx quokka protocol" "$TEXT"
+assert_contains "knowledge_tree(generate_summary, forestId) line carries the tree name" "E2E Zzyzx Tree" "$TEXT"
+
+RAW=$(call_tool "knowledge_tree" '{"action":"generate_summary","forestId":"e2e-nonexistent-forest"}')
+ERR=$(is_error "$RAW")
+assert "knowledge_tree(generate_summary) nonexistent forestId is error" "true" "$ERR"
+
+# ── generate_summary: global (no forestId) ───────────────────
+# Without forestId the table must span EVERY tree, including trees in no forest — that is
+# the whole point of the global variant.
+RAW=$(call_tool "knowledge_tree" '{"action":"generate_summary"}')
+ERR=$(is_error "$RAW")
+TEXT=$(get_text "$RAW")
+assert "knowledge_tree(generate_summary, global) not error" "false" "$ERR"
+GLOBAL_SCOPE=$(jq_field "$TEXT" "['scope']")
+assert "knowledge_tree(generate_summary, global) scope=global" "global" "$GLOBAL_SCOPE"
+GLOBAL_WIDER=$(echo "$TEXT" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+print('true' if d.get('treeCount',0) > 1 and d.get('nodeCount',0) > 1 else 'false')
+")
+assert "knowledge_tree(generate_summary, global) spans more than the fixture forest" "true" "$GLOBAL_WIDER"
+GLOBAL_HAS_FIXTURE=$(echo "$TEXT" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+lines=[l for l in d.get('summary','').split(chr(10)) if 'E2E Zzyzx Tree' in l]
+print('true' if len(lines)==1 else 'false')
+")
+assert "knowledge_tree(generate_summary, global) includes fixture node once" "true" "$GLOBAL_HAS_FIXTURE"
+GLOBAL_ONE_LINE_PER_NODE=$(echo "$TEXT" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+summary=d.get('summary','')
+lines=summary.split(chr(10)) if summary else []
+rendered=min(d.get('nodeCount',0), 400)
+print('true' if len(lines)==rendered else 'false')
+")
+assert "knowledge_tree(generate_summary, global) one line per node" "true" "$GLOBAL_ONE_LINE_PER_NODE"
+
+# ── cleanup: delete fixtures ─────────────────────────────────
+RAW=$(call_tool "knowledge_tree" "{\"action\":\"delete_tree\",\"treeId\":\"$KT_TREE_ID\"}")
+ERR=$(is_error "$RAW")
+TEXT=$(get_text "$RAW")
+assert "knowledge_tree(delete_tree) not error" "false" "$ERR"
+DELETED=$(echo "$TEXT" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+print('%s|%s' % (d.get('deletedNodes','X'), d.get('removedFromForests','X')))
+")
+assert "knowledge_tree(delete_tree) removed node + forest membership" "1|1" "$DELETED"
+
+RAW=$(call_tool "knowledge_tree" "{\"action\":\"delete_forest\",\"forestId\":\"$KT_FOREST_ID\"}")
+ERR=$(is_error "$RAW")
+assert "knowledge_tree(delete_forest) not error" "false" "$ERR"
+
+RAW=$(call_tool "knowledge_tree" '{"action":"list_trees"}')
+TEXT=$(get_text "$RAW")
+assert_not_contains "knowledge_tree(list_trees) fixture tree is gone" "$KT_TREE_ID" "$TEXT"
+RAW=$(call_tool "knowledge_tree" '{"action":"list_forests"}')
+TEXT=$(get_text "$RAW")
+assert_not_contains "knowledge_tree(list_forests) fixture forest is gone" "$KT_FOREST_ID" "$TEXT"
+
+# The cached global routing table still names the deleted fixture tree — regenerate so the
+# shared RTDB is left exactly as the phase found it.
+RAW=$(call_tool "knowledge_tree" '{"action":"generate_summary"}')
+TEXT=$(get_text "$RAW")
+assert_not_contains "global summary regenerated without fixture" "E2E Zzyzx Tree" "$TEXT"
+
+echo ""
+# ═══════════════════════════════════════════════════════════════
+echo "── Phase 22: Teardown — Delete All Test Data ─────────────"
 # ═══════════════════════════════════════════════════════════════
 echo ""
 
