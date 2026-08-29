@@ -65,14 +65,39 @@ call_tool() {
   echo '{"result":{"content":[{"type":"text","text":""}]}}'
 }
 
+# Helper: list every tool the server registers (tools/list, not tools/call).
+# Returns one tool name per line.
+list_registered_tools() {
+  curl -s -X POST "$URL" \
+    -H "$AUTH" \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json, text/event-stream" \
+    -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
+    2>/dev/null | grep "^data:" | sed 's/^data: //' | python3 -c "
+import json,sys
+try:
+    d=json.load(sys.stdin)
+    for t in d.get('result',{}).get('tools',[]):
+        print(t['name'])
+except Exception:
+    pass
+"
+}
+
 # Helper: extract text content from MCP response
 # Returns '{}' on failure so downstream json.loads() won't crash
+# When a call passes `initiator` but no `turnDelta`, the server prepends a
+# context-tracking warning as its own content block. Reading content[0] blindly
+# then returns the warning instead of the payload, which reads as an empty
+# field rather than as a harness problem. Skip that block.
 get_text() {
   echo "$1" | python3 -c "
 import json,sys
 try:
     d=json.load(sys.stdin)
-    txt = d.get('result',{}).get('content',[{}])[0].get('text','')
+    blocks = [c.get('text','') for c in d.get('result',{}).get('content',[])]
+    blocks = [b for b in blocks if not b.startswith('⚠️ CONTEXT TRACKING WARNING')]
+    txt = blocks[0] if blocks else ''
     print(txt if txt else '{}')
 except:
     print('{}')
@@ -427,10 +452,22 @@ IDEA2_SEQ=$(jq_field "$TEXT" "['sequence']")
 assert_not_empty "idea(create) linked returns id" "$IDEA2_ID"
 assert "idea(create) linked has sequence" "true" "$([ "$IDEA2_SEQ" -gt 0 ] && echo true || echo false)"
 
-# Test 8: idea list (all) — use limit=100 to ensure test data is included
-RAW=$(call_tool "idea" '{"action":"list","limit":100}')
+# Test 8: idea list (all). The unfiltered list is sorted newest-first, so a
+# just-created idea is on the first page regardless of how many ideas exist.
+# Do NOT "fix" a failure here by raising the limit — that only hides a lost sort
+# until the collection outgrows the new number too.
+RAW=$(call_tool "idea" '{"action":"list","limit":20}')
 TEXT=$(get_text "$RAW")
 assert_contains "idea(list) contains test idea" "$IDEA1_ID" "$TEXT"
+
+# Test 8b: unfiltered list is newest-first — IDEA2 was created after IDEA1
+FIRST_TWO=$(echo "$TEXT" | python3 -c "
+import json,sys
+d=json.loads(sys.stdin.read())
+ids=[i['id'] for i in d.get('items',[])[:2]]
+print(','.join(ids))
+")
+assert "idea(list) unfiltered is newest-first" "$IDEA2_ID,$IDEA1_ID" "$FIRST_TWO"
 
 # Test 9: idea list (filtered by appId) — use limit=100 to ensure test data is included
 RAW=$(call_tool "idea" '{"action":"list","appId":"command-center","limit":100}')
@@ -780,10 +817,16 @@ assert "get_active_concepts has constraints" "True" "$HAS_CONSTRAINTS"
 RAW=$(call_tool "generate_claude_md" '{"appId":"command-center","appName":"Command Center"}')
 TEXT=$(get_text "$RAW")
 assert_contains "generate_claude_md has title" "CLAUDE.md" "$TEXT"
-assert_contains "generate_claude_md has RULEs section" "RULEs" "$TEXT"
-assert_contains "generate_claude_md has CONSTRAINTs section" "CONSTRAINTs" "$TEXT"
-assert_contains "generate_claude_md has DECISIONs section" "DECISIONs" "$TEXT"
-assert_contains "generate_claude_md has OPENs section" "OPENs" "$TEXT"
+# Match the section HEADERS, not the bare words — "OPENs" and "DECISIONs" both
+# occur inside rule prose, so a bare-word assertion passes whether the section
+# is emitted or not.
+assert_contains "generate_claude_md has RULEs section" "## RULEs" "$TEXT"
+assert_contains "generate_claude_md has CONSTRAINTs section" "## CONSTRAINTs" "$TEXT"
+# DECISIONs and OPENs are deliberately excluded from CLAUDE.md — they are noise
+# in a startup context file and are available on demand via list_concepts /
+# get_active_concepts. Asserted as absent so a silent re-introduction is caught.
+assert_not_contains "generate_claude_md omits DECISIONs section" "## DECISIONs" "$TEXT"
+assert_not_contains "generate_claude_md omits OPENs section" "## OPENs" "$TEXT"
 
 # Test: generate_claude_md now persists — retrieve it
 RAW=$(call_tool "generate_claude_md" '{"action":"get","appId":"command-center"}')
@@ -1223,7 +1266,13 @@ TEXT=$(get_text "$RAW")
 ERR=$(is_error "$RAW")
 assert "skill(list) not error" "false" "$ERR"
 SKILL_COUNT=$(jq_field "$TEXT" "['count']")
-assert "skill(list) count is 39" "39" "$SKILL_COUNT"
+# Skills are Firebase data and are added over time, so an exact count is a
+# treadmill assertion. Assert the two things that are actually contracts:
+# count agrees with the array it describes, and the canonical set below is
+# present (checked individually by the assert_contains calls that follow).
+SKILL_ARRAY_LEN=$(echo "$TEXT" | python3 -c "import json,sys; print(len(json.loads(sys.stdin.read()).get('skills',[])))")
+assert "skill(list) count matches skills array" "$SKILL_ARRAY_LEN" "$SKILL_COUNT"
+assert "skill(list) returns the canonical set or more" "true" "$([ "$SKILL_COUNT" -ge 39 ] && echo true || echo false)"
 assert_contains "skill(list) has cc-odrc-framework" "cc-odrc-framework" "$TEXT"
 assert_contains "skill(list) has cc-session-protocol" "cc-session-protocol" "$TEXT"
 assert_contains "skill(list) has cc-build-protocol" "cc-build-protocol" "$TEXT"
@@ -1282,7 +1331,21 @@ TEXT=$(get_text "$RAW")
 ERR=$(is_error "$RAW")
 assert "skill(get cc-mcp-workflow) not error" "false" "$ERR"
 assert_contains "skill(get cc-mcp-workflow) has lifecycle" "IDEATE" "$TEXT"
-assert_contains "skill(get cc-mcp-workflow) has tool count" "10 tools" "$TEXT"
+# The skill's Tool Count section is Chat's tool-discovery surface. Assert it
+# against what the server actually registers rather than against a number
+# frozen at authoring time — a hardcoded "N tools" goes stale the first time a
+# tool is added, and the drift it hides is a tool Chat never learns exists.
+REGISTERED_TOOLS=$(list_registered_tools)
+REGISTERED_COUNT=$(echo "$REGISTERED_TOOLS" | grep -c .)
+assert "tools/list returns tools" "true" "$([ "$REGISTERED_COUNT" -gt 0 ] && echo true || echo false)"
+assert_contains "skill(get cc-mcp-workflow) tool count matches tools/list" "$REGISTERED_COUNT tools total" "$TEXT"
+MISSING_TOOLS=""
+for t in $REGISTERED_TOOLS; do
+  if ! echo "$TEXT" | grep -qF -- "$t"; then
+    MISSING_TOOLS="$MISSING_TOOLS $t"
+  fi
+done
+assert "skill(get cc-mcp-workflow) names every registered tool" "" "$MISSING_TOOLS"
 
 # Test: skill get — stress test lens
 RAW=$(call_tool "skill" '{"action":"get","skillName":"cc-lens-stress-test"}')
@@ -1400,13 +1463,22 @@ assert_contains "skill(get cc-job-creation-protocol) has protocol content" "Job 
 assert_contains "skill(get cc-job-creation-protocol) has instructions format" "Build Objective" "$TEXT"
 assert_contains "skill(get cc-job-creation-protocol) has concept snapshot" "conceptSnapshot" "$TEXT"
 
-# Test: skill get — updated session-protocol has router directive
+# Test: Chat's bootstrap chain reaches a routing table.
+# The chain moved: cc-session-protocol no longer names cc-skill-router directly,
+# it delegates startup to cc-startup-checklist, which carries the routing table
+# inline. Assert the CHAIN, so either link breaking is caught — asserting the
+# literal string in cc-session-protocol only tested one shape of the chain.
 RAW=$(call_tool "skill" '{"action":"get","skillName":"cc-session-protocol"}')
 TEXT=$(get_text "$RAW")
-assert_contains "skill(get cc-session-protocol) has router directive" "cc-skill-router" "$TEXT"
+assert_contains "skill(get cc-session-protocol) delegates startup to checklist" "cc-startup-checklist" "$TEXT"
 assert_contains "skill(get cc-session-protocol) has job-creation ref" "cc-job-creation-protocol" "$TEXT"
 
-# Test: skill get — updated build-protocol has router directive
+RAW=$(call_tool "skill" '{"action":"get","skillName":"cc-startup-checklist"}')
+TEXT=$(get_text "$RAW")
+assert_contains "skill(get cc-startup-checklist) carries the routing table" "Skill Router" "$TEXT"
+assert_contains "skill(get cc-startup-checklist) routes compaction recovery" "cc-session-resume" "$TEXT"
+
+# Test: skill get — build-protocol still points Code at the router directly
 RAW=$(call_tool "skill" '{"action":"get","skillName":"cc-build-protocol"}')
 TEXT=$(get_text "$RAW")
 assert_contains "skill(get cc-build-protocol) has router directive" "cc-skill-router" "$TEXT"
@@ -1975,7 +2047,47 @@ TEXT=$(get_text "$RAW")
 Q_EVENTS=$(echo "$TEXT" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(len([e for e in d.get('events',[]) if e.get('type') in ('question','answer')]))")
 assert "job has 2 question/answer events" "2" "$Q_EVENTS"
 
-# Test 9: Backward compat — start without new fields (existing flow, status=active)
+# Test 9: Creator resolution on job(start) — createdBy || initiator || "unknown".
+#
+# createdBy is what routes the job: "claude-chat" opens a draft, anything else
+# opens an active build, and review/complete address their notification to it.
+# All three inputs are asserted because the middle one was silently broken —
+# start read only createdBy while every other action resolved through
+# initiator too, so an initiator-only caller got createdBy="unknown", an
+# active build instead of a draft, and a completion notice mailed to a surface
+# that does not exist.
+#
+# The anonymous case records "unknown" deliberately. It used to default to
+# "claude-code"; attributing an unattributed call to Code was a guess that
+# happened to be right when Code was the only writer, and is now wrong for
+# Cowork, Chrome and the Office surfaces. Callers should pass initiator.
+
+# 9a: explicit createdBy (legacy callers)
+RAW=$(call_tool "job" "{\"action\":\"start\",\"appId\":\"$P15_APP_ID\",\"title\":\"E2E Creator Job — createdBy\",\"createdBy\":\"claude-code\"}")
+TEXT=$(get_text "$RAW")
+CB_CREATED_BY=$(jq_field "$TEXT" "['createdBy']")
+CB_STATUS=$(jq_field "$TEXT" "['status']")
+CB_JOB_ID=$(jq_field "$TEXT" "['id']")
+assert "creator via createdBy=claude-code" "claude-code" "$CB_CREATED_BY"
+assert "creator via createdBy status=active" "active" "$CB_STATUS"
+
+# 9b: initiator only — must resolve identically, including the draft branch
+RAW=$(call_tool "job" "{\"action\":\"start\",\"appId\":\"$P15_APP_ID\",\"title\":\"E2E Creator Job — initiator\",\"initiator\":\"claude-chat\"}")
+TEXT=$(get_text "$RAW")
+IN_CREATED_BY=$(jq_field "$TEXT" "['createdBy']")
+IN_STATUS=$(jq_field "$TEXT" "['status']")
+IN_JOB_ID=$(jq_field "$TEXT" "['id']")
+assert "creator via initiator=claude-chat" "claude-chat" "$IN_CREATED_BY"
+assert "creator via initiator opens a draft" "draft" "$IN_STATUS"
+
+# 9c: explicit createdBy wins over initiator
+RAW=$(call_tool "job" "{\"action\":\"start\",\"appId\":\"$P15_APP_ID\",\"title\":\"E2E Creator Job — both\",\"createdBy\":\"claude-chat\",\"initiator\":\"claude-code\"}")
+TEXT=$(get_text "$RAW")
+BOTH_CREATED_BY=$(jq_field "$TEXT" "['createdBy']")
+BOTH_JOB_ID=$(jq_field "$TEXT" "['id']")
+assert "createdBy wins over initiator" "claude-chat" "$BOTH_CREATED_BY"
+
+# 9d: neither — backward compat shape (active build), attributed "unknown"
 RAW=$(call_tool "job" "{\"action\":\"start\",\"appId\":\"$P15_APP_ID\",\"title\":\"E2E Backward Compat Job\"}")
 TEXT=$(get_text "$RAW")
 BC_STATUS=$(jq_field "$TEXT" "['status']")
@@ -1985,8 +2097,16 @@ BC_STARTED_AT=$(jq_field "$TEXT" "['startedAt']")
 BC_JOB_ID=$(jq_field "$TEXT" "['id']")
 assert "backward compat status=active" "active" "$BC_STATUS"
 assert "backward compat jobType=build" "build" "$BC_JOB_TYPE"
-assert "backward compat createdBy=claude-code" "claude-code" "$BC_CREATED_BY"
+assert "unattributed start records createdBy=unknown" "unknown" "$BC_CREATED_BY"
 assert_not_empty "backward compat has startedAt" "$BC_STARTED_AT"
+
+# Clean up the extra creator-resolution fixtures immediately — they are not
+# part of the lifecycle the rest of this phase drives.
+for CREATOR_JOB in "$CB_JOB_ID" "$IN_JOB_ID" "$BOTH_JOB_ID"; do
+  if [ -n "$CREATOR_JOB" ] && [ "$CREATOR_JOB" != "None" ]; then
+    call_tool "job" "{\"action\":\"delete\",\"jobId\":\"$CREATOR_JOB\"}" > /dev/null
+  fi
+done
 
 # Test 10: Full lifecycle — draft → claim → active → events → complete
 RAW=$(call_tool "job" "{\"action\":\"complete\",\"jobId\":\"$DRAFT_JOB_ID\",\"status\":\"completed\",\"summary\":\"E2E: Full draft lifecycle test complete\",\"testsRun\":5,\"testsPassed\":5,\"testsFailed\":0,\"buildSuccess\":true}")
@@ -2752,14 +2872,16 @@ for c in d.get('result',{}).get('content',[]):
     try:
         payload=json.loads(c['text'])
         lines = payload.get('memoryLines', [])
-        conf = payload.get('confirmation', '')
+        # 'confirmation' was renamed to 'userMessage' when init gained
+        # writeInstructions + nextStep (commit 5ae7406).
+        conf = payload.get('userMessage', '')
         if isinstance(lines, list) and len(lines) >= 2 and len(conf) > 0:
             result='true'
             break
     except Exception: pass
 print(result)
 ")
-assert "init returns memoryLines array and confirmation" "true" "$INIT_LINES"
+assert "init returns memoryLines array and userMessage" "true" "$INIT_LINES"
 
 # -- Init is idempotent (calling twice doesn't error) --
 RAW2=$(call_tool "session" "{\"action\":\"init\",\"initiator\":\"claude-chat\"}")
@@ -3153,7 +3275,7 @@ echo "  Sweeping for orphaned E2E jobs..."
 for sweep_status in draft active; do
   RAW=$(call_tool "job" "{\"action\":\"list\",\"status\":\"$sweep_status\",\"limit\":50}")
   TEXT=$(get_text "$RAW")
-  echo "$TEXT" | python3 -c "
+  ORPHAN_JOB_IDS=$(echo "$TEXT" | python3 -c "
 import json,sys
 raw = sys.stdin.read().strip()
 if not raw:
@@ -3167,13 +3289,14 @@ for j in jobs:
     title = j.get('title','')
     appId = j.get('appId','')
     if 'E2E' in title or appId.startswith('e2e-test-'):
-        print(j['id'] + ' ' + sweep_status)
-" 2>/dev/null | while read -r sweep_id sweep_st; do
-    if [ "$sweep_st" = "active" ]; then
+        print(j['id'])
+" 2>/dev/null)
+  for sweep_id in $ORPHAN_JOB_IDS; do
+    if [ "$sweep_status" = "active" ]; then
       call_tool "job" "{\"action\":\"complete\",\"jobId\":\"$sweep_id\",\"status\":\"abandoned\",\"summary\":\"E2E teardown sweep\"}" > /dev/null
     fi
     call_tool "job" "{\"action\":\"delete\",\"jobId\":\"$sweep_id\"}" > /dev/null
-    echo "    🧹 Swept orphan $sweep_st job: $sweep_id"
+    echo "    🧹 Swept orphan $sweep_status job: $sweep_id"
     TEARDOWN_PASS=$((TEARDOWN_PASS + 1))
   done
 done
@@ -3182,6 +3305,38 @@ echo ""
 echo "  Deleting ideas..."
 delete_entity "idea" "ideaId" "$IDEA1_ID" "idea IDEA1"
 delete_entity "idea" "ideaId" "$IDEA2_ID" "idea IDEA2"
+
+# Sweep: catch E2E idea fixtures left behind by an aborted run, the same way
+# jobs are swept above. This is not cosmetic — generate_claude_md picks the
+# highest-sequence active idea for an app as "Current Idea", so one surviving
+# "E2E Test Idea - Linked" makes the real CLAUDE.md for command-center announce
+# a test fixture as the current build objective. Matched on the fixture names
+# this suite creates, never by appId.
+echo "  Sweeping for orphaned E2E ideas..."
+RAW=$(call_tool "idea" '{"action":"list","limit":500}')
+TEXT=$(get_text "$RAW")
+ORPHAN_IDEA_IDS=$(echo "$TEXT" | python3 -c "
+import json,sys
+raw = sys.stdin.read().strip()
+if not raw:
+    sys.exit(0)
+try:
+    d = json.loads(raw)
+except Exception:
+    sys.exit(0)
+FIXTURES = ('E2E Test Idea - Linked', 'E2E Test Idea - Unlinked', 'E2E Test Idea - Updated', 'E2E Delete Test Idea')
+for i in d.get('items', []):
+    if (i.get('name') or '') in FIXTURES:
+        print(i['id'])
+" 2>/dev/null)
+# Collect first, then loop. Piping into `while read` runs the body in a
+# subshell, so TEARDOWN_PASS increments are discarded and the teardown summary
+# silently under-reports what it deleted.
+for sweep_id in $ORPHAN_IDEA_IDS; do
+  call_tool "idea" "{\"action\":\"delete\",\"ideaId\":\"$sweep_id\"}" > /dev/null
+  echo "    🧹 Swept orphan idea: $sweep_id"
+  TEARDOWN_PASS=$((TEARDOWN_PASS + 1))
+done
 
 echo ""
 echo "  Deleting remaining documents..."

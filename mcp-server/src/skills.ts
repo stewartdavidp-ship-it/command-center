@@ -2207,7 +2207,7 @@ The Firebase records ARE the state. The conversation is ephemeral — Firebase i
 
 ## Tool Count
 
-10 tools total: app, idea, session, concept, job, document, skill, list_concepts, get_active_concepts, generate_claude_md
+15 tools total: app, idea, session, concept, job, document, skill, list_concepts, get_active_concepts, generate_claude_md, knowledge_tree, knowledge_node, search_knowledge_base, repo_file, surface_registry
 
 The \`session\` tool includes profile and attentionQueue capabilities (via action="profile").
 

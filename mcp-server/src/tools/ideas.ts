@@ -92,6 +92,17 @@ export function registerIdeaTools(server: McpServer): void {
           ideas = ideas
             .filter((i) => i.appId === appId)
             .sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
+        } else {
+          // Unfiltered: RTDB hands back push-key order, which is oldest-first.
+          // With hundreds of active ideas that made the default page the OLDEST
+          // 20 — and made "is my new idea in the list?" depend on the caller
+          // guessing a limit above the collection size. Sort newest-first, the
+          // same convention job/session/document list already use. Ideas scoped
+          // to an app keep sequence order, which is the meaningful one there.
+          ideas.sort(
+            (a, b) =>
+              new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+          );
         }
         if (ideaType) {
           ideas = ideas.filter((i) => i.ideaType === ideaType);

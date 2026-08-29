@@ -41,7 +41,7 @@ State machine: draft → active → review → approved → completed/failed/aba
 Chat creates draft jobs with instructions, attachments, and concept snapshots. Code discovers drafts via list(status="draft"), claims them (draft→active), and executes.
 
 Actions:
-  - "start": Create a new job. Requires appId, title. Optional: ideaId, claudeMdSnapshot, preConditions, exceptionsNoted, instructions, attachments (JSON string), conceptSnapshot (JSON string), jobType, createdBy, reviewTier, reviewLenses. If createdBy="claude-chat", initial status is "draft". Otherwise "active" (backward compat).
+  - "start": Create a new job. Requires appId, title. Optional: ideaId, claudeMdSnapshot, preConditions, exceptionsNoted, instructions, attachments (JSON string), conceptSnapshot (JSON string), jobType, createdBy, reviewTier, reviewLenses. Creator is resolved as createdBy || initiator || "unknown". If that resolves to "claude-chat", initial status is "draft". Otherwise "active" (backward compat).
   - "claim": Code claims a draft job to start work. Requires jobId. Validates status=draft. For build jobs, rejects if another active build exists for the same appId. Sets status=active, claimedAt, claimedBy.
   - "revise": Send a reviewed job back to draft for Chat revision. Requires jobId. Validates status=review. Sets status=draft.
   - "review": Flag spec concerns. Requires jobId, concerns. Validates status=active. Sets status=review.
@@ -63,7 +63,7 @@ Actions:
       attachments: z.string().optional().describe("JSON string: array of {type, label, content, targetPath?, action?} content blocks (optional for start/update, only editable on draft)"),
       conceptSnapshot: z.string().optional().describe("JSON string: {rules, constraints, decisions, opens} ODRC state at creation (optional for start)"),
       jobType: z.string().optional().describe("Job type: build|maintenance|test|skill-update|cleanup (optional for start, default: build)"),
-      createdBy: z.string().optional().describe(`Creator surface (required for start). claude-chat creates drafts, others create active. Valid: ${SURFACES.join(", ")}`),
+      createdBy: z.string().optional().describe(`Creator surface for start. Falls back to initiator, then "unknown" — pass one of them so the job can be attributed and its completion notice routed. claude-chat creates drafts, others create active. Valid: ${SURFACES.join(", ")}`),
       claudeMdSnapshot: z.string().optional().describe("CLAUDE.md content being executed (optional for start — prefer attachments)"),
       preConditions: z.string().optional().describe("Notes on state going in (optional for start/update)"),
       exceptionsNoted: z.array(z.string()).optional().describe("Things flagged before starting (optional for start/update)"),
@@ -136,8 +136,15 @@ Actions:
           }
         }
 
-        // Determine initial status: claude-chat creates drafts, everything else creates active
-        const effectiveCreatedBy = createdBy || "unknown";
+        // Determine initial status: claude-chat creates drafts, everything else creates active.
+        // Honour `initiator` as well as the legacy `createdBy`. Every current surface
+        // sends `initiator` (the shared INITIATOR_PARAM) and many send nothing else —
+        // reading only `createdBy` recorded those jobs as "unknown" AND skipped the
+        // draft branch, so a Chat-created job came back as an active build and its
+        // review/complete notification was addressed to the non-existent "unknown"
+        // surface. `claim` already resolved through the same chain; `start` did not.
+        // Explicit createdBy still wins, so a caller can attribute on behalf of another surface.
+        const effectiveCreatedBy = createdBy || initiator || "unknown";
         const initialStatus = effectiveCreatedBy === "claude-chat" ? "draft" : "active";
 
         const ref = getJobsRef(uid).push();
