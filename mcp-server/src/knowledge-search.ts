@@ -145,6 +145,13 @@ const WEIGHT_KEY_FINDING = 1.0;
 const WEIGHT_TREE_CONTEXT = 0.5;
 
 /**
+ * Floor of the query-coverage multiplier — see the damping block in `scoreEntry`.
+ * A node matching every query term is multiplied by 1.0; one matching none of them would
+ * approach this value. Empirically tuned; see the measurements in that comment.
+ */
+const COVERAGE_DAMP_FLOOR = 0.4;
+
+/**
  * Minimum normalized score to be considered a match. Tuned so a single incidental term
  * overlap ("data", "api") does not surface an unrelated node, while a genuine two-term
  * question match clears comfortably.
@@ -340,7 +347,37 @@ export function scoreEntry(
 
   // Normalize by the number of distinct signals the caller supplied.
   const signalCount = new Set(queryTokens).size + searchTagsLower.length;
-  const normalized = signalCount > 0 ? score / signalCount : 0;
+  let normalized = signalCount > 0 ? score / signalCount : 0;
+
+  // ── Query-coverage damping ──
+  // Penalize a match that rests on a small fraction of what the caller asked. A single
+  // rare term hitting `question` could otherwise outrank a node matching the whole query:
+  // measured 2026-08-29 on "getting snapshot history from archive.org without hammering
+  // it", a fantasy-football node matched ONE term ("snapshot", which it carried as both a
+  // question word and a tag, so it scored twice) for 0.546, beating the correct archive
+  // node's three-term match at 0.524. Any incidental vocabulary collision from any tree in
+  // the corpus could take the top slot.
+  //
+  // This fails SILENTLY, which is what makes it worth code rather than a per-node question
+  // rewrite: the searcher gets a plausible rank-1 result and stops looking. Rewriting the
+  // archive node's question fixed that instance and left the behaviour intact.
+  //
+  // The factor is exactly 1.0 at full coverage, so full matches and single-term queries are
+  // untouched and the calibrated thresholds still hold for them. Partial matches are scaled
+  // down toward the floor.
+  //
+  // Floor chosen empirically against 281 degraded queries (3-4 real question terms plus 3
+  // situational filler words, the shape of a searcher who adds context the node lacks):
+  //   none  hit@1 94.0%  hit@5 99.3%  MRR 0.964  avg 7.0 results
+  //   0.40  hit@1 94.7%  hit@5 100.0% MRR 0.970  avg 2.2 results
+  // Better on every axis, and it removes ~68% of the returned payload — the dropped rows
+  // were incidental one-term collisions. Floors below ~0.30 start losing real recall.
+  //
+  // Skipped entirely when the caller passed no query text, so tag-only search is unchanged.
+  if (queryTokens.length > 0) {
+    const coverage = matchedTerms.length / new Set(queryTokens).size;
+    normalized *= COVERAGE_DAMP_FLOOR + (1 - COVERAGE_DAMP_FLOOR) * coverage;
+  }
 
   return {
     score: Math.round(normalized * 1000) / 1000,
