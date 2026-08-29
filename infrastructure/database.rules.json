@@ -1,0 +1,542 @@
+{
+  "rules": {
+    "mast-platform": {
+      "tenants": {
+        ".read": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()",
+        ".write": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()",
+        "$tenantId": {
+          ".validate": "newData.hasChildren(['name', 'status'])",
+          "publicConfig": {
+            ".read": true
+          }
+        }
+      },
+      "platformAdmins": {
+        ".read": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()",
+        ".write": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()"
+      },
+      "auth": {
+        "apiKeys": {
+          ".read": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()",
+          ".write": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()",
+          "$uid": {
+            ".validate": "newData.isString()"
+          }
+        },
+        "tenantApiKeys": {
+          ".read": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()",
+          ".write": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()",
+          ".indexOn": [
+            "keyId",
+            "tenantId"
+          ]
+        },
+        "oauth": {
+          "clients": {
+            ".read": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()",
+            ".write": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()"
+          },
+          "tokenIndex": {
+            ".read": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()",
+            ".write": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()"
+          },
+          "userTokens": {
+            "$uid": {
+              ".read": "auth != null && (auth.uid === $uid || root.child('mast-platform/platformAdmins/' + auth.uid).exists())",
+              ".write": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()"
+            }
+          },
+          "auditLog": {
+            ".read": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()",
+            ".write": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()"
+          }
+        }
+      },
+      "userTenantMap": {
+        "$uid": {
+          ".read": "auth != null && (auth.uid === $uid || root.child('mast-platform/platformAdmins/' + auth.uid).exists())",
+          ".write": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()"
+        }
+      },
+      "dashboardCards": {
+        ".read": "auth != null",
+        ".write": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()"
+      },
+      "alertDefinitions": {
+        ".read": "auth != null",
+        ".write": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()"
+      },
+      "alertRuns": {
+        ".read": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()",
+        ".write": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()"
+      },
+      "tenantsByDomain": {
+        ".read": true,
+        ".write": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()"
+      },
+      "testingMissions": {
+        ".read": "auth != null",
+        ".write": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()"
+      },
+      "showIndex": {
+        ".read": "auth != null",
+        ".write": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()",
+        "$showId": {
+          ".validate": "newData.hasChildren(['tenantId', 'name', 'slug'])"
+        }
+      },
+      "showSlugs": {
+        ".read": true,
+        ".write": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()",
+        "$slug": {
+          ".validate": "newData.hasChildren(['tenantId', 'showId'])"
+        }
+      },
+      "eventsInviteTokens": {
+        ".read": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()",
+        ".write": "auth != null && root.child('mast-platform/platformAdmins/' + auth.uid).exists()",
+        "$token": {
+          ".validate": "newData.hasChildren(['tenantId', 'showId', 'vendorId'])"
+        }
+      },
+      "system": {
+        "tenantOAuth": {
+          ".read": false,
+          ".write": false
+        }
+      },
+      "users": {
+        "$uid": {
+          "tenantOAuth": {
+            ".read": false,
+            ".write": false
+          }
+        }
+      }
+    },
+    "$tenantId": {
+      ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+      "public": {
+        ".read": true,
+        "products": {
+          "$productId": {
+            ".validate": "newData.hasChildren(['pid', 'name'])"
+          }
+        },
+        "returnRequests": {
+          "$rmaId": {
+            ".write": "auth != null && (!data.exists() || data.child('customerUid').val() === auth.uid)",
+            ".validate": "newData.hasChildren(['orderId', 'status', 'customerUid', 'items', 'requestedAt'])"
+          }
+        }
+      },
+      "customers": {
+        "$uid": {
+          ".read": "auth.uid === $uid",
+          ".write": "auth.uid === $uid"
+        }
+      },
+      "admin": {
+        ".read": "(auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin') || (auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').exists() && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() !== 'guest')",
+        "invites": {
+          "$inviteKey": {
+            ".read": "auth != null",
+            ".write": "auth != null && data.exists() && data.child('status').val() === 'pending' && !data.child('acceptedByUid').exists() && newData.child('acceptedByUid').val() === auth.uid && newData.child('status').val() === 'accepted'"
+          }
+        },
+        "users": {
+          ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+          "$uid": {
+            ".read": "auth.uid === $uid",
+            ".write": "auth.uid === $uid && (!data.exists() ? newData.child('role').val() === 'guest' : newData.child('role').val() === data.child('role').val())",
+            ".validate": "newData.hasChildren(['role']) && (newData.child('role').val() === 'admin' || newData.child('role').val() === 'user' || newData.child('role').val() === 'guest')"
+          }
+        },
+        "inventory": {
+          ".write": "(auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin') || (auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').exists() && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() !== 'guest')"
+        },
+        "commissions": {
+          ".indexOn": [
+            "status",
+            "createdAt"
+          ],
+          "$commissionId": {
+            ".write": "!data.exists()",
+            ".validate": "newData.hasChildren(['customerName', 'customerContact', 'status', 'channel', 'createdAt']) && newData.child('status').val() === 'new'"
+          }
+        },
+        "testingMissions": {
+          ".read": "auth != null",
+          ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'"
+        },
+        "materials": {
+          ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+          ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+          "$materialId": {
+            ".validate": "newData.hasChildren(['materialId', 'name', 'unitOfMeasure', 'unitCost', 'status'])"
+          }
+        },
+        "recipes": {
+          ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+          ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+          "$recipeId": {
+            ".validate": "newData.hasChildren(['recipeId', 'productId', 'status'])"
+          }
+        },
+        "consignments": {
+          ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+          ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'"
+        },
+        "lookbooks": {
+          ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+          ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'"
+        },
+        "expenses": {
+          ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+          ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+          ".indexOn": [
+            "date",
+            "reviewed",
+            "category",
+            "source",
+            "dedupHash"
+          ]
+        },
+        "expenseSummary": {
+          ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+          ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'"
+        },
+        "plaidItems": {
+          ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+          ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+          ".indexOn": [
+            "status",
+            "linkedAt"
+          ]
+        },
+        "feedbackSettings": {
+          "publicEnabled": {
+            ".read": true
+          }
+        },
+        "contacts": {
+          ".indexOn": [
+            "createdAt",
+            "category"
+          ],
+          "$contactId": {
+            ".write": "!data.exists() && newData.hasChildren(['name', 'email', 'createdAt', 'createdBy']) && newData.child('createdBy').val() === 'website-form'"
+          }
+        },
+        "dashboardCards": {
+          ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+          ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'"
+        },
+        "$other": {
+          ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'"
+        }
+      },
+      "inquiries": {
+        ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+        ".indexOn": [
+          "status",
+          "createdAt",
+          "contactId"
+        ],
+        "$inquiryId": {
+          ".write": "(!data.exists() && newData.hasChildren(['name', 'email', 'message', 'source', 'createdAt']) && newData.child('source').val() === 'website-contact-form') || (auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin')"
+        }
+      },
+      "feedbackReports": {
+        ".read": "(auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin') || (auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').exists() && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() !== 'guest')",
+        "$reportId": {
+          ".write": "!data.exists()",
+          ".validate": "newData.hasChildren(['appId', 'source', 'type', 'description', 'status', 'timestamp']) && newData.child('status').val() === 'open'"
+        }
+      },
+      "tokenWallet": {
+        ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').exists() && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() !== 'guest'",
+        ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'"
+      },
+      "tokenLog": {
+        ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+        ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'"
+      },
+      "blog": {
+        "published": {
+          ".read": true
+        }
+      },
+      "images": {
+        ".read": true,
+        ".indexOn": [
+          "url",
+          "originalUrl"
+        ]
+      },
+      "analytics": {
+        "hits": {
+          ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+          "$hitId": {
+            ".write": "!data.exists()"
+          }
+        }
+      },
+      "users": {
+        "$uid": {
+          ".read": "auth.uid === $uid",
+          ".write": "auth.uid === $uid",
+          "cart": {
+            "$itemId": {
+              ".validate": "newData.hasChildren(['pid','name','qty']) && newData.child('qty').isNumber() && newData.child('qty').val() >= 1 && newData.child('qty').val() <= 10"
+            }
+          }
+        }
+      },
+      "orders": {
+        ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+        ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+        ".indexOn": [
+          "squareOrderId",
+          "source",
+          "uid",
+          "orderNumber"
+        ],
+        "$orderId": {
+          "status": {
+            ".read": true
+          },
+          "rmaId": {
+            ".write": "auth != null && data.parent().child('uid').val() === auth.uid && !data.exists()"
+          }
+        }
+      },
+      "emails": {
+        ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+        ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+        ".indexOn": [
+          "orderId",
+          "emailType",
+          "status"
+        ]
+      },
+      "webPresence": {
+        ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+        ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+        "config": {
+          ".read": true
+        }
+      },
+      "showLight": {
+        ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').exists() && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() !== 'guest'",
+        ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'"
+      },
+      "config": {
+        ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+        ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+        "termsConfig": {
+          ".read": "auth != null"
+        },
+        "rma": {
+          ".read": "auth != null"
+        }
+      },
+      "alertState": {
+        ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'"
+      },
+      "alertHistory": {
+        ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+        ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+        ".indexOn": [
+          "createdAt",
+          "readAt"
+        ]
+      },
+      "workflows": {
+        ".read": "auth != null",
+        ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'"
+      },
+      "newsletter": {
+        "issues": {
+          ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+          ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'"
+        },
+        "meta": {
+          ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+          ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'"
+        },
+        "subscribers": {
+          ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+          ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+          "$subscriberId": {
+            ".write": "!data.exists() && newData.hasChildren(['email', 'name', 'subscribedAt', 'source', 'status']) && newData.child('source').val() === 'website-form' && newData.child('status').val() === 'active'"
+          }
+        },
+        "published": {
+          ".read": true,
+          ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'"
+        }
+      },
+      "market": {
+        ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').exists() && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() !== 'guest'",
+        ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'"
+      },
+      "students": {
+        ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+        ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'"
+      },
+      "settings": {
+        ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').exists() && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() !== 'guest'",
+        ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'"
+      },
+      "trips": {
+        ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+        "$uid": {
+          ".read": "auth.uid === $uid",
+          ".write": "auth.uid === $uid"
+        }
+      },
+      "tripLocations": {
+        ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').exists() && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() !== 'guest'",
+        ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'"
+      },
+      "tripSettings": {
+        ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').exists() && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() !== 'guest'",
+        ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'"
+      },
+      "events": {
+        ".read": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+        ".write": "auth != null && root.child($tenantId + '/admin/users/' + auth.uid + '/role').val() === 'admin'",
+        "shows": {
+          "$showId": {
+            ".indexOn": [
+              "status",
+              "slug"
+            ]
+          }
+        },
+        "showsBySlug": {
+          ".read": true
+        },
+        "booths": {
+          "$showId": {
+            ".indexOn": [
+              "status",
+              "vendorId"
+            ]
+          }
+        },
+        "boothPins": {
+          "$showId": {
+            ".read": true
+          }
+        },
+        "vendors": {
+          "$showId": {
+            ".indexOn": [
+              "status",
+              "boothId",
+              "paymentStatus"
+            ]
+          }
+        },
+        "promotions": {
+          "$showId": {
+            ".read": true
+          }
+        },
+        "submissions": {
+          "$showId": {
+            ".indexOn": [
+              "status",
+              "reviewDecision"
+            ],
+            "$submissionId": {
+              ".write": "!data.exists()"
+            }
+          }
+        },
+        "inviteTokens": {
+          ".read": true,
+          "$token": {
+            ".write": "auth != null"
+          }
+        },
+        "huntConfig": {
+          "$showId": {
+            ".read": true
+          }
+        },
+        "huntParticipants": {
+          "$showId": {
+            "$participantId": {
+              ".write": false
+            }
+          }
+        },
+        "huntStats": {
+          "$showId": {
+            ".read": true,
+            ".write": false
+          }
+        },
+        "ads": {
+          "$showId": {
+            ".read": true,
+            "$adId": {
+              ".write": false
+            }
+          }
+        },
+        "adImpressions": {
+          "$showId": {
+            "$impressionId": {
+              ".write": false
+            }
+          }
+        }
+      },
+      "quickActions": {
+        "$uid": {
+          ".read": "auth.uid === $uid",
+          ".write": "auth.uid === $uid"
+        }
+      }
+    },
+    ".read": false,
+    ".write": false,
+    "command-center": {
+      "$uid": {
+        "sessions": {
+          ".indexOn": [
+            "status"
+          ]
+        },
+        "jobs": {
+          ".indexOn": [
+            "status"
+          ]
+        },
+        "documents": {
+          ".indexOn": [
+            "status"
+          ]
+        }
+      },
+      "system": {
+        "oauth": {
+          "tokenIndex": {
+            ".indexOn": [
+              "expiresAt"
+            ]
+          },
+          "refreshTokenIndex": {
+            ".indexOn": [
+              "expiresAt"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
