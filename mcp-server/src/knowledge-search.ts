@@ -146,8 +146,9 @@ const WEIGHT_TREE_CONTEXT = 0.5;
 
 /**
  * Floor of the query-coverage multiplier — see the damping block in `scoreEntry`.
- * A node matching every query term is multiplied by 1.0; one matching none of them would
- * approach this value. Empirically tuned; see the measurements in that comment.
+ * Scales the FREE-TEXT score only: a node matching every query term is multiplied by 1.0,
+ * one matching none of them by exactly this value. The exact-tag score is never damped.
+ * Empirically tuned; see the measurements in that comment.
  */
 const COVERAGE_DAMP_FLOOR = 0.4;
 
@@ -311,10 +312,14 @@ export function scoreEntry(
   const entryTags = cached.tagsLower;
 
   // ── Exact tag matches (unchanged semantics from the original implementation) ──
+  // Kept separate from the free-text score because coverage damping below must not touch
+  // it: an exact tag hit is something the caller explicitly asked for, not an incidental
+  // vocabulary collision.
   const matchingTags = searchTagsLower.filter((st) => entryTags.includes(st));
-  let score = matchingTags.length * WEIGHT_TAG_EXACT;
+  const tagScore = matchingTags.length * WEIGHT_TAG_EXACT;
 
   // ── Free-text scoring ──
+  let textScore = 0;
   const matchedTerms: string[] = [];
   const termsFromTags: string[] = [];
 
@@ -337,17 +342,17 @@ export function scoreEntry(
       if (termScore > 0) {
         // Rare terms carry the signal; ubiquitous ones ("work", "use") are damped toward
         // nothing. Absent an IDF map, fall back to unweighted scoring.
-        score += termScore * (idf?.get(term) ?? 1);
+        textScore += termScore * (idf?.get(term) ?? 1);
         matchedTerms.push(term);
       }
     }
   }
 
-  if (score === 0) return { score: 0, matchingTags: [], matchedTerms: [], termsFromTags: [] };
+  if (tagScore + textScore === 0) return { score: 0, matchingTags: [], matchedTerms: [], termsFromTags: [] };
 
   // Normalize by the number of distinct signals the caller supplied.
-  const signalCount = new Set(queryTokens).size + searchTagsLower.length;
-  let normalized = signalCount > 0 ? score / signalCount : 0;
+  const distinctQueryTerms = new Set(queryTokens).size;
+  const signalCount = distinctQueryTerms + searchTagsLower.length;
 
   // ── Query-coverage damping ──
   // Penalize a match that rests on a small fraction of what the caller asked. A single
@@ -374,10 +379,22 @@ export function scoreEntry(
   // were incidental one-term collisions. Floors below ~0.30 start losing real recall.
   //
   // Skipped entirely when the caller passed no query text, so tag-only search is unchanged.
-  if (queryTokens.length > 0) {
-    const coverage = matchedTerms.length / new Set(queryTokens).size;
-    normalized *= COVERAGE_DAMP_FLOOR + (1 - COVERAGE_DAMP_FLOOR) * coverage;
-  }
+  //
+  // Applied to the FREE-TEXT score only, never to the exact-tag score. A tag the caller
+  // passed is an explicit, high-precision request; damping it because the accompanying
+  // prose happened not to overlap would silently drop the very rows that were asked for.
+  // Measured on `tags:["fantasy-football"]` + query "archive.org throttling penalty
+  // duration and backoff strategy": three nodes carrying that tag exactly (matchCount 1,
+  // zero matched terms) scored 0.375, and whole-score damping took them to 0.150 — under
+  // SCORE_FLOOR, so they vanished from a search that had named their tag. Damping only the
+  // text term leaves them at 0.375 while incidental one-term collisions still fall away.
+  const coverageDamp =
+    distinctQueryTerms > 0
+      ? COVERAGE_DAMP_FLOOR +
+        (1 - COVERAGE_DAMP_FLOOR) * (matchedTerms.length / distinctQueryTerms)
+      : 1;
+
+  const normalized = signalCount > 0 ? (tagScore + textScore * coverageDamp) / signalCount : 0;
 
   return {
     score: Math.round(normalized * 1000) / 1000,
@@ -399,8 +416,25 @@ export function scoreEntry(
  * "this might be outdated"; a stale gap actively directs a session to redo finished work.
  * Observed 2026-08-28 — a fantasy-draft tree's top gap still claimed rankings were
  * provisional pending scoring confirmation four days after that confirmation landed.
+ *
+ * RE-EXPRESSED IN POST-DAMPING UNITS (2026-08-29, was 1.2). Coverage damping applies here
+ * too — check_gaps scores a gap's question as the query, with no tags, so nothing offsets
+ * it. A gap question is a long sentence and a node that genuinely answers it still only
+ * covers part of its vocabulary, so every real match lost ~20-25%:
+ *
+ *   gap                         coverage  factor   before -> after
+ *   Farmbrook Trust approval      5/8      0.775    1.478 -> 1.145
+ *   Bahm renewed-translation     16/23     0.817    1.361 -> 1.112
+ *   Impello revenue split          —         —      1.273 -> ~1.02
+ *
+ * Those were the ONLY three flagged across all 96 open gaps, and at 1.2 all three would
+ * have gone dark — the feature would have looked healthy while silently flagging nothing.
+ * 0.95 keeps the same operating point rather than loosening it, and stays above
+ * STRONG_MATCH_SCORE, preserving the intended asymmetry. Note this is not a pure rescale:
+ * a LOW-coverage match now needs a much higher raw score to clear the bar, which is the
+ * direction this threshold wants anyway.
  */
-export const GAP_ANSWERED_SCORE = 1.2;
+export const GAP_ANSWERED_SCORE = 0.95;
 
 /** Max keyFinding characters rendered into a routing-table line. */
 const SUMMARY_FINDING_CHARS = 100;
