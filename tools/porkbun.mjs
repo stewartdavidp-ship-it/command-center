@@ -209,7 +209,11 @@ async function setNs(domain, ns) {
   const current = (await pb(`/domain/getNs/${domain}`)).ns || [];
   console.log(`current: ${current.join(', ') || '(none)'}`);
   console.log(`new:     ${list.join(', ')}`);
-  if (current.length === list.length && current.every((n, i) => n.toLowerCase() === list[i])) {
+  // Compare as SETS, not sequences. Porkbun returns nameservers in arbitrary order,
+  // so an order-sensitive check reports "changed" on every run and issues a pointless
+  // write. Measured 2026-09-03: a second standup re-sent an identical pair.
+  const norm = (a) => [...a].map((n) => n.trim().toLowerCase()).sort().join(',');
+  if (norm(current) === norm(list)) {
     return console.log('✓ already set — nothing to do');
   }
   if (DRY) return console.log(`dry-run: POST /domain/updateNs/${domain}`);

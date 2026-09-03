@@ -155,7 +155,8 @@ async function standupWorker(d, worker) {
   const want = zone.name_servers || [];
   if (want.length < 2) die(`Cloudflare reported ${want.length} nameservers; refusing.`);
   const have = (await pb(`/domain/getNs/${d}`)).ns || [];
-  if (have.length === want.length && have.every((n, i) => n.toLowerCase() === want[i].toLowerCase())) {
+  const norm = (a) => [...a].map((n) => n.trim().toLowerCase()).sort().join(',');
+  if (norm(have) === norm(want)) {
     skip(`already delegated to ${want.join(', ')}`);
   } else if (DRY) {
     act(`would set nameservers to ${want.join(', ')}`);
