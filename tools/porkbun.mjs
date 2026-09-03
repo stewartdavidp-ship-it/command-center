@@ -58,10 +58,19 @@ function fromSecretManager(name) {
   } catch { return ''; }
 }
 
-function credentials() {
+let _credCache;
+/** Returns the pair, or null. Never exits — callers that can degrade use this. */
+function readCredentials() {
+  if (_credCache !== undefined) return _credCache;
   const apikey = process.env.PORKBUN_API_KEY || fromSecretManager('PORKBUN_API_KEY');
   const secretapikey = process.env.PORKBUN_SECRET_KEY || fromSecretManager('PORKBUN_SECRET_KEY');
-  if (!apikey || !secretapikey) {
+  _credCache = apikey && secretapikey ? { apikey, secretapikey } : null;
+  return _credCache;
+}
+
+function credentials() {
+  const c = readCredentials();
+  if (!c) {
     die(
       'No Porkbun credentials.\n' +
       `  Store them once and every future run finds them:\n` +
@@ -71,7 +80,7 @@ function credentials() {
       `  (Historically these lived only in localStorage["cc_domain_config"] on aicommandcenter.dev.)`
     );
   }
-  return { apikey, secretapikey };
+  return c;
 }
 
 /** Porkbun authenticates by JSON BODY on every endpoint — never a header. */
@@ -208,10 +217,18 @@ async function setNs(domain, ns) {
   console.log(`✓ nameservers updated for ${domain}`);
 }
 
+export { pb, cfZone, cloudflareToken, setNs, credentials, readCredentials, PORKBUN_NS, die };
+
+const invokedDirectly = process.argv[1] && process.argv[1].endsWith('porkbun.mjs');
+if (!invokedDirectly) { /* imported as a library — do not run the CLI */ }
+else await main();
+
+async function main() {
 const run = COMMANDS[cmd];
 if (!run) {
   console.error(`usage: node tools/porkbun.mjs <command> [args] [--dry-run]\n`);
   console.error(`commands: ${Object.keys(COMMANDS).join(', ')}`);
   process.exit(cmd ? 1 : 0);
 }
-run().catch((e) => die(e.message));
+await run().catch((e) => die(e.message));
+}
