@@ -568,6 +568,30 @@
             // Returns: { status, domain, cost, orderId, balance }
         },
         
+        // ─── Nameservers ───
+        // WHY THIS EXISTS (2026-09-03): CC could manage DNS *records* but not
+        // *nameservers*, so every "move this domain to Cloudflare" ended in the
+        // registrar's web UI by hand. The gap stayed invisible because the work we
+        // usually do never hits it — a GitHub Pages site needs only A records plus a
+        // CNAME at whatever registrar already holds DNS, no delegation. It bites only
+        // on a Cloudflare Worker custom domain, which requires the zone to be
+        // delegated to Cloudflare.
+        async getNameservers(domain) {
+            const data = await this._call(`/domain/getNs/${domain}`);
+            return data.ns || [];
+        },
+
+        async updateNameservers(domain, nameservers) {
+            if (!Array.isArray(nameservers) || nameservers.length < 2) {
+                throw new Error('At least two nameservers are required.');
+            }
+            return await this._call(`/domain/updateNs/${domain}`, { ns: nameservers });
+        },
+
+        // Porkbun's own nameservers, for reverting a delegation.
+        DEFAULT_NS: ['curitiba.ns.porkbun.com', 'fortaleza.ns.porkbun.com',
+                     'maceio.ns.porkbun.com', 'salvador.ns.porkbun.com'],
+
         async updateAutoRenew(domain, on = true) {
             return await this._call(`/domain/updateAutoRenew/${domain}`, {
                 status: on ? 'on' : 'off'
@@ -873,6 +897,23 @@
             }));
         },
         
+        // ─── Nameservers ───
+        // GoDaddy exposes these on the domain object, not a dedicated endpoint.
+        async getNameservers(domain) {
+            const data = await this._call(`/domains/${domain}`);
+            return data.nameServers || [];
+        },
+
+        async updateNameservers(domain, nameservers) {
+            if (!Array.isArray(nameservers) || nameservers.length < 2) {
+                throw new Error('At least two nameservers are required.');
+            }
+            await this._call(`/domains/${domain}`, 'PATCH', { nameServers: nameservers });
+            return { status: 'SUCCESS' };
+        },
+
+        DEFAULT_NS: [],
+
         // ─── DNS Record Management ───
         // GoDaddy uses type+name to identify records, NOT unique IDs
         // Records have: type, name, data (not content), ttl, priority
@@ -15381,6 +15422,10 @@ The developer uses Claude for iterative development — each session should:
         const [wireLog, setWireLog] = React.useState([]);
         const [wireProgress, setWireProgress] = React.useState(false);
         const [providerErrors, setProviderErrors] = React.useState([]);
+        const [nameservers, setNameservers] = React.useState(null);
+        const [loadingNS, setLoadingNS] = React.useState(false);
+        const [nsDraft, setNsDraft] = React.useState('');
+        const [savingNS, setSavingNS] = React.useState(false);
 
         // Get the service for the currently selected domain
         const getServiceForDomain = (domain) => {
@@ -15426,7 +15471,7 @@ The developer uses Claude for iterative development — each session should:
         
         // Fetch DNS when domain changes
         React.useEffect(() => {
-            if (selectedDomain) fetchDNS(selectedDomain);
+            if (selectedDomain) { fetchDNS(selectedDomain); fetchNS(selectedDomain); }
         }, [selectedDomain]);
         
         // Add DNS record
@@ -15466,6 +15511,58 @@ The developer uses Claude for iterative development — each session should:
             }
         };
         
+        // ─── Nameservers ───────────────────────────────────────────────────
+        // Delegation is the operation that was missing until 2026-09-03. Note the
+        // order of authority: whoever holds the nameservers holds DNS. Once a domain
+        // is delegated away, the record table below is inert — the panel says so
+        // rather than letting someone edit records that do nothing.
+        const fetchNS = async (domain) => {
+            setLoadingNS(true);
+            try {
+                const service = getServiceForDomain(domain);
+                if (!service || !service.getNameservers) { setNameservers(null); setLoadingNS(false); return; }
+                const ns = await service.getNameservers(domain);
+                setNameservers(ns);
+                setNsDraft(ns.join('\n'));
+            } catch (e) {
+                setNameservers([]);
+                showAlert(`Could not read nameservers: ${e.message}`, 'error');
+            }
+            setLoadingNS(false);
+        };
+
+        const handleSaveNS = async () => {
+            const list = nsDraft.split(/[\s,]+/).map(x => x.trim().toLowerCase()).filter(Boolean);
+            if (list.length < 2) { showAlert('Enter at least two nameservers, one per line.', 'error'); return; }
+            const confirmed = await showConfirm(
+                `Delegate ${selectedDomain} to:\n\n${list.join('\n')}\n\n` +
+                `This moves DNS authority away from the current provider. Records created here will stop taking effect, ` +
+                `and propagation can take up to 48 hours. Make sure the destination zone exists FIRST.`,
+                'Change Nameservers'
+            );
+            if (!confirmed) return;
+            setSavingNS(true);
+            try {
+                const service = getServiceForDomain(selectedDomain);
+                await service.updateNameservers(selectedDomain, list);
+                showAlert('Nameservers updated. Propagation can take up to 48 hours.', 'success');
+                await fetchNS(selectedDomain);
+            } catch (e) {
+                showAlert(`Failed to update nameservers: ${e.message}`, 'error');
+            }
+            setSavingNS(false);
+        };
+
+        // Is this domain still on its registrar's own nameservers?
+        const isDelegatedAway = () => {
+            if (!nameservers || nameservers.length === 0) return false;
+            const d = (domains || []).find(x => x.domain === selectedDomain);
+            const provider = d && d.provider;
+            if (provider === 'porkbun') return !nameservers.some(n => n.includes('porkbun.com'));
+            if (provider === 'godaddy') return !nameservers.some(n => n.includes('domaincontrol.com'));
+            return false;
+        };
+
         // Wire domain for GitHub Pages
         const handleWireForGitHubPages = async (domain, repo) => {
             setWireProgress(true);
@@ -15660,6 +15757,76 @@ The developer uses Claude for iterative development — each session should:
                 )}
 
                 {loading && <div className="text-center text-slate-400 py-12">⏳ Loading domains...</div>}
+
+                {/* Nameservers Panel — delegation outranks records, so it comes first */}
+                {selectedDomain && !loading && (
+                    <div className="bg-slate-800 rounded-xl border border-slate-700 p-5 mb-6">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="font-semibold flex items-center gap-2">
+                                🧭 Nameservers — <span className="font-mono text-indigo-300">{selectedDomain}</span>
+                            </h3>
+                            <button onClick={() => fetchNS(selectedDomain)} disabled={loadingNS}
+                                className="text-xs px-3 py-1.5 bg-slate-700 rounded hover:bg-slate-600 disabled:opacity-40">
+                                {loadingNS ? '⏳' : '🔄'}
+                            </button>
+                        </div>
+
+                        {loadingNS && <div className="text-slate-400 text-sm py-3">⏳ Reading nameservers...</div>}
+
+                        {!loadingNS && nameservers && (
+                            <>
+                                <div className="flex flex-wrap gap-2 mb-4">
+                                    {nameservers.map(ns => (
+                                        <span key={ns} className="text-xs font-mono px-2 py-1 rounded bg-slate-700/60 text-slate-300 border border-slate-600">
+                                            {ns}
+                                        </span>
+                                    ))}
+                                    {nameservers.length === 0 && (
+                                        <span className="text-sm text-slate-500">No nameservers reported.</span>
+                                    )}
+                                </div>
+
+                                {isDelegatedAway() && (
+                                    <div className="bg-amber-900/25 border border-amber-700/40 text-amber-300 rounded-lg p-3 mb-4 text-xs">
+                                        ⚠️ This domain is delegated away from its registrar. DNS is served by the nameservers above,
+                                        so records added in the table below will <strong>not</strong> take effect. Edit DNS wherever
+                                        these nameservers point.
+                                    </div>
+                                )}
+
+                                <label className="text-xs text-slate-400 block mb-1">
+                                    Set nameservers — one per line. The destination zone must exist <em>before</em> you delegate.
+                                </label>
+                                <textarea value={nsDraft} onChange={e => setNsDraft(e.target.value)}
+                                    rows={4} spellCheck={false}
+                                    className="w-full p-2 bg-slate-700 border border-slate-600 rounded text-xs font-mono mb-3"
+                                    placeholder={"kara.ns.cloudflare.com\nrick.ns.cloudflare.com"} />
+
+                                <div className="flex gap-2 flex-wrap items-center">
+                                    <button onClick={handleSaveNS} disabled={savingNS}
+                                        className="text-xs px-3 py-1.5 bg-indigo-600 rounded hover:bg-indigo-500 font-medium disabled:opacity-40">
+                                        {savingNS ? '⏳ Saving...' : '🧭 Update Nameservers'}
+                                    </button>
+                                    {(() => {
+                                        const svc = getServiceForDomain(selectedDomain);
+                                        if (!svc || !svc.DEFAULT_NS || svc.DEFAULT_NS.length === 0) return null;
+                                        return (
+                                            <button onClick={() => setNsDraft(svc.DEFAULT_NS.join('\n'))}
+                                                className="text-xs px-3 py-1.5 bg-slate-700 rounded hover:bg-slate-600">
+                                                ↩︎ Registrar defaults
+                                            </button>
+                                        );
+                                    })()}
+                                    <span className="text-xs text-slate-500">Propagation can take up to 48 hours.</span>
+                                </div>
+                            </>
+                        )}
+
+                        {!loadingNS && nameservers === null && (
+                            <div className="text-sm text-slate-500">This provider does not expose nameserver management.</div>
+                        )}
+                    </div>
+                )}
 
                 {/* DNS Records Panel */}
                 {selectedDomain && !loading && (
