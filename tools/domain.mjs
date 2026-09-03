@@ -198,7 +198,29 @@ async function standupPages(d, repo) {
   console.log('1. Registrar parking records');
   await clearParking(d);
 
-  console.log('2. A records → GitHub Pages');
+  console.log('2. Conflicting records');
+  // ADD IS NOT ENOUGH. A domain that previously pointed somewhere else keeps pointing
+  // there: an apex A record left over from another host round-robins with the new ones,
+  // so the site works intermittently, which is worse than failing. Found on
+  // aicommandcenter.dev, which carried an abandoned Firebase setup (A -> 199.36.158.100,
+  // www -> *.web.app) and served ERR_TLS_CERT_ALTNAME_INVALID because no Firebase site
+  // claimed the hostname any more.
+  {
+    const recs = (await pb(`/dns/retrieve/${d}`)).records || [];
+    const stale = recs.filter((r) =>
+      (r.type === 'A' && r.name === d && !GITHUB_PAGES_IPS.includes(r.content)) ||
+      (r.type === 'AAAA' && r.name === d) ||
+      (r.type === 'ALIAS' && r.name === d) ||
+      (r.type === 'CNAME' && r.name === `www.${d}` && r.content !== `${owner}.github.io`));
+    if (!stale.length) skip('no conflicting apex or www records');
+    for (const r of stale) {
+      if (DRY) { act(`would delete ${r.type} ${r.name || '@'} → ${r.content}`); continue; }
+      await pb(`/dns/delete/${d}/${r.id}`);
+      ok(`deleted ${r.type} ${r.name || '@'} → ${r.content}`);
+    }
+  }
+
+  console.log('3. A records → GitHub Pages');
   const records = (await pb(`/dns/retrieve/${d}`)).records || [];
   const haveA = records.filter((r) => r.type === 'A' && r.name === d).map((r) => r.content);
   for (const ip of GITHUB_PAGES_IPS) {
@@ -208,7 +230,7 @@ async function standupPages(d, repo) {
     ok(`added A @ → ${ip}`);
   }
 
-  console.log('3. www CNAME');
+  console.log('4. www CNAME');
   const wwwHost = `www.${d}`;
   const haveWww = records.find((r) => r.type === 'CNAME' && r.name === wwwHost);
   const target = `${owner}.github.io`;
@@ -219,7 +241,7 @@ async function standupPages(d, repo) {
     ok(`added CNAME www → ${target}`);
   }
 
-  console.log('\n4. Verify');
+  console.log('\n5. Verify');
   console.log(`  live: ${await httpCheck(d)}`);
   console.log(`  Also confirm the repo has a CNAME file containing "${d}" and Pages is enabled on main.`);
 }
